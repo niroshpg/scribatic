@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Scribatic — on-device schema</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #f5f5f5;
+      --color-ink:     #2d3142;
+      --color-muted:   #4f5d75;
+      --color-accent:  #eb6c36;
+      --font-sans:     'Geist', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+    .frame { max-width: 1280px; width: 100%; }
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 1.5rem;
+    }
+    svg { width: 100%; min-width: 900px; display: block; }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Database schema · Scribatic</p>
+    <h1>One DDL, executed verbatim by both platforms</h1>
+
+    <svg viewBox="0 0 1200 620" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="schema-title schema-desc">
+      <title id="schema-title">Scribatic on-device SQLite schema</title>
+      <desc id="schema-desc">The notes table is the parent of segments and chunks, both of which reference notes.id with ON DELETE CASCADE. Two virtual tables, vss_chunks (vss0, 384-dimensional embeddings) and chunks_fts (fts5 with Porter stemming), are joined to chunks by rowid rather than by a foreign key, so the vector and lexical indexes store no plaintext of their own.</desc>
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+        <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/></marker>
+        <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker>
+      </defs>
+
+      <rect width="100%" height="100%" fill="#f5f5f5"/>
+
+      <!-- ===================== connectors (before boxes) ===================== -->
+
+      <!-- FK1 — segments.note_id -> notes.id  (ACCENT 1) -->
+      <path d="M 520,124 H 472 Q 464,124 464,132 V 180 Q 464,188 456,188 H 320"
+            fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#arrow-accent)"/>
+      <!-- FK2 — chunks.note_id -> notes.id  (ACCENT 2) -->
+      <path d="M 520,388 H 488 Q 480,388 480,380 V 212 Q 480,204 472,204 H 320"
+            fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#arrow-accent)"/>
+
+      <!-- RL1 — chunks.id -> vss_chunks.rowid (rowid join, not an FK) -->
+      <line x1="784" y1="356" x2="880" y2="356" stroke="#4f5d75" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+      <!-- RL2 — chunks.id -> chunks_fts.rowid -->
+      <path d="M 784,372 H 824 Q 832,372 832,380 V 476 Q 832,484 840,484 H 880"
+            fill="none" stroke="#4f5d75" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+
+      <!-- ===================== connector labels ===================== -->
+      <rect x="368" y="150" width="88" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="412" y="159" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">ON DELETE CASCADE</text>
+
+      <rect x="384" y="290" width="88" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="428" y="299" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">ON DELETE CASCADE</text>
+
+      <rect x="798" y="336" width="68" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="832" y="345" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">JOIN ON ROWID</text>
+
+      <rect x="840" y="420" width="76" height="12" rx="2" fill="#f5f5f5"/>
+      <text x="878" y="429" fill="#7a8399" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">CONTENT ROWID</text>
+
+      <!-- ===================== notes ===================== -->
+      <rect x="56" y="152" width="264" height="200" rx="6" fill="#f5f5f5"/>
+      <rect x="56" y="152" width="264" height="200" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <path d="M 56,158 a 6,6 0 0 1 6,-6 H 314 a 6,6 0 0 1 6,6 V 184 H 56 Z" fill="rgba(45,49,66,0.05)"/>
+      <line x1="56" y1="184" x2="320" y2="184" stroke="rgba(45,49,66,0.12)" stroke-width="0.8"/>
+      <text x="68" y="173" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif">notes</text>
+      <rect x="268" y="162" width="40" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+      <text x="288" y="171" fill="rgba(45,49,66,0.80)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">TABLE</text>
+
+      <text x="68" y="200" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif">id</text>
+      <rect x="196" y="190" width="20" height="12" rx="2" fill="rgba(45,49,66,0.06)" stroke="rgba(45,49,66,0.30)" stroke-width="0.8"/>
+      <text x="206" y="199" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">PK</text>
+      <text x="308" y="200" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">INTEGER</text>
+
+      <rect x="56" y="208" width="264" height="24" fill="rgba(45,49,66,0.02)"/>
+      <text x="68" y="224" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif">title</text>
+      <text x="308" y="224" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">TEXT</text>
+
+      <text x="68" y="248" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif">created_at</text>
+      <text x="308" y="248" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">INTEGER</text>
+
+      <rect x="56" y="256" width="264" height="24" fill="rgba(45,49,66,0.02)"/>
+      <text x="68" y="272" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif">duration_ms</text>
+      <text x="308" y="272" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">INTEGER</text>
+
+      <text x="68" y="296" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif">locale</text>
+      <text x="308" y="296" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">TEXT</text>
+
+      <rect x="56" y="304" width="264" height="24" fill="rgba(45,49,66,0.02)"/>
+      <text x="68" y="320" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif">summary</text>
+      <text x="308" y="320" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">TEXT NULL</text>
+
+      <text x="68" y="344" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif">audio_path</text>
+      <text x="308" y="344" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">TEXT NULL</text>
+
+      <!-- ===================== segments ===================== -->
+      <rect x="520" y="56" width="264" height="212" rx="6" fill="#f5f5f5"/>
+      <rect x="520" y="56" width="264" height="212" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <path d="M 520,62 a 6,6 0 0 1 6,-6 H 778 a 6,6 0 0 1 6,6 V 88 H 520 Z" fill="rgba(45,49,66,0.05)"/>
+      <line x1="520" y1="88" x2="784" y2="88" stroke="rgba(45,49,66,0.12)" stroke-width="0.8"/>
+      <text x="532" y="77" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif">segments</text>
+      <rect x="732" y="66" width="40" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+      <text x="752" y="75" fill="rgba(45,49,66,0.80)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">TABLE</text>
+
+      <text x="532" y="104" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif">id</text>
+      <rect x="660" y="94" width="20" height="12" rx="2" fill="rgba(45,49,66,0.06)" stroke="rgba(45,49,66,0.30)" stroke-width="0.8"/>
+      <text x="670" y="103" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">PK</text>
+      <text x="772" y="104" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">INTEGER</text>
+
+      <rect x="520" y="112" width="264" height="24" fill="rgba(45,49,66,0.02)"/>
+      <text x="532" y="128" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif">note_id</text>
+      <rect x="660" y="118" width="20" height="12" rx="2" fill="rgba(235,108,54,0.10)" stroke="rgba(235,108,54,0.50)" stroke-width="0.8"/>
+      <text x="670" y="127" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">FK</text>
+      <text x="772" y="128" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">INTEGER</text>
+
+      <text x="532" y="152" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif">start_ms</text>
+      <text x="772" y="152" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">INTEGER</text>
+
+      <rect x="520" y="160" width="264" height="24" fill="rgba(45,49,66,0.02)"/>
+      <text x="532" y="176" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif">end_ms</text>
+      <text x="772" y="176" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">INTEGER</text>
+
+      <text x="532" y="200" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif">text</text>
+      <text x="772" y="200" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">TEXT</text>
+
+      <rect x="520" y="208" width="264" height="24" fill="rgba(45,49,66,0.02)"/>
+      <text x="532" y="224" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif">confidence</text>
+      <text x="772" y="224" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">REAL</text>
+
+      <line x1="520" y1="232" x2="784" y2="232" stroke="rgba(45,49,66,0.12)" stroke-width="0.8"/>
+      <text x="532" y="246" fill="rgba(45,49,66,0.40)" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">INDEXES</text>
+      <text x="532" y="260" fill="#7a8399" font-size="9" font-family="'Geist Mono', monospace">idx_segments_note (note_id, start_ms)</text>
+
+      <!-- ===================== chunks ===================== -->
+      <rect x="520" y="320" width="264" height="164" rx="6" fill="#f5f5f5"/>
+      <rect x="520" y="320" width="264" height="164" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+      <path d="M 520,326 a 6,6 0 0 1 6,-6 H 778 a 6,6 0 0 1 6,6 V 352 H 520 Z" fill="rgba(45,49,66,0.05)"/>
+      <line x1="520" y1="352" x2="784" y2="352" stroke="rgba(45,49,66,0.12)" stroke-width="0.8"/>
+      <text x="532" y="341" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif">chunks</text>
+      <rect x="732" y="330" width="40" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+      <text x="752" y="339" fill="rgba(45,49,66,0.80)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">TABLE</text>
+
+      <text x="532" y="368" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif">id</text>
+      <rect x="660" y="358" width="20" height="12" rx="2" fill="rgba(45,49,66,0.06)" stroke="rgba(45,49,66,0.30)" stroke-width="0.8"/>
+      <text x="670" y="367" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">PK</text>
+      <text x="772" y="368" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">INTEGER</text>
+
+      <rect x="520" y="376" width="264" height="24" fill="rgba(45,49,66,0.02)"/>
+      <text x="532" y="392" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif">note_id</text>
+      <rect x="660" y="382" width="20" height="12" rx="2" fill="rgba(235,108,54,0.10)" stroke="rgba(235,108,54,0.50)" stroke-width="0.8"/>
+      <text x="670" y="391" fill="#eb6c36" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">FK</text>
+      <text x="772" y="392" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">INTEGER</text>
+
+      <text x="532" y="416" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif">ordinal</text>
+      <text x="772" y="416" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">INTEGER</text>
+
+      <rect x="520" y="424" width="264" height="24" fill="rgba(45,49,66,0.02)"/>
+      <text x="532" y="440" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif">text</text>
+      <text x="772" y="440" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">TEXT</text>
+
+      <line x1="520" y1="448" x2="784" y2="448" stroke="rgba(45,49,66,0.12)" stroke-width="0.8"/>
+      <text x="532" y="462" fill="rgba(45,49,66,0.40)" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">INDEXES</text>
+      <text x="532" y="476" fill="#7a8399" font-size="9" font-family="'Geist Mono', monospace">idx_chunks_note (note_id, ordinal)</text>
+
+      <!-- ===================== vss_chunks (virtual) ===================== -->
+      <rect x="880" y="312" width="264" height="80" rx="6" fill="#f5f5f5"/>
+      <rect x="880" y="312" width="264" height="80" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1" stroke-dasharray="4,4"/>
+      <line x1="880" y1="344" x2="1144" y2="344" stroke="rgba(45,49,66,0.12)" stroke-width="0.8"/>
+      <text x="892" y="333" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif">vss_chunks</text>
+      <rect x="1084" y="322" width="48" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+      <text x="1108" y="331" fill="rgba(45,49,66,0.80)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">VIRTUAL</text>
+
+      <text x="892" y="360" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif">rowid</text>
+      <text x="1132" y="360" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">= chunks.id</text>
+
+      <rect x="880" y="368" width="264" height="24" fill="rgba(45,49,66,0.02)"/>
+      <text x="892" y="384" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif">embedding</text>
+      <text x="1132" y="384" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">vss0(384)</text>
+
+      <!-- ===================== chunks_fts (virtual) ===================== -->
+      <rect x="880" y="440" width="264" height="80" rx="6" fill="#f5f5f5"/>
+      <rect x="880" y="440" width="264" height="80" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1" stroke-dasharray="4,4"/>
+      <line x1="880" y1="472" x2="1144" y2="472" stroke="rgba(45,49,66,0.12)" stroke-width="0.8"/>
+      <text x="892" y="461" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif">chunks_fts</text>
+      <rect x="1084" y="450" width="48" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+      <text x="1108" y="459" fill="rgba(45,49,66,0.80)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">VIRTUAL</text>
+
+      <text x="892" y="488" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif">rowid</text>
+      <text x="1132" y="488" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">= chunks.id</text>
+
+      <rect x="880" y="496" width="264" height="24" fill="rgba(45,49,66,0.02)"/>
+      <text x="892" y="512" fill="#2d3142" font-size="12" font-family="'Geist', sans-serif">text</text>
+      <text x="1132" y="512" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">fts5 porter</text>
+
+      <!-- ===================== editorial callout ===================== -->
+      <text x="1144" y="164" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="end">the indexes store vectors, never a copy of the text</text>
+      <path d="M 1000,176 Q 976,240 1038,308" fill="none" stroke="rgba(45,49,66,0.40)" stroke-width="1" stroke-dasharray="4,3"/>
+      <circle cx="1040" cy="312" r="2" fill="#2d3142"/>
+
+      <!-- ===================== legend ===================== -->
+      <line x1="40" y1="560" x2="1160" y2="560" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+      <text x="40" y="576" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">LEGEND</text>
+
+      <line x1="130" y1="572" x2="154" y2="572" stroke="#eb6c36" stroke-width="1.2"/>
+      <text x="162" y="576" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">foreign key · cascading delete</text>
+
+      <line x1="440" y1="572" x2="464" y2="572" stroke="#4f5d75" stroke-width="1" stroke-dasharray="4,3"/>
+      <text x="472" y="576" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">rowid join · not a foreign key</text>
+
+      <rect x="748" y="566" width="12" height="12" rx="2" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1" stroke-dasharray="4,4"/>
+      <text x="768" y="576" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace">virtual table · vss0 / fts5</text>
+    </svg>
+  </div>
+</body>
+</html>

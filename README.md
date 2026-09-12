@@ -22,53 +22,11 @@ This is a polyglot native monorepo: two fully independent applications — Swift
 
 ## Data flow topology
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│  [ AUDIO HARDWARE INTERFACE ]                                            │
-│  AVAudioEngine tap (iOS)  ·  AAudio callback (Android)                   │
-│  16 kHz mono float32 · hard realtime deadline · ~5 ms budget             │
-└────────────────────────────────┬─────────────────────────────────────────┘
-                                 │  no allocation · no locks · no logging
-                                 ▼
-┌──────────────────────────────────────────────────────────────────────────┐
-│  [ OS NATIVE RING BUFFER ]                                               │
-│  AudioRingBuffer — SPSC, lock-free, power-of-two mask                    │
-│  head/tail on separate cache lines · 30 s capacity · preallocated once   │
-└────────────────────────────────┬─────────────────────────────────────────┘
-                                 │  producer returns immediately;
-                                 │  overrun is reported, never blocked
-                                 ▼
-┌──────────────────────────────────────────────────────────────────────────┐
-│  [ DIRECT NATIVE / JNI BRIDGE ]                                          │
-│  iOS      Swift-C++ Interop — vtable call, zero wrapper, zero .mm        │
-│  Android  native-lib.cpp — GetPrimitiveArrayCritical, no copy, no GC     │
-│  Marshalling only. No business logic lives at this layer.                │
-└────────────────────────────────┬─────────────────────────────────────────┘
-                                 │  background executor ONLY
-                                 ▼
-┌──────────────────────────────────────────────────────────────────────────┐
-│  [ SHARED C++ ENGINE CORE ]                                              │
-│                                                                          │
-│    whisper.cpp ──► encoder/decoder ──► TranscriptSegment[]               │
-│         │                                      │                         │
-│         │                                      ▼                         │
-│         │                              chunk + embed (384-d)             │
-│         │                                      │                         │
-│    llama.cpp  ◄── retrieved context ◄── SQLite-VSS (faiss ANN)           │
-│         │                                                                │
-│         └──────► local insight / summary                                 │
-│                                                                          │
-│  mmap'd GGUF weights · arena-allocated ggml graphs · NEON/dotprod GEMM   │
-└────────────────────────────────┬─────────────────────────────────────────┘
-                                 │  immutable value snapshots
-                                 ▼
-┌──────────────────────────────────────────────────────────────────────────┐
-│  [ ASYNCHRONOUS UI STATE ]                                               │
-│  iOS      AsyncThrowingStream → @Observable @MainActor model → SwiftUI   │
-│  Android  Flow.flowOn(Default) → StateFlow → Compose recomposition       │
-│  Main thread does layout and diffing. Never math.                        │
-└──────────────────────────────────────────────────────────────────────────┘
-```
+<p align="center">
+  <img src="docs/diagrams/topology.png" alt="Audio captured by the platform layer is written to a lock-free ring buffer, handed across a thin native bridge into a shared C++17 engine core where whisper.cpp transcribes it, chunks are embedded into a local SQLite-VSS and FTS5 index, and llama.cpp answers from retrieved context; transcript segments and summaries flow back to the platform UI." width="900">
+</p>
+
+<sub>Source: [`docs/diagrams/topology.html`](docs/diagrams/topology.html) · vector: [`topology.svg`](docs/diagrams/topology.svg)</sub>
 
 Data crosses each boundary exactly once, in one direction. Nothing in the engine core reaches upward into a UI callback, and nothing in the UI layer can obtain a handle to a `ggml` or `sqlite3` type — those headers are deliberately absent from the iOS module map and from the JNI translation unit.
 
@@ -221,14 +179,11 @@ Retrieval is what turns a transcription app into an insight engine: the value is
 
 `core/database/include/scribatic/db/Schema.hpp` is the only DDL in the repository. Not Core Data on iOS and Room on Android — one set of `CREATE TABLE` statements that both platforms execute verbatim. Two ORMs generating two schemas from two model files is a divergence with a long fuse, and it makes an encrypted local export/import path impossible to trust later.
 
-```
-notes ──┬──< segments        timestamped whisper output
-        ├──< chunks          256-token windows, 64-token stride
-        │      │
-        │      ├──> vss_chunks   vss0(embedding(384))  — faiss ANN, vectors only
-        │      └──> chunks_fts   fts5(porter unicode61) — BM25 lexical arm
-        └──── summary        llama.cpp output, nullable
-```
+<p align="center">
+  <img src="docs/diagrams/schema.png" alt="The notes table is the parent of segments and chunks, both referencing notes.id with ON DELETE CASCADE. The vss_chunks (vss0, 384-dimensional embeddings) and chunks_fts (fts5, Porter stemming) virtual tables are joined to chunks by rowid rather than by a foreign key." width="960">
+</p>
+
+<sub>Source: [`docs/diagrams/schema.html`](docs/diagrams/schema.html) · vector: [`schema.svg`](docs/diagrams/schema.svg)</sub>
 
 `vss_chunks.rowid` joins back to `chunks.id`, so **the vector index stores vectors and nothing else** — no plaintext is duplicated into the ANN structure.
 
