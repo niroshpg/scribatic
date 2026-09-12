@@ -32,3 +32,6 @@ models/*.gguf
 .DS_Store
 .idea/
 .vscode/
+
+# --- Local session notes -----------------------------------------------------
+CONTEXT.md
