@@ -1,0 +1,32 @@
+// =============================================================================
+//  module.modulemap — exposes the shared C++ core to Swift directly.
+//
+//  With SWIFT_OBJC_INTEROP_MODE = objcxx (see project.yml) Swift imports these
+//  headers natively: std::string bridges to String, std::vector to a
+//  RandomAccessCollection, and the SWIFT_SHARED_REFERENCE class participates in
+//  ARC. There is no .mm wrapper, no @objc shim layer, and no hand-written
+//  C shim — the Swift call site invokes the C++ vtable entry directly.
+//
+//  Only the two public headers are listed. EngineImpl.hpp and the vendored
+//  ggml/llama headers are intentionally NOT part of this module, so backend
+//  types are unrepresentable in Swift and cannot leak into app code.
+//
+//  `requires cplusplus17` makes the constraint enforceable rather than
+//  aspirational: importing this module from a C or ObjC target fails at parse.
+// =============================================================================
+
+module ScribaticCore {
+    requires cplusplus17
+
+    header "include/scribatic/core/Types.hpp"
+    header "include/scribatic/core/EngineInterface.hpp"
+
+    export *
+}
+
+// Internal headers, deliberately excluded from `ScribaticCore`. Declared here so
+// clang does not silently fold them into the module via an umbrella search.
+module ScribaticCorePrivate [system] {
+    requires cplusplus17
+    export *
+}

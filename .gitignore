@@ -1,0 +1,34 @@
+# --- Build artefacts ---------------------------------------------------------
+build/
+.cxx/
+*.o
+*.a
+*.so
+compile_commands.json
+
+# --- iOS ---------------------------------------------------------------------
+# The .xcodeproj is generated from project.yml by `make setup-ios`. Committing
+# an unmergeable pbxproj blob is how build settings silently drift.
+apps/ios-swiftui/*.xcodeproj
+apps/ios-swiftui/*.xcworkspace
+apps/ios-swiftui/ScribaticCore/include
+DerivedData/
+*.xcuserstate
+
+# --- Android -----------------------------------------------------------------
+apps/android-compose/.gradle/
+apps/android-compose/local.properties
+apps/android-compose/**/build/
+*.apk
+*.aab
+*.keystore
+
+# --- Model weights -----------------------------------------------------------
+# Hundreds of MB each; fetched via `make fetch-models`.
+models/*.bin
+models/*.gguf
+
+# --- Editor ------------------------------------------------------------------
+.DS_Store
+.idea/
+.vscode/

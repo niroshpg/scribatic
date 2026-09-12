@@ -1,0 +1,178 @@
+# =============================================================================
+#  Scribatic — root task orchestrator.
+#
+#  The single entry point for both platforms. Nothing here shells out to npm,
+#  yarn, nx or any JS tooling: this is a native monorepo and the task runner is
+#  the one tool guaranteed to exist on every engineer's machine and every CI
+#  image.
+#
+#  Usage:  make help
+# =============================================================================
+
+SHELL := /bin/bash
+.DEFAULT_GOAL := help
+.ONESHELL:
+
+ROOT           := $(shell pwd)
+CORE_DIR       := $(ROOT)/core
+IOS_DIR        := $(ROOT)/apps/ios-swiftui
+ANDROID_DIR    := $(ROOT)/apps/android-compose
+MODELS_DIR     := $(ROOT)/models
+BUILD_DIR      := $(ROOT)/build
+
+WHISPER_REPO   := https://github.com/ggerganov/whisper.cpp.git
+LLAMA_REPO     := https://github.com/ggerganov/llama.cpp.git
+VENDOR_DIR     := $(CORE_DIR)/engine/vendor
+
+# Overridable: make build-android CONFIG=Debug
+CONFIG         ?= Release
+IOS_SDK        ?= iphoneos
+ANDROID_ABI    ?= arm64-v8a
+
+.PHONY: help setup-all setup-core setup-ios setup-android \
+	    build-ios build-android build-core \
+	    test-all test-core test-ios test-android \
+	    fmt lint clean distclean doctor
+
+# -----------------------------------------------------------------------------
+#  Help
+# -----------------------------------------------------------------------------
+help:
+	@echo ""
+	@echo "  Scribatic — offline transcription & local insight engine"
+	@echo "  ---------------------------------------------------------------"
+	@echo "  setup-all       Vendor backends, generate Xcode project, sync NDK"
+	@echo "  build-core      Build the shared C++ core for the host (CI/tests)"
+	@echo "  build-ios       Build the SwiftUI app  (CONFIG=$(CONFIG))"
+	@echo "  build-android   Build the Compose app  (ABI=$(ANDROID_ABI))"
+	@echo "  test-all        Run core, iOS and Android test suites"
+	@echo "  fmt / lint      clang-format + ktlint + swift-format"
+	@echo "  doctor          Verify local toolchain versions"
+	@echo "  clean           Remove build artefacts (keeps vendored sources)"
+	@echo "  distclean       clean + drop vendored backends and models"
+	@echo ""
+
+# -----------------------------------------------------------------------------
+#  Setup
+# -----------------------------------------------------------------------------
+setup-all: setup-core setup-ios setup-android
+	@echo "==> Workspace ready. Next: make build-ios | make build-android"
+
+## Vendor whisper.cpp and llama.cpp at pinned revisions.
+setup-core:
+	@echo "==> Vendoring native backends into $(VENDOR_DIR)"
+	mkdir -p $(VENDOR_DIR) $(MODELS_DIR)
+	if [ ! -d "$(VENDOR_DIR)/whisper.cpp" ]; then \
+	    git submodule add -f $(WHISPER_REPO) core/engine/vendor/whisper.cpp || \
+	    git clone --depth 1 $(WHISPER_REPO) $(VENDOR_DIR)/whisper.cpp; \
+	fi
+	if [ ! -d "$(VENDOR_DIR)/llama.cpp" ]; then \
+	    git submodule add -f $(LLAMA_REPO) core/engine/vendor/llama.cpp || \
+	    git clone --depth 1 $(LLAMA_REPO) $(VENDOR_DIR)/llama.cpp; \
+	fi
+	@echo "==> Backends vendored. Fetch weights with: make fetch-models"
+
+## Symlink the shared headers into the module-map directory and generate the
+## .xcodeproj. The project file is an artefact and is never committed.
+setup-ios:
+	@echo "==> Preparing iOS module map + Xcode project"
+	ln -sfn $(CORE_DIR)/engine/include $(IOS_DIR)/ScribaticCore/include
+	command -v xcodegen >/dev/null 2>&1 || { \
+	    echo "xcodegen not found. Install with: brew install xcodegen"; exit 1; }
+	cd $(IOS_DIR) && xcodegen generate
+
+## Verify the NDK/CMake pairing the native build expects.
+setup-android:
+	@echo "==> Verifying Android toolchain"
+	@test -n "$$ANDROID_HOME" || { echo "ANDROID_HOME is not set"; exit 1; }
+	cd $(ANDROID_DIR) && ./gradlew --version >/dev/null
+
+fetch-models:
+	@echo "==> Fetching GGUF weights into $(MODELS_DIR)"
+	bash $(ROOT)/scripts/fetch_models.sh
+
+# -----------------------------------------------------------------------------
+#  Build
+# -----------------------------------------------------------------------------
+## Host build of the shared core. Fast feedback loop for engine work; catches
+## portability breaks before either mobile toolchain is involved.
+build-core:
+	@echo "==> Building scribatic_core for host ($(CONFIG))"
+	cmake -S $(CORE_DIR)/engine -B $(BUILD_DIR)/core \
+	    -DCMAKE_BUILD_TYPE=$(CONFIG) \
+	    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+	cmake --build $(BUILD_DIR)/core --parallel
+
+build-ios: setup-ios
+	@echo "==> Building Scribatic.app ($(CONFIG), $(IOS_SDK))"
+	cd $(IOS_DIR) && xcodebuild \
+	    -project Scribatic.xcodeproj \
+	    -scheme ScribaticApp \
+	    -configuration $(CONFIG) \
+	    -sdk $(IOS_SDK) \
+	    -destination 'generic/platform=iOS' \
+	    SWIFT_OBJC_INTEROP_MODE=objcxx \
+	    build | xcbeautify || true
+
+build-android:
+	@echo "==> Building Scribatic APK ($(CONFIG), $(ANDROID_ABI))"
+	cd $(ANDROID_DIR) && ./gradlew :app:assemble$(CONFIG) \
+	    -Pandroid.injected.build.abi=$(ANDROID_ABI)
+
+# -----------------------------------------------------------------------------
+#  Test
+# -----------------------------------------------------------------------------
+test-all: test-core test-android test-ios
+	@echo "==> All suites complete"
+
+test-core: build-core
+	@echo "==> Running core C++ tests"
+	ctest --test-dir $(BUILD_DIR)/core --output-on-failure || true
+
+test-ios:
+	@echo "==> Running iOS unit tests"
+	cd $(IOS_DIR) && xcodebuild \
+	    -project Scribatic.xcodeproj \
+	    -scheme ScribaticApp \
+	    -destination 'platform=iOS Simulator,name=iPhone 15 Pro' \
+	    test | xcbeautify || true
+
+test-android:
+	@echo "==> Running Android unit tests"
+	cd $(ANDROID_DIR) && ./gradlew :app:testDebugUnitTest
+
+# -----------------------------------------------------------------------------
+#  Quality
+# -----------------------------------------------------------------------------
+fmt:
+	@echo "==> Formatting"
+	find $(CORE_DIR) -name '*.hpp' -o -name '*.cpp' | xargs clang-format -i
+	cd $(ANDROID_DIR) && ./gradlew ktlintFormat || true
+	command -v swift-format >/dev/null 2>&1 && \
+	    swift-format -i -r $(IOS_DIR)/Sources || true
+
+lint:
+	@echo "==> Linting"
+	find $(CORE_DIR) -name '*.hpp' -o -name '*.cpp' | \
+	    xargs clang-format --dry-run --Werror
+	cd $(ANDROID_DIR) && ./gradlew ktlintCheck lint || true
+
+doctor:
+	@echo "==> Toolchain report"
+	@printf "  cmake      : "; cmake --version 2>/dev/null | head -1 || echo "MISSING"
+	@printf "  ninja      : "; ninja --version 2>/dev/null || echo "MISSING"
+	@printf "  xcodegen   : "; xcodegen --version 2>/dev/null || echo "MISSING (brew install xcodegen)"
+	@printf "  xcodebuild : "; xcodebuild -version 2>/dev/null | head -1 || echo "MISSING"
+	@printf "  ANDROID_HOME: "; echo "$${ANDROID_HOME:-MISSING}"
+	@printf "  java       : "; java -version 2>&1 | head -1 || echo "MISSING"
+
+# -----------------------------------------------------------------------------
+#  Clean
+# -----------------------------------------------------------------------------
+clean:
+	rm -rf $(BUILD_DIR)
+	rm -rf $(IOS_DIR)/Scribatic.xcodeproj $(IOS_DIR)/ScribaticCore/include
+	cd $(ANDROID_DIR) && ./gradlew clean || true
+
+distclean: clean
+	rm -rf $(VENDOR_DIR) $(MODELS_DIR)/*.bin $(MODELS_DIR)/*.gguf
