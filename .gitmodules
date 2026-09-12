@@ -1,0 +1,6 @@
+[submodule "core/engine/vendor/whisper.cpp"]
+	path = core/engine/vendor/whisper.cpp
+	url = https://github.com/ggerganov/whisper.cpp.git
+[submodule "core/engine/vendor/llama.cpp"]
+	path = core/engine/vendor/llama.cpp
+	url = https://github.com/ggerganov/llama.cpp.git
