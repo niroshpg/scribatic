@@ -1,0 +1,15 @@
+# Local state holds resource metadata and should not be committed.
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+crash.log
+*.tfvars
+!example.tfvars
+override.tf
+override.tf.json
+
+# Saved plan artifacts
+tfplan
+*.tfplan

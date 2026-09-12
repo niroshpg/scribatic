@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scribatic — coming soon</title>
+<meta name="description" content="Scribatic transcribes speech and answers questions about your own recordings, entirely on your phone. No servers, no accounts, no network path. Coming soon for iOS and Android.">
+<link rel="canonical" href="https://scribatic.com">
+
+<meta property="og:title" content="Scribatic — coming soon">
+<meta property="og:description" content="Scribatic transcribes speech and answers questions about your own recordings, entirely on your phone. No servers, no accounts, no network path.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://scribatic.com">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    --paper: #f5f5f5;
+    --ink: #2d3142;
+    --muted: #4f5d75;
+    --soft: #7a8399;
+    --accent: #eb6c36;
+    --hairline: rgba(45, 49, 66, 0.12);
+
+    --bg: var(--paper);
+    --fg: var(--ink);
+    --fg-muted: var(--muted);
+    --fg-soft: var(--soft);
+    --line: var(--hairline);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1b1d27;
+      --fg: #eceef3;
+      --fg-muted: #b7bfd4;
+      --fg-soft: #8b93a8;
+      --line: rgba(236, 238, 243, 0.14);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #1b1d27;
+    --fg: #eceef3;
+    --fg-muted: #b7bfd4;
+    --fg-soft: #8b93a8;
+    --line: rgba(236, 238, 243, 0.14);
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    font-weight: 400;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  a {
+    color: inherit;
+  }
+
+  .wrap {
+    width: 100%;
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 0 20px;
+  }
+
+  header.site-header {
+    padding: 40px 0 0;
+  }
+
+  .wordmark {
+    font-family: 'Instrument Serif', Georgia, 'Times New Roman', serif;
+    font-size: 1.5rem;
+    font-weight: 400;
+    letter-spacing: 0.01em;
+  }
+
+  main {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    padding: 48px 0 64px;
+  }
+
+  .eyebrow {
+    font-family: 'Geist Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 18px;
+  }
+
+  h1 {
+    font-family: 'Instrument Serif', Georgia, 'Times New Roman', serif;
+    font-weight: 400;
+    font-size: clamp(2rem, 6vw, 2.9rem);
+    line-height: 1.15;
+    margin: 0 0 20px;
+    color: var(--fg);
+  }
+
+  .lede {
+    font-size: 1.05rem;
+    color: var(--fg-muted);
+    margin: 0 0 8px;
+    max-width: 46ch;
+  }
+
+  .coming-soon {
+    font-family: 'Instrument Serif', Georgia, 'Times New Roman', serif;
+    font-style: italic;
+    font-size: 1.15rem;
+    color: var(--fg-soft);
+    margin: 22px 0 40px;
+  }
+
+  ul.points {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border-top: 1px solid var(--line);
+  }
+
+  ul.points li {
+    padding: 16px 0;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    gap: 14px;
+    align-items: baseline;
+  }
+
+  ul.points .mark {
+    font-family: 'Geist Mono', monospace;
+    font-size: 0.78rem;
+    color: var(--fg-soft);
+    flex: 0 0 auto;
+    padding-top: 2px;
+  }
+
+  ul.points .text {
+    font-size: 0.98rem;
+    color: var(--fg);
+  }
+
+  ul.points .text strong {
+    font-weight: 600;
+  }
+
+  ul.points .text span.sub {
+    display: block;
+    color: var(--fg-muted);
+    font-size: 0.92rem;
+    margin-top: 3px;
+  }
+
+  footer.site-footer {
+    border-top: 1px solid var(--line);
+    padding: 22px 0 32px;
+  }
+
+  footer.site-footer p {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--fg-soft);
+  }
+
+  @media (max-width: 420px) {
+    .wrap { padding: 0 16px; }
+    header.site-header { padding-top: 28px; }
+    main { padding: 32px 0 48px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <span class="wordmark">Scribatic</span>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <p class="eyebrow">On-device speech &amp; recall</p>
+    <h1>Your recordings, transcribed and searchable — without ever leaving your phone.</h1>
+    <p class="lede">Scribatic transcribes speech and answers questions about your own recordings using whisper.cpp and llama.cpp, running directly on your phone's CPU.</p>
+    <p class="coming-soon">Coming soon for iOS and Android.</p>
+
+    <ul class="points">
+      <li>
+        <span class="mark">01</span>
+        <span class="text">
+          <strong>Runs entirely on-device.</strong>
+          <span class="sub">Transcription and question-answering happen on your phone's CPU — no server ever sees your audio.</span>
+        </span>
+      </li>
+      <li>
+        <span class="mark">02</span>
+        <span class="text">
+          <strong>No network path to leave by.</strong>
+          <span class="sub">The Android build ships without the INTERNET permission; the iOS build contains no URLSession call site.</span>
+        </span>
+      </li>
+      <li>
+        <span class="mark">03</span>
+        <span class="text">
+          <strong>No account, no telemetry.</strong>
+          <span class="sub">Nothing to sign up for, nothing being measured or reported back.</span>
+        </span>
+      </li>
+      <li>
+        <span class="mark">04</span>
+        <span class="text">
+          <strong>Native on both platforms.</strong>
+          <span class="sub">Independent SwiftUI and Jetpack Compose apps sharing one C++ engine core.</span>
+        </span>
+      </li>
+    </ul>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p>Scribatic</p>
+  </div>
+</footer>
+
+</body>
+</html>
