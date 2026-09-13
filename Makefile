@@ -29,6 +29,16 @@ CONFIG         ?= Release
 IOS_SDK        ?= iphoneos
 ANDROID_ABI    ?= arm64-v8a
 
+# `xcodebuild test` needs a concrete simulator, so this is overridable rather
+# than pinned to whatever happens to be installed on one machine:
+#   make test-ios IOS_TEST_DEST='platform=iOS Simulator,name=iPhone 16 Pro'
+IOS_TEST_DEST  ?= platform=iOS Simulator,name=iPhone 16
+
+# xcodebuild is piped through xcbeautify when it is installed. Falling back to
+# `cat` matters: an absent xcbeautify makes the pipeline exit 127 and, with
+# pipefail, that would mask the real build result.
+XCFMT          := $(shell command -v xcbeautify >/dev/null 2>&1 && echo xcbeautify || echo cat)
+
 .PHONY: help setup-all setup-core setup-ios setup-android \
 	    build-ios build-android build-core \
 	    test-all test-core test-ios test-android \
@@ -105,6 +115,7 @@ build-core:
 
 build-ios: setup-ios
 	@echo "==> Building Scribatic.app ($(CONFIG), $(IOS_SDK))"
+	set -o pipefail
 	cd $(IOS_DIR) && xcodebuild \
 	    -project Scribatic.xcodeproj \
 	    -scheme ScribaticApp \
@@ -112,7 +123,7 @@ build-ios: setup-ios
 	    -sdk $(IOS_SDK) \
 	    -destination 'generic/platform=iOS' \
 	    SWIFT_OBJC_INTEROP_MODE=objcxx \
-	    build | xcbeautify || true
+	    build | $(XCFMT)
 
 build-android:
 	@echo "==> Building Scribatic APK ($(CONFIG), $(ANDROID_ABI))"
@@ -127,15 +138,16 @@ test-all: test-core test-android test-ios
 
 test-core: build-core
 	@echo "==> Running core C++ tests"
-	ctest --test-dir $(BUILD_DIR)/core --output-on-failure || true
+	ctest --test-dir $(BUILD_DIR)/core --output-on-failure
 
 test-ios:
 	@echo "==> Running iOS unit tests"
+	set -o pipefail
 	cd $(IOS_DIR) && xcodebuild \
 	    -project Scribatic.xcodeproj \
 	    -scheme ScribaticApp \
-	    -destination 'platform=iOS Simulator,name=iPhone 15 Pro' \
-	    test | xcbeautify || true
+	    -destination '$(IOS_TEST_DEST)' \
+	    test | $(XCFMT)
 
 test-android:
 	@echo "==> Running Android unit tests"
