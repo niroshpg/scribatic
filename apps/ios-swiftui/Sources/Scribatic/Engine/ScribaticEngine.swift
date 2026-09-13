@@ -18,7 +18,22 @@ import ScribaticCore   // C++ module, imported directly — no Objective-C++ lay
 actor ScribaticEngine {
 
     /// ARC-managed via `SWIFT_SHARED_REFERENCE`; no manual retain/release here.
-    private let engine: EngineInterface
+    ///
+    /// `nonisolated(unsafe)` because `pushAudio` is called from the
+    /// `AVAudioEngine` render thread and cannot hop to this actor — see the
+    /// note on that method. What makes the access safe is the lock-free SPSC
+    /// ring buffer on the C++ side, an invariant the compiler cannot see, so
+    /// it is asserted here instead of checked.
+    ///
+    /// The assertion covers exactly the two `nonisolated` entry points below
+    /// (`pushAudio`, `requestCancel`). Adding a third means arguing that the
+    /// method it calls is realtime-safe too — `drainSegments()` is only
+    /// lock-guarded, and the lifecycle calls synchronise nothing at all.
+    ///
+    /// TODO(backend): once `EngineImpl` synchronises every entry point, this
+    /// becomes `nonisolated let` with `SWIFT_SENDABLE` on the C++ class, and
+    /// the compiler checks the claim instead of taking it on trust.
+    nonisolated(unsafe) private let engine: EngineInterface
 
     private(set) var state: EngineState = .Idle
 
@@ -34,7 +49,7 @@ actor ScribaticEngine {
 
     /// Maps the GGUF weights and primes the KV cache.
     func warmUp() throws {
-        let status = engine.pointee.warmUp()
+        let status = engine.warmUp()
         guard status == .Ok else { throw ScribaticEngineError(status: status) }
         state = .Listening
     }
@@ -42,7 +57,7 @@ actor ScribaticEngine {
     /// Called on `scenePhase == .background` so the resident set shrinks before
     /// the jetsam daemon takes an interest in the process.
     func hibernate() {
-        engine.pointee.hibernate()
+        engine.hibernate()
         state = .Idle
     }
 
@@ -50,7 +65,7 @@ actor ScribaticEngine {
 
     /// Realtime-safe. Invoked directly from the audio tap thread.
     nonisolated func pushAudio(_ buffer: UnsafePointer<Float>, frameCount: Int) {
-        _ = engine.pointee.pushAudio(buffer, frameCount)
+        _ = engine.pushAudio(buffer, frameCount)
     }
 
     // MARK: - Inference
@@ -62,11 +77,11 @@ actor ScribaticEngine {
     /// model, and it removes any question of which executor a callback lands on.
     func transcribe() throws -> [TranscriptSegmentValue] {
         try Task.checkCancellation()
-        let status = engine.pointee.runTranscriptionPass()
+        let status = engine.runTranscriptionPass()
         guard status == .Ok || status == .Cancelled else {
             throw ScribaticEngineError(status: status)
         }
-        return engine.pointee.drainSegments().map(TranscriptSegmentValue.init)
+        return engine.drainSegments().map(TranscriptSegmentValue.init)
     }
 
     /// Continuous stream for the UI to consume with `for await`.
@@ -94,15 +109,15 @@ actor ScribaticEngine {
 
     func summarize(transcript: String) async throws -> String {
         try Task.checkCancellation()
-        return String(engine.pointee.summarize(std.string(transcript)))
+        return String(engine.summarize(std.string(transcript)))
     }
 
     func search(query: String, topK: Int32 = 8) -> [RetrievalHitValue] {
-        engine.pointee.search(std.string(query), topK).map(RetrievalHitValue.init)
+        engine.search(std.string(query), topK).map(RetrievalHitValue.init)
     }
 
     /// Cooperative cancellation, observed by the ggml abort callback.
     nonisolated func requestCancel() {
-        engine.pointee.requestCancel()
+        engine.requestCancel()
     }
 }

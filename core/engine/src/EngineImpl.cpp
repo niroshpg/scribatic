@@ -44,13 +44,6 @@ EngineInterface* EngineInterface::create(const EngineConfig& config,
     return engine;
 }
 
-void scribaticEngineRetain(EngineInterface* engine) noexcept {
-    if (auto* impl = static_cast<EngineImpl*>(engine)) { impl->retain(); }
-}
-
-void scribaticEngineRelease(EngineInterface* engine) noexcept {
-    if (auto* impl = static_cast<EngineImpl*>(engine)) { impl->release(); }
-}
 
 EngineImpl::EngineImpl(EngineConfig config) : config_(std::move(config)) {
     // Reserve the inference staging buffer up front. Steady-state transcription
@@ -192,3 +185,13 @@ std::string describeStatus(EngineStatus status) {
 }
 
 } // namespace scribatic::core
+
+// Global scope, matching the declarations in EngineInterface.hpp — Swift's
+// SWIFT_SHARED_REFERENCE looks these two names up in the global namespace.
+void scribaticEngineRetain(scribatic::core::EngineInterface* engine) noexcept {
+    if (auto* impl = static_cast<scribatic::core::EngineImpl*>(engine)) { impl->retain(); }
+}
+
+void scribaticEngineRelease(scribatic::core::EngineInterface* engine) noexcept {
+    if (auto* impl = static_cast<scribatic::core::EngineImpl*>(engine)) { impl->release(); }
+}

@@ -49,11 +49,34 @@ targets:
           Scribatic transcribes audio entirely on this device. Recordings and
           transcripts never leave your iPhone.
         UIBackgroundModes: [audio]
+        CFBundleShortVersionString: "0.1.0"
+        # Load-bearing, not cosmetic: with file sharing on, the whole app
+        # container is exposed over USB/Finder, which would put recordings and
+        # the transcript database on a host machine. Regenerating the plist
+        # without this key silently revokes that guarantee.
+        UIFileSharingEnabled: false
         # No NSAppTransportSecurity keys: the app makes no network requests.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.scribatic.app
         SWIFT_OBJC_BRIDGING_HEADER: ""     # none needed — that is the point
+
+  # Unit tests run against the app bundle so they can reach internal types and
+  # the imported C++ module without a second copy of the interop settings.
+  ScribaticTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests
+    dependencies:
+      - target: ScribaticApp
+    settings:
+      base:
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/ScribaticApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ScribaticApp"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        # The test bundle has no checked-in plist; there is nothing in it worth
+        # reviewing, unlike the app's.
+        GENERATE_INFOPLIST_FILE: YES
 
   # The shared C++ core, driven by its own CMakeLists via a script phase so the
   # exact same compilation flags are used on both platforms.

@@ -38,13 +38,18 @@
 #endif
 
 namespace scribatic::core {
-
 class EngineInterface;
+} // namespace scribatic::core
 
-// Retain/release shims exported for the Swift importer. Declared before the
-// class so the SWIFT_SHARED_REFERENCE attribute can name them.
-void scribaticEngineRetain(EngineInterface* engine) noexcept;
-void scribaticEngineRelease(EngineInterface* engine) noexcept;
+// Retain/release shims for the Swift importer. These sit at GLOBAL scope on
+// purpose: SWIFT_SHARED_REFERENCE resolves the two names it is given in the
+// global namespace, and a `scribatic::core::` qualified pair fails to resolve
+// with "cannot find retain function". They are declared before the class so
+// the attribute can name them.
+void scribaticEngineRetain(scribatic::core::EngineInterface* engine) noexcept;
+void scribaticEngineRelease(scribatic::core::EngineInterface* engine) noexcept;
+
+namespace scribatic::core {
 
 /// Abstract facade over the whisper.cpp + llama.cpp + SQLite-VSS pipeline.
 /// Concrete implementation lives in `src/EngineImpl.cpp`; neither app links

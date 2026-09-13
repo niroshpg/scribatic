@@ -66,7 +66,7 @@ JNIEXPORT void JNICALL
 Java_com_scribatic_app_engine_TranscriptionEngine_nativeDestroy(
         JNIEnv* /*env*/, jobject /*thiz*/, jlong handle) {
     if (handle != 0) {
-        scribatic::core::scribaticEngineRelease(asEngine(handle));
+        ::scribaticEngineRelease(asEngine(handle));
     }
 }
 

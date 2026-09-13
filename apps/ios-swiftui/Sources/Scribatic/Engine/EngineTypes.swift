@@ -1,6 +1,14 @@
 import Foundation
 import ScribaticCore
 
+// The C++ side declares everything inside `namespace scribatic::core`, which
+// the importer surfaces as the nested enum `scribatic.core`. These aliases let
+// call sites spell the types the way the C++ headers do, without repeating the
+// namespace at every use.
+typealias EngineStatus = scribatic.core.EngineStatus
+typealias EngineState = scribatic.core.EngineState
+typealias EngineInterface = scribatic.core.EngineInterface
+
 /// Swift-native mirrors of the C++ value types.
 ///
 /// The C++ structs are imported directly and are perfectly usable, but they are
