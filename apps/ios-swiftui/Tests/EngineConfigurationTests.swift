@@ -22,12 +22,28 @@ final class EngineConfigurationTests: XCTestCase {
             in: .userDomainMask,
             appropriateFor: nil,
             create: true
-        ).path()
+        ).path(percentEncoded: false)
 
         for path in [configuration.whisperModelPath,
                      configuration.llamaModelPath,
                      configuration.databasePath] {
             XCTAssertTrue(path.hasPrefix(support), "\(path) escapes the app container")
+        }
+    }
+
+    /// Regression guard. `URL.path()` defaults to percentEncoded: true, which
+    /// renders "Application Support" as "Application%20Support". The C++ side
+    /// stats the string verbatim, so an encoded path means the engine reports
+    /// ModelNotFound forever, no matter where the weights are placed. The app
+    /// built and launched cleanly with this bug; only running it revealed it.
+    func testConfigurationPathsAreNotPercentEncoded() throws {
+        let configuration = try ScribaticEngine.Configuration.default()
+
+        for path in [configuration.whisperModelPath,
+                     configuration.llamaModelPath,
+                     configuration.databasePath] {
+            XCTAssertFalse(path.contains("%20"), "\(path) is percent-encoded; stat() will not find it")
+            XCTAssertFalse(path.contains("%"), "\(path) looks percent-encoded")
         }
     }
 

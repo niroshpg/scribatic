@@ -69,10 +69,15 @@ extension ScribaticEngine {
                 appropriateFor: nil,
                 create: true
             )
+            // percentEncoded: false is load-bearing. URL.path() defaults to
+            // percentEncoded: true, which turns "Application Support" into
+            // "Application%20Support" — a directory that does not exist. The
+            // C++ side stats the path verbatim, so the engine reported
+            // ModelNotFound no matter where the weights actually were.
             return Configuration(
-                whisperModelPath: support.appending(path: "ggml-base.en.bin").path(),
-                llamaModelPath: support.appending(path: "insight-q4_k_m.gguf").path(),
-                databasePath: support.appending(path: "scribatic.sqlite").path()
+                whisperModelPath: support.appending(path: "ggml-base.en.bin").path(percentEncoded: false),
+                llamaModelPath: support.appending(path: "insight-q4_k_m.gguf").path(percentEncoded: false),
+                databasePath: support.appending(path: "scribatic.sqlite").path(percentEncoded: false)
             )
         }
 
