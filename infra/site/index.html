@@ -171,6 +171,38 @@
     margin-top: 3px;
   }
 
+  section.follow {
+    margin-top: 40px;
+  }
+
+  section.follow h2 {
+    font-family: 'Instrument Serif', Georgia, 'Times New Roman', serif;
+    font-weight: 400;
+    font-size: 1.3rem;
+    margin: 0 0 10px;
+    color: var(--fg);
+  }
+
+  section.follow p {
+    margin: 0;
+    font-size: 0.95rem;
+    color: var(--fg-muted);
+    max-width: 52ch;
+  }
+
+  section.follow a {
+    color: var(--fg);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-decoration-color: var(--line);
+  }
+
+  section.follow a:hover,
+  section.follow a:focus-visible {
+    color: var(--accent);
+    text-decoration-color: var(--accent);
+  }
+
   footer.site-footer {
     border-top: 1px solid var(--line);
     padding: 22px 0 32px;
@@ -255,6 +287,16 @@
         </span>
       </li>
     </ul>
+
+    <section class="follow">
+      <h2>Following along</h2>
+      <p>There is no waitlist and no signup form here, because there is nothing
+         on this page that collects anything about you. The repository is the
+         most reliable signal that something has shipped &mdash;
+         <a href="https://github.com/niroshpg/scribatic">watch or star it on GitHub</a>.
+         If you would rather just say something,
+         <a href="mailto:info@scribatic.com">info@scribatic.com</a> reaches a person.</p>
+    </section>
   </div>
 </main>
 
