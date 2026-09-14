@@ -21,7 +21,26 @@ apps/android-compose/local.properties
 apps/android-compose/**/build/
 *.apk
 *.aab
+
+# --- Signing and release credentials -----------------------------------------
+# Nothing in this section may ever be committed. The repository is public, and
+# an upload key or an API key in history is a rotation exercise, not a mistake
+# you can quietly delete. Templates ending in .template are the tracked half.
 *.keystore
+*.jks
+keystore.properties
+**/fastlane/.env
+.env
+*.env
+!*.env.example
+**/fastlane/AuthKey*.p8
+*.p8
+**/fastlane/play-service-account.json
+**/fastlane/report.xml
+**/fastlane/README.md
+**/fastlane/Preview.html
+**/fastlane/test_output/
+**/fastlane/screenshots/
 
 # --- Model weights -----------------------------------------------------------
 # Hundreds of MB each; fetched via `make fetch-models`.

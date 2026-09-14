@@ -1,0 +1,100 @@
+default_platform(:android)
+
+AAB     = "app/build/outputs/bundle/release/app-release.aab".freeze
+MAPPING = "app/build/outputs/mapping/release/mapping.txt".freeze
+MAPPING_ARCHIVE = "playstore/metadata/mapping".freeze
+
+def app_version
+  gradle = File.read("../app/build.gradle.kts")
+  name = gradle[/versionName\s*=\s*"([^"]+)"/, 1]
+  code = gradle[/versionCode\s*=\s*(\d+)/, 1]
+  [name, code]
+end
+
+def require_signing!
+  return if File.exist?("../keystore.properties")
+
+  UI.user_error!(
+    "No keystore.properties — the bundle would come out unsigned and Play " \
+    "would reject it. Copy keystore.properties.template and fill it in."
+  )
+end
+
+platform :android do
+  desc "Run unit tests"
+  lane :test do
+    gradle(task: "testDebugUnitTest")
+  end
+
+  desc "Build a signed release AAB and archive its R8 mapping"
+  lane :build do
+    require_signing!
+
+    gradle(task: "clean")
+    gradle(task: "bundle", build_type: "Release")
+
+    # Archive the mapping immediately. It lives under build/, so the next
+    # `clean` destroys it — and without the mapping for this exact build its
+    # release crash reports are unreadable.
+    name, code = app_version
+    if File.exist?("../#{MAPPING}")
+      archive = "../#{MAPPING_ARCHIVE}/mapping-v#{name}-#{code}.txt.gz"
+      FileUtils.mkdir_p(File.dirname(archive))
+      Zlib::GzipWriter.open(archive) { |gz| gz.write(File.read("../#{MAPPING}")) }
+      UI.success("mapping → #{archive}")
+    else
+      UI.important("No mapping.txt — is isMinifyEnabled off?")
+    end
+    UI.success("AAB → #{lane_context[SharedValues::GRADLE_AAB_OUTPUT_PATH]}")
+  end
+
+  desc "Upload the EXISTING release AAB to Internal testing"
+  desc "Dry run first:  bundle exec fastlane internal validate_only:true"
+  lane :internal do |options|
+    # Deliberately does not rebuild.
+    #
+    # R8's output is not guaranteed byte-reproducible, so rebuilding here would
+    # upload an AAB whose mapping no longer matches the archived one — and a
+    # mismatched mapping deobfuscates into plausible nonsense, which is worse
+    # than having none. Run `fastlane build` first, test that artifact, then
+    # upload exactly it.
+    UI.user_error!("No AAB at #{AAB} — run `fastlane build` first") unless File.exist?("../#{AAB}")
+
+    name, code = app_version
+    UI.message("Uploading #{name} (#{code}) to Internal testing")
+
+    upload_to_play_store(
+      track: "internal",
+      # NOT "draft". A draft release is never served: the tester opt-in link
+      # silently hands out the previous build instead.
+      release_status: "completed",
+      aab: AAB,
+      mapping: File.exist?("../#{MAPPING}") ? MAPPING : nil,
+      skip_upload_apk: true,
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true,
+      skip_upload_changelogs: false,
+      # validate_only:true sends everything to Play and validates it but commits
+      # nothing. Use it to prove the credentials, the track permission and the
+      # AAB before the real run — especially for the FIRST upload, which is what
+      # claims the com.scribatic.app package name permanently.
+      validate_only: options.fetch(:validate_only, false)
+    )
+  end
+
+  desc "Promote the latest Internal build to Production (staged 20%)"
+  lane :promote do
+    upload_to_play_store(
+      track: "internal",
+      track_promote_to: "production",
+      rollout: "0.2",
+      skip_upload_aab: true,
+      skip_upload_apk: true,
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true,
+      skip_upload_changelogs: true
+    )
+  end
+end

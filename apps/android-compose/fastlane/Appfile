@@ -1,0 +1,11 @@
+package_name("com.scribatic.app")
+
+# Google Play service-account key (JSON). Gitignored — create it in
+# Cloud Console > IAM > Service Accounts, then grant it access in
+# Play Console > Users & permissions.
+#
+# The path is resolved from the directory fastlane RUNS from
+# (apps/android-compose/), not from fastlane/ — so it needs the fastlane/
+# prefix. Without it, supply fails with "Could not find service account json
+# file at path .../play-service-account.json".
+json_key_file("fastlane/play-service-account.json")
