@@ -54,14 +54,21 @@ target_compile_definitions(scribatic_core PUBLIC
 
 # --- Backend submodules --------------------------------------------------
 # Vendored by `make setup-all`; guarded so the tree configures before fetch.
-if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/vendor/whisper.cpp/CMakeLists.txt)
-    add_subdirectory(vendor/whisper.cpp EXCLUDE_FROM_ALL)
-    target_link_libraries(scribatic_core PRIVATE whisper)
-endif()
-
+#
+# ORDER IS LOAD-BEARING. Both backends vendor their own copy of ggml, and
+# whichever is added first defines the `ggml` target for the whole build; the
+# second one finds it already defined and compiles against those headers.
+# llama.cpp tracks ggml far more closely than whisper.cpp does, so llama goes
+# first. With whisper first, llama's sources compile against whisper's older
+# ggml and fail on symbols it does not have yet (ggml_prec_set_acc).
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/vendor/llama.cpp/CMakeLists.txt)
     add_subdirectory(vendor/llama.cpp EXCLUDE_FROM_ALL)
     target_link_libraries(scribatic_core PRIVATE llama)
+endif()
+
+if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/vendor/whisper.cpp/CMakeLists.txt)
+    add_subdirectory(vendor/whisper.cpp EXCLUDE_FROM_ALL)
+    target_link_libraries(scribatic_core PRIVATE whisper)
 endif()
 
 # --- Tests ----------------------------------------------------------------

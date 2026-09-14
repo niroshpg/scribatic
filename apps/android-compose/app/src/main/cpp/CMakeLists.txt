@@ -62,9 +62,15 @@ else()
 endif()
 
 # Link-time optimisation across the static core and the JNI shim.
-set_target_properties(scribatic_engine PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
+#
+# Set the flags directly rather than via INTERPROCEDURAL_OPTIMIZATION: CMake's
+# IPO support for Android also injects -fuse-ld=gold, and NDK r27 removed the
+# gold linker, so the property fails the link with "invalid linker name". The
+# NDK default linker (lld) handles thin LTO natively.
+target_compile_options(scribatic_engine PRIVATE -flto=thin)
 
 target_link_options(scribatic_engine PRIVATE
+    -flto=thin
     -Wl,--gc-sections        # drop unreferenced ggml kernels
     -Wl,--exclude-libs,ALL   # do not re-export static-lib symbols from the .so
     -Wl,-z,max-page-size=16384  # 16 KB page alignment required by Android 15+
