@@ -19,7 +19,12 @@ jobs:
     runs-on: ubuntu-latest
     needs: privacy-invariant
     steps:
+      # The vendored backends are needed here on purpose. Without them the
+      # EXISTS guards in core/engine/CMakeLists.txt skip whisper and llama
+      # entirely, and the build that CI verifies is not the build anyone runs.
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - name: Build and test shared C++ core
         run: make test-core
 
@@ -28,6 +33,8 @@ jobs:
     needs: core
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
