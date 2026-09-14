@@ -49,7 +49,29 @@ targets:
           Scribatic transcribes audio entirely on this device. Recordings and
           transcripts never leave your iPhone.
         UIBackgroundModes: [audio]
+        # Required for App Store validation: without a launch screen the bundle
+        # is rejected as not supporting iPad multitasking. An empty UILaunchScreen
+        # is the iOS 14+ form and gives a plain system-coloured launch — there is
+        # no splash artwork to show, and the app is on screen immediately.
+        UILaunchScreen: {}
+        # Also required by App Store validation. The target is universal, and an
+        # iPad build that supports multitasking must declare all four; iPhone
+        # omits upside-down, which is the platform convention.
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        "UISupportedInterfaceOrientations~ipad":
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         CFBundleShortVersionString: "0.1.0"
+        # Must indirect through the build setting, not a literal. XcodeGen writes
+        # whatever is here verbatim, so a hardcoded number makes the
+        # CURRENT_PROJECT_VERSION that fastlane passes inert — and App Store
+        # Connect rejects a second upload carrying a build number it has seen.
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         # Load-bearing, not cosmetic: with file sharing on, the whole app
         # container is exposed over USB/Finder, which would put recordings and
         # the transcript database on a host machine. Regenerating the plist
@@ -66,6 +88,10 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.scribatic.app
         SWIFT_OBJC_BRIDGING_HEADER: ""     # none needed — that is the point
+        # App Store validation rejects a build with no 120x120 iPhone icon, and
+        # it rejects any icon carrying an alpha channel. The catalog holds one
+        # opaque 1024 master and Xcode derives the rest.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
   # Unit tests run against the app bundle so they can reach internal types and
   # the imported C++ module without a second copy of the interop settings.

@@ -36,6 +36,12 @@ keystore.properties
 **/fastlane/AuthKey*.p8
 *.p8
 **/fastlane/play-service-account.json
+# Dropped into the tree by fastlane's get_certificates / get_provisioning_profile.
+# The .p12 carries the distribution private key; none of it belongs in git.
+*.mobileprovision
+*.cer
+*.p12
+*.certSigningRequest
 **/fastlane/report.xml
 **/fastlane/README.md
 **/fastlane/Preview.html

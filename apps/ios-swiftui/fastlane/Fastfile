@@ -83,6 +83,13 @@ platform :ios do
     number = build_number
     UI.message("Build number #{number}")
 
+    # project.yml deliberately does not carry DEVELOPMENT_TEAM: this repository
+    # is public, and a team id is an account identifier. Without it the archive
+    # fails with "Signing for ScribaticApp requires a development team", so it
+    # is passed through at build time from fastlane/.env instead.
+    team = ENV["DEVELOPMENT_TEAM"]
+    UI.user_error!("DEVELOPMENT_TEAM is not set — see fastlane/.env.example") if team.nil? || team.empty?
+
     regenerate_project
     signing
     profile = lane_context[SharedValues::SIGH_NAME]
@@ -100,6 +107,7 @@ platform :ios do
       # simulator work and nothing has to be regenerated to switch.
       xcargs: [
         "CURRENT_PROJECT_VERSION=#{number}",
+        "DEVELOPMENT_TEAM=#{team}",
         "CODE_SIGN_STYLE=Manual",
         "CODE_SIGN_IDENTITY='Apple Distribution'",
         "PROVISIONING_PROFILE_SPECIFIER='#{profile}'"
