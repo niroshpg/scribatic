@@ -378,6 +378,8 @@ Recorded in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). In brief:
 
 Engine scaffolding, threading model, memory residency, bridges and build pipelines are implemented and building. Backend integration points are marked `TODO(backend)` in `EngineImpl.cpp` and are wired up once `make setup-all` has vendored the submodules.
 
+Because those integration points are still open, neither app transcribes anything yet, and the two platforms are not at the same stage — the iOS app constructs and warms the engine, the Android app does not yet. [`docs/TESTING.md`](docs/TESTING.md) covers what runs today, how to get each app onto a simulator or emulator, and the known gaps.
+
 ## Licence
 
 MIT — see [`LICENSE`](LICENSE).
