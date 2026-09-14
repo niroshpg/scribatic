@@ -55,6 +55,12 @@ targets:
         # the transcript database on a host machine. Regenerating the plist
         # without this key silently revokes that guarantee.
         UIFileSharingEnabled: false
+        # Declares no non-exempt encryption. The app implements no cryptography
+        # of its own and makes no network requests at all; the only encryption
+        # involved is the OS file protection applied to its container, which is
+        # the standard exemption. Without this key App Store Connect blocks every
+        # TestFlight build behind a manual compliance answer.
+        ITSAppUsesNonExemptEncryption: false
         # No NSAppTransportSecurity keys: the app makes no network requests.
     settings:
       base:
