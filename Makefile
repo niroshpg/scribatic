@@ -39,7 +39,7 @@ IOS_TEST_DEST  ?= platform=iOS Simulator,name=iPhone 16
 # pipefail, that would mask the real build result.
 XCFMT          := $(shell command -v xcbeautify >/dev/null 2>&1 && echo xcbeautify || echo cat)
 
-.PHONY: help setup-all setup-core setup-ios setup-android \
+.PHONY: help setup-all setup-core setup-ios setup-ios-backends setup-android \
 	    build-ios build-android build-core \
 	    test-all test-core test-ios test-android \
 	    fmt lint clean distclean doctor
@@ -81,6 +81,41 @@ setup-core:
 	    git clone --depth 1 $(LLAMA_REPO) $(VENDOR_DIR)/llama.cpp; \
 	fi
 	@echo "==> Backends vendored. Fetch weights with: make fetch-models"
+
+IOS_BACKEND_DIR := $(IOS_DIR)/vendor-lib
+
+## Build the vendored backends as static libraries for iOS, device and
+## simulator. The Xcode target compiles core/engine/src directly rather than
+## going through CMake, so without this whisper.h is simply not on its header
+## path and the app cannot link a transcriber.
+##
+## CPU only: Metal is off deliberately. The engine's performance story is the
+## NEON/dotprod CPU path, and a Metal build drags in a shader library that has
+## to be embedded and signed for no benefit at base-model sizes.
+setup-ios-backends:
+	@echo "==> Building whisper for iOS (device + simulator)"
+	@test -f $(VENDOR_DIR)/whisper.cpp/CMakeLists.txt || { \
+	    echo "whisper.cpp not vendored. Run: git submodule update --init --recursive"; \
+	    exit 1; }
+	for sdk in iphoneos iphonesimulator; do \
+	    cmake -S $(VENDOR_DIR)/whisper.cpp -B $(BUILD_DIR)/whisper-$$sdk \
+	        -DCMAKE_SYSTEM_NAME=iOS \
+	        -DCMAKE_OSX_SYSROOT=$$sdk \
+	        -DCMAKE_OSX_ARCHITECTURES=arm64 \
+	        -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
+	        -DCMAKE_BUILD_TYPE=Release \
+	        -DBUILD_SHARED_LIBS=OFF \
+	        -DWHISPER_BUILD_EXAMPLES=OFF \
+	        -DWHISPER_BUILD_TESTS=OFF \
+	        -DWHISPER_BUILD_SERVER=OFF \
+	        -DGGML_METAL=OFF \
+	        -DGGML_OPENMP=OFF \
+	        -DGGML_ACCELERATE=ON; \
+	    cmake --build $(BUILD_DIR)/whisper-$$sdk --config Release --parallel; \
+	    mkdir -p $(IOS_BACKEND_DIR)/$$sdk; \
+	    find $(BUILD_DIR)/whisper-$$sdk -name '*.a' -exec cp {} $(IOS_BACKEND_DIR)/$$sdk/ \; ; \
+	done
+	@echo "==> Backends staged in $(IOS_BACKEND_DIR)"
 
 ## Symlink the shared headers into the module-map directory and generate the
 ## .xcodeproj. The project file is an artefact and is never committed.

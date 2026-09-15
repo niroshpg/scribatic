@@ -126,6 +126,16 @@ final class TranscriptionModel {
         streamTask = nil
         hasRecording = capture.recordingURL != nil
         phase = .ready
+
+        // Decode the tail before the recording is considered finished. The
+        // decode window is five seconds, so without this everything said since
+        // the last window boundary would simply never be transcribed.
+        Task { [weak self] in
+            guard let self, let engine = self.engine else { return }
+            if let tail = try? await engine.flush(), !tail.isEmpty {
+                self.segments.append(contentsOf: tail)
+            }
+        }
     }
 
     /// Discards the transcript and the captured audio. Deleting the file rather

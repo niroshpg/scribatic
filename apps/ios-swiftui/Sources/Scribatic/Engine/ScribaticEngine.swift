@@ -70,6 +70,18 @@ actor ScribaticEngine {
 
     // MARK: - Inference
 
+    /// Decodes whatever audio is still buffered, however short, and returns
+    /// what it produced. Called when recording stops: without it the audio
+    /// accumulated since the last full decode window is discarded, which reads
+    /// as the app losing the end of the last sentence.
+    func flush() throws -> [TranscriptSegmentValue] {
+        let status = engine.flush()
+        guard status == .Ok || status == .Cancelled else {
+            throw ScribaticEngineError(status: status)
+        }
+        return engine.drainSegments().map(TranscriptSegmentValue.init)
+    }
+
     /// One encode/decode pass, returning finalised segments.
     ///
     /// Returning a value instead of invoking a callback is deliberate: it keeps

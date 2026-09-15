@@ -87,6 +87,12 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.scribatic.app
+        # Device and simulator slices are separate static libraries, so the
+        # search path is keyed on the SDK being built. A single path would link
+        # the wrong architecture and fail at the very end of a long build.
+        LIBRARY_SEARCH_PATHS[sdk=iphoneos*]: "$(SRCROOT)/vendor-lib/iphoneos"
+        LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]: "$(SRCROOT)/vendor-lib/iphonesimulator"
+        OTHER_LDFLAGS: "-lwhisper -lggml -lggml-base -lggml-cpu -lggml-blas -framework Accelerate"
         SWIFT_OBJC_BRIDGING_HEADER: ""     # none needed — that is the point
         # App Store validation rejects a build with no 120x120 iPhone icon, and
         # it rejects any icon carrying an alpha channel. The catalog holds one
@@ -125,6 +131,16 @@ targets:
         GCC_OPTIMIZATION_LEVEL: "3"
         OTHER_CFLAGS: "-ffast-math -funroll-loops"
         DEFINES_MODULE: YES
+        # This target compiles the engine sources directly instead of going
+        # through core/engine/CMakeLists.txt, so the vendored backend headers
+        # have to be named here. Built by `make setup-ios-backends`.
+        # $(inherited) is load-bearing: without it this replaces the project
+        # level paths rather than adding to them, and the engine can no longer
+        # find its own public headers.
+        HEADER_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(SRCROOT)/../../core/engine/vendor/whisper.cpp/include"
+          - "$(SRCROOT)/../../core/engine/vendor/whisper.cpp/ggml/include"
 
 schemes:
   ScribaticApp:

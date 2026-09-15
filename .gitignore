@@ -60,3 +60,6 @@ models/*.gguf
 
 # --- Local session notes -----------------------------------------------------
 CONTEXT.md
+
+# Vendored backend static libraries, built by `make setup-ios-backends`.
+apps/ios-swiftui/vendor-lib/
