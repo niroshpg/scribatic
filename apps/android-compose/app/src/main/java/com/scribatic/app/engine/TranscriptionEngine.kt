@@ -94,6 +94,15 @@ class TranscriptionEngine private constructor(
         }
     }.flowOn(dispatcher)
 
+    /// Decodes whatever audio is still buffered, however short. Called when
+    /// recording stops: the decode window is several seconds, so without this
+    /// everything said since the last window boundary is discarded and the app
+    /// appears to lose the end of the recording.
+    suspend fun flush(): List<TranscriptSegment> = withContext(dispatcher) {
+        nativeFlush(nativeHandle.get())
+        decodeSegments(nativeDrainSegments(nativeHandle.get()))
+    }
+
     suspend fun summarize(transcript: String): String = withContext(dispatcher) {
         nativeSummarize(nativeHandle.get(), transcript)
     }
@@ -137,6 +146,7 @@ class TranscriptionEngine private constructor(
     private external fun nativeState(handle: Long): Int
     private external fun nativePushAudio(handle: Long, pcm: FloatArray, frameCount: Int): Int
     private external fun nativeRunTranscriptionPass(handle: Long): Int
+    private external fun nativeFlush(handle: Long): Int
     private external fun nativeDrainSegments(handle: Long): Array<String>
     private external fun nativeSummarize(handle: Long, transcript: String): String
     private external fun nativeIndexNote(handle: Long, noteId: Long, text: String): Int

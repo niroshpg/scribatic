@@ -124,6 +124,15 @@ Java_com_scribatic_app_engine_TranscriptionEngine_nativeRunTranscriptionPass(
     return static_cast<jint>(asEngine(handle)->runTranscriptionPass());
 }
 
+JNIEXPORT jint JNICALL
+Java_com_scribatic_app_engine_TranscriptionEngine_nativeFlush(
+        JNIEnv* /*env*/, jobject /*thiz*/, jlong handle) {
+    if (handle == 0) {
+        return static_cast<jint>(scribatic::core::EngineStatus::NotInitialized);
+    }
+    return static_cast<jint>(asEngine(handle)->flush());
+}
+
 /// Returns finalised segments as a flat String[]: [startMs, endMs, text, conf]
 /// per segment. A flat array costs one JNI round trip; constructing typed Java
 /// objects here would cost four calls per segment and pin the env far longer.
