@@ -85,7 +85,20 @@ public:
 
     // -- Inference (background threads only) -------------------------------
     /// Drains the ring buffer and runs one whisper.cpp encode/decode pass.
+    ///
+    /// Audio is accumulated into a decode window rather than transcribed the
+    /// instant it arrives: the caller polls several times a second, and a
+    /// fraction of a second of speech gives the decoder almost nothing to work
+    /// with. A pass therefore often buffers and returns without producing a
+    /// segment, which is not an error.
     virtual EngineStatus runTranscriptionPass() noexcept = 0;
+
+    /// Decodes whatever audio is still buffered, however short.
+    ///
+    /// Call this when recording stops. Without it the tail of every recording —
+    /// anything accumulated since the last full window — is silently discarded,
+    /// which reads as the app dropping the end of the last sentence.
+    virtual EngineStatus flush() noexcept = 0;
 
     /// Moves finalised segments out of the engine. Returning by value keeps the
     /// Swift importer on the happy path (no callbacks, no escaping pointers).

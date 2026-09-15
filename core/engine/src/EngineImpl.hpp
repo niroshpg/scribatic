@@ -10,8 +10,12 @@
 #include "scribatic/core/ModelResidency.hpp"
 
 #include <atomic>
+#include <cstdint>
 #include <deque>
 #include <mutex>
+#include <vector>
+
+struct whisper_context;
 
 namespace scribatic::core {
 
@@ -26,6 +30,7 @@ public:
 
     EngineStatus pushAudio(const float* pcmFrames, std::size_t frameCount) noexcept override;
     EngineStatus runTranscriptionPass() noexcept override;
+    EngineStatus flush() noexcept override;
 
     std::vector<TranscriptSegment> drainSegments() override;
     std::string                    summarize(const std::string& transcript) override;
@@ -45,6 +50,20 @@ private:
     static constexpr std::size_t kRingCapacity   = kSampleRate * 30;
     static constexpr std::size_t kEmbeddingDims  = 384;
 
+    /// The UI polls a pass roughly every 400 ms. Handing whisper 400 ms of
+    /// audio at a time would be both wasteful and inaccurate — the model has
+    /// almost no context to work with and re-runs its encoder for a fraction of
+    /// a word. Audio is accumulated until there is a window worth decoding.
+    static constexpr std::size_t kWindowSamples  = kSampleRate * 5;
+
+    /// A final flush still needs enough audio to be worth a pass; below this it
+    /// is noise or a stray syllable.
+    static constexpr std::size_t kMinFlushSamples = kSampleRate / 2;
+
+    /// Runs whisper over `window_`, appending finalised segments. Caller must
+    /// not hold segmentMutex_.
+    EngineStatus decodeWindow(bool flushing) noexcept;
+
     EngineConfig    config_;
     AudioRingBuffer ring_{kRingCapacity};
     ModelResidency  whisperWeights_;
@@ -61,8 +80,17 @@ private:
     std::mutex                    segmentMutex_;
     std::deque<TranscriptSegment> pendingSegments_;
 
-    // TODO(backend): whisper_context* / llama_context* / sqlite3* handles land
-    // here once `make setup-all` has vendored the submodules.
+    /// Audio waiting for a decode, and how many samples have already been
+    /// decoded before it. whisper reports timestamps relative to the window it
+    /// was given, so the offset is what makes them absolute for the transcript.
+    std::vector<float> window_;
+    std::int64_t       decodedSamples_ = 0;
+
+    /// Owned whisper handle. Declared as an opaque pointer so this header pulls
+    /// in no backend type even though it is already private to the library.
+    whisper_context* whisper_ = nullptr;
+
+    // TODO(backend): llama_context* / sqlite3* handles land here next.
 };
 
 } // namespace scribatic::core

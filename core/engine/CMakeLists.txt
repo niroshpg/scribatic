@@ -76,7 +76,24 @@ endif()
 if (NOT CMAKE_CROSSCOMPILING)
     enable_testing()
     add_executable(scribatic_core_tests tests/RingBufferTests.cpp)
+    add_executable(scribatic_transcription_tests tests/TranscriptionTests.cpp)
+    target_link_libraries(scribatic_transcription_tests PRIVATE scribatic_core Threads::Threads)
+    target_include_directories(scribatic_transcription_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    # SCRIBATIC_ROOT lets the test find the uncommitted weights and the fixture
+    # regardless of where the build tree sits.
+    add_test(NAME scribatic_transcription_tests COMMAND scribatic_transcription_tests)
+    set_tests_properties(scribatic_transcription_tests PROPERTIES
+        ENVIRONMENT "SCRIBATIC_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/../..")
     target_link_libraries(scribatic_core_tests PRIVATE scribatic_core Threads::Threads)
     target_include_directories(scribatic_core_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     add_test(NAME scribatic_core_tests COMMAND scribatic_core_tests)
+
+    # Both suites assert with <cassert>, and a Release build defines NDEBUG,
+    # which compiles every assert() to nothing. `make test-core` defaults to
+    # Release, so without this the tests ran and reported success while
+    # checking absolutely nothing. Undefining it keeps assertions live in every
+    # configuration; these binaries are never shipped.
+    foreach(test_target scribatic_core_tests scribatic_transcription_tests)
+        target_compile_options(${test_target} PRIVATE -UNDEBUG)
+    endforeach()
 endif()
