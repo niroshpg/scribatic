@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -49,6 +51,11 @@ private val Accent = Color(0xFFEB6C36)
  */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Explicit rather than implicit. From Android 15 an app targeting SDK 35
+        // is laid out edge to edge whether it asks or not; declaring it here
+        // means older versions behave the same way instead of the layout
+        // depending on which OS it lands on.
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
@@ -73,7 +80,15 @@ private fun TranscriptScreen(viewModel: TranscriptionViewModel = viewModel()) {
 
     LaunchedEffect(Unit) { viewModel.prepare() }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    // safeDrawingPadding keeps content clear of the status bar and the gesture
+    // pill. Without it the transport row is drawn underneath the navigation bar
+    // and the record button cannot be pressed. The Surface still paints edge to
+    // edge behind them, which is the point of going edge to edge at all.
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .safeDrawingPadding(),
+    ) {
         Text(
             text = "Transcript",
             style = MaterialTheme.typography.headlineMedium,
