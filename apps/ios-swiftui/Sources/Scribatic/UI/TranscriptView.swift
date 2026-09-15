@@ -19,10 +19,18 @@ struct TranscriptView: View {
                 // readable and the layout deliberate rather than stretched.
                 .frame(maxWidth: 720)
                 .frame(maxWidth: .infinity)
-                .safeAreaInset(edge: .bottom) { statusBar }
-                .task { await model.start() }
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Clear", systemImage: "trash") { model.clear() }
+                            .disabled(!model.canClear)
+                    }
+                }
+                .safeAreaInset(edge: .bottom) { transportBar }
+                .task { await model.prepare() }
         }
     }
+
+    // MARK: - Body
 
     @ViewBuilder
     private var content: some View {
@@ -33,7 +41,7 @@ struct TranscriptView: View {
                 Text(failure)
             } actions: {
                 Button("Try again") {
-                    Task { await model.start() }
+                    Task { await model.prepare() }
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.scribaticAccent)
@@ -42,7 +50,7 @@ struct TranscriptView: View {
             ContentUnavailableView {
                 Label("Nothing transcribed yet", systemImage: "waveform")
             } description: {
-                Text("Speech picked up by the microphone is transcribed on this device and appears here. Nothing is uploaded.")
+                Text("Press record to start. Speech is transcribed on this device and appears here — nothing is uploaded, and the microphone is only open while you are recording.")
             }
         } else {
             List(model.segments) { segment in
@@ -63,49 +71,109 @@ struct TranscriptView: View {
         }
     }
 
-    /// The status was a `.caption` in a toolbar status slot: a few grey pixels
-    /// that read as one small word on a phone and vanished on an iPad. It is
-    /// now a legible bar pinned to the bottom edge, with a colour that carries
-    /// the state on its own.
-    private var statusBar: some View {
-        HStack(spacing: 10) {
-            Circle()
-                .fill(statusColor)
-                .frame(width: 10, height: 10)
+    // MARK: - Transport
 
-            Text(model.phase.label)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(model.phase.isFailure ? Color.primary : .secondary)
+    /// Record / pause / resume / stop / play, plus the status. Which controls
+    /// appear is driven entirely by the phase, so there is never a button that
+    /// does nothing in the current state.
+    private var transportBar: some View {
+        VStack(spacing: 12) {
+            Divider()
 
-            Spacer()
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(statusColor)
+                    .frame(width: 10, height: 10)
 
-            if !model.segments.isEmpty {
-                Text("^[\(model.segments.count) segment](inflect: true)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.tertiary)
+                Text(model.phase.label)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(model.phase.isFailure ? Color.primary : .secondary)
+
+                Spacer()
+
+                if !model.segments.isEmpty {
+                    Text("^[\(model.segments.count) segment](inflect: true)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                }
             }
+
+            HStack(spacing: 16) {
+                switch model.phase {
+                case .starting, .failed:
+                    EmptyView()
+
+                case .ready:
+                    recordButton
+                    if model.hasRecording {
+                        transportButton("Play", systemImage: "play.fill") { model.play() }
+                    }
+
+                case .recording:
+                    transportButton("Pause", systemImage: "pause.fill") { model.pauseRecording() }
+                    stopButton
+
+                case .paused:
+                    transportButton("Resume", systemImage: "play.fill") { model.resumeRecording() }
+                    stopButton
+
+                case .playing:
+                    transportButton("Stop", systemImage: "stop.fill") { model.stopPlayback() }
+                }
+            }
+            .frame(maxWidth: .infinity)
         }
         .padding(.horizontal, 20)
-        .padding(.vertical, 12)
+        .padding(.bottom, 12)
         .frame(maxWidth: 720)
         .frame(maxWidth: .infinity)
         .background(.bar)
-        .overlay(alignment: .top) { Divider() }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Engine status: \(model.phase.label)")
+    }
+
+    private var recordButton: some View {
+        Button {
+            Task { await model.startRecording() }
+        } label: {
+            Label("Record", systemImage: "mic.fill")
+                .font(.headline)
+                .padding(.horizontal, 8)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+        .tint(.scribaticAccent)
+        .accessibilityHint("Opens the microphone and begins transcribing on this device")
+    }
+
+    private var stopButton: some View {
+        transportButton("Stop", systemImage: "stop.fill") { model.stopRecording() }
+    }
+
+    private func transportButton(
+        _ title: String,
+        systemImage: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.headline)
+                .padding(.horizontal, 8)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.large)
     }
 
     private var statusColor: Color {
         switch model.phase {
-        case .idle:                    return .secondary
-        case .starting:                return .yellow
-        case .listening, .transcribing: return .scribaticAccent
-        case .failed:                  return .red
+        case .starting:            return .yellow
+        case .ready:               return .secondary
+        case .recording:           return .scribaticAccent
+        case .paused:              return .yellow
+        case .playing:             return .blue
+        case .failed:              return .red
         }
     }
 
     private func timestamp(_ segment: TranscriptSegmentValue) -> String {
-        let start = Duration.milliseconds(segment.startMs)
-        return start.formatted(.time(pattern: .minuteSecond))
+        Duration.milliseconds(segment.startMs).formatted(.time(pattern: .minuteSecond))
     }
 }
