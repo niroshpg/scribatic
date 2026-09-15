@@ -324,6 +324,88 @@ make lint              # clang-format --Werror, ktlint, Android lint
 bash scripts/verify_no_network.sh   # the privacy invariant
 ```
 
+### Local testing on a real device
+
+Simulators and emulators cover the UI, but the audio path and the inference
+timings only mean anything on hardware. Neither app bundles the weights, and
+nothing stages them on first launch yet, so a device needs the models copied in
+by hand before the engine will start.
+
+Fetch the weights once (about 1.4 GB total: whisper, the MiniLM embedder and the
+Qwen3 instruct model — see ADR-007):
+
+```bash
+make fetch-models
+```
+
+**Android.** The debug build is what `run-as` and `adb install -t` require:
+
+```bash
+export JAVA_HOME=/path/to/jdk-17
+export ANDROID_HOME=$HOME/Library/Android/sdk
+export PATH=$ANDROID_HOME/platform-tools:$PATH
+
+adb devices                       # note the serial; -s is required if more than one
+DEV=<serial from above>
+
+make build-android CONFIG=Debug
+adb -s $DEV install -r -t apps/android-compose/app/build/intermediates/apk/debug/app-debug.apk
+adb -s $DEV shell am start -n com.scribatic.app/.ui.MainActivity
+```
+
+Two things that are not obvious, both caused by `-Pandroid.injected.build.abi`
+in the `build-android` recipe: the APK lands in `build/intermediates/apk/debug/`
+rather than `build/outputs/apk/`, and the same flag marks it test-only, so
+`adb install` rejects it without `-t`.
+
+Stage the models into the app's private storage:
+
+```bash
+for m in ggml-base.en.bin insight-q4_k_m.gguf embed-minilm-l6-v2.gguf; do
+    adb -s $DEV push models/$m /data/local/tmp/
+    adb -s $DEV shell "run-as com.scribatic.app cp /data/local/tmp/$m files/"
+done
+```
+
+**iOS.** The device must be registered to the team; `-allowProvisioningUpdates`
+creates the development profile on demand:
+
+```bash
+xcrun devicectl list devices      # the identifier column
+DEV=<identifier from above>
+
+cd apps/ios-swiftui
+xcodebuild -project Scribatic.xcodeproj -scheme ScribaticApp \
+    -configuration Debug -destination "id=$DEV" \
+    -derivedDataPath /tmp/scribatic-dev \
+    -allowProvisioningUpdates DEVELOPMENT_TEAM=<your team id> build
+
+xcrun devicectl device install app --device $DEV \
+    /tmp/scribatic-dev/Build/Products/Debug-iphoneos/ScribaticApp.app
+xcrun devicectl device process launch --device $DEV --terminate-existing com.scribatic.app
+```
+
+`UIFileSharingEnabled` is deliberately false, so there is no Files-app route to
+the container — that is the privacy guarantee working as intended. `devicectl`
+reaches a development build's container without weakening it:
+
+```bash
+for m in ggml-base.en.bin insight-q4_k_m.gguf embed-minilm-l6-v2.gguf; do
+    xcrun devicectl device copy to --device $DEV \
+        --domain-type appDataContainer --domain-identifier com.scribatic.app \
+        --source models/$m \
+        --destination "Library/Application Support/$m"
+done
+```
+
+This does not work against a TestFlight build, only a development one. Inspect
+what landed with `xcrun devicectl device info files --device $DEV
+--domain-type appDataContainer --domain-identifier com.scribatic.app`.
+
+`EngineInterface::create()` stats every model path and returns `ModelNotFound`
+if any is missing, so the app reports "model file not found" until all three are
+in place — including the embedding model, which nothing reads yet.
+
 ### Working on the engine
 
 Iterate on `core/` against the host toolchain — it is a two-second loop instead of a two-minute one:
