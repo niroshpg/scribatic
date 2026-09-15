@@ -134,6 +134,7 @@ private fun TranscriptScreen(viewModel: TranscriptionViewModel = viewModel()) {
                         .background(
                             when (uiState.phase) {
                                 Phase.RECORDING -> Accent
+                                Phase.PLAYING -> MaterialTheme.colorScheme.primary
                                 Phase.FAILED -> MaterialTheme.colorScheme.error
                                 else -> MaterialTheme.colorScheme.outline
                             },
@@ -145,8 +146,12 @@ private fun TranscriptScreen(viewModel: TranscriptionViewModel = viewModel()) {
                     modifier = Modifier.padding(start = 8.dp),
                 )
                 Box(modifier = Modifier.weight(1f))
-                if (uiState.canClear) {
-                    TextButton(onClick = viewModel::clear) { Text("Clear") }
+                if (uiState.segments.isNotEmpty()) {
+                    Text(
+                        text = "${uiState.segments.size} segments",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.outline,
+                    )
                 }
             }
 
@@ -157,19 +162,34 @@ private fun TranscriptScreen(viewModel: TranscriptionViewModel = viewModel()) {
                 when (uiState.phase) {
                     Phase.STARTING, Phase.FAILED -> Unit
 
-                    Phase.READY -> Button(
-                        onClick = {
-                            val granted = context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
-                                PackageManager.PERMISSION_GRANTED
-                            if (granted) viewModel.startRecording()
-                            else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = Accent),
-                    ) { Text("Record") }
+                    Phase.READY -> {
+                        Button(
+                            onClick = {
+                                val granted = context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+                                    PackageManager.PERMISSION_GRANTED
+                                if (granted) viewModel.startRecording()
+                                else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                        ) { Text("Record") }
+
+                        if (uiState.hasRecording) {
+                            OutlinedButton(onClick = viewModel::play) { Text("Play") }
+                        }
+                        // Sits beside the other controls rather than as a faint
+                        // text link in the corner, which was easy to miss.
+                        if (uiState.canClear) {
+                            OutlinedButton(onClick = viewModel::clear) { Text("Delete") }
+                        }
+                    }
 
                     Phase.RECORDING -> {
                         OutlinedButton(onClick = viewModel::pauseRecording) { Text("Pause") }
                         OutlinedButton(onClick = viewModel::stopRecording) { Text("Stop") }
+                    }
+
+                    Phase.PLAYING -> OutlinedButton(onClick = viewModel::stopPlayback) {
+                        Text("Stop")
                     }
 
                     Phase.PAUSED -> {

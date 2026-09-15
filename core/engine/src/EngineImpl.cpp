@@ -241,6 +241,18 @@ EngineStatus EngineImpl::decodeWindow(bool flushing) noexcept {
         const auto first = trimmed.find_first_not_of(" \t\n");
         if (first == std::string::npos) { continue; }   // silence decodes to blanks
         trimmed.erase(0, first);
+        const auto last = trimmed.find_last_not_of(" \t\n");
+        if (last != std::string::npos) { trimmed.erase(last + 1); }
+
+        // whisper annotates non-speech rather than emitting nothing:
+        // "[BLANK_AUDIO]", "[SOUND]", "(upbeat music)". Those are the model
+        // describing the audio, not a transcript of it, and a pause in dictation
+        // should leave the transcript untouched rather than push a marker into
+        // it. The bracket convention is how they are distinguished.
+        const bool isAnnotation =
+            (trimmed.front() == '[' && trimmed.back() == ']') ||
+            (trimmed.front() == '(' && trimmed.back() == ')');
+        if (isAnnotation) { continue; }
 
         TranscriptSegment segment;
         segment.startMs = offsetMs + whisper_full_get_segment_t0(whisper_, i) * 10;

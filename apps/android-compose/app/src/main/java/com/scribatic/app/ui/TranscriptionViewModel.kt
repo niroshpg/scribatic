@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.scribatic.app.audio.AudioCapture
+import com.scribatic.app.audio.AudioPlayback
 import com.scribatic.app.engine.EngineConfig
 import com.scribatic.app.engine.EngineStatus
 import com.scribatic.app.engine.TranscriptSegment
@@ -17,7 +18,7 @@ import kotlinx.coroutines.launch
 import java.io.File
 
 /** What the screen is doing, as the UI needs to understand it. */
-enum class Phase { STARTING, READY, RECORDING, PAUSED, FAILED }
+enum class Phase { STARTING, READY, RECORDING, PAUSED, PLAYING, FAILED }
 
 data class TranscriptUiState(
     val phase: Phase = Phase.STARTING,
@@ -34,6 +35,7 @@ data class TranscriptUiState(
             Phase.READY     -> "Ready"
             Phase.RECORDING -> "Recording"
             Phase.PAUSED    -> "Paused"
+            Phase.PLAYING   -> "Playing"
             Phase.FAILED    -> "Stopped"
         }
 }
@@ -56,6 +58,7 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
     private var engine: TranscriptionEngine? = null
     private var streamJob: Job? = null
     private var capture: AudioCapture? = null
+    private val playback = AudioPlayback()
 
     private val filesDir: File get() = getApplication<Application>().filesDir
     private val recordingFile: File get() = File(filesDir, "recording.pcmf32")
@@ -156,8 +159,30 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
+    /** Plays the capture back. Raw float32 in, same format straight out. */
+    fun play() {
+        if (!_uiState.value.hasRecording) return
+        if (_uiState.value.phase != Phase.READY) return
+
+        _uiState.value = _uiState.value.copy(phase = Phase.PLAYING)
+        playback.play(recordingFile) {
+            // Arrives on the playback thread once the file runs out.
+            _uiState.value = _uiState.value.copy(
+                phase = if (_uiState.value.phase == Phase.PLAYING) Phase.READY else _uiState.value.phase,
+            )
+        }
+    }
+
+    fun stopPlayback() {
+        playback.stop()
+        if (_uiState.value.phase == Phase.PLAYING) {
+            _uiState.value = _uiState.value.copy(phase = Phase.READY)
+        }
+    }
+
     /** Discards the transcript and the captured audio together. */
     fun clear() {
+        stopPlayback()
         recordingFile.delete()
         _uiState.value = _uiState.value.copy(
             segments = emptyList(),
@@ -182,6 +207,7 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
     override fun onCleared() {
         super.onCleared()
         capture?.stop()
+        playback.stop()
         streamJob?.cancel()
         engine?.close()
     }
