@@ -75,6 +75,7 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
             val config = EngineConfig(
                 whisperModelPath = File(filesDir, "ggml-base.en.bin").absolutePath,
                 llamaModelPath = File(filesDir, "insight-q4_k_m.gguf").absolutePath,
+                embedModelPath = File(filesDir, "embed-minilm-l6-v2.gguf").absolutePath,
                 databasePath = File(filesDir, "scribatic.sqlite").absolutePath,
             )
 

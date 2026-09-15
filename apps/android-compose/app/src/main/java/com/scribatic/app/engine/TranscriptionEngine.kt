@@ -52,6 +52,7 @@ class TranscriptionEngine private constructor(
             val handle = bootstrap.nativeCreate(
                 whisperModelPath = config.whisperModelPath,
                 llamaModelPath = config.llamaModelPath,
+                embedModelPath = config.embedModelPath,
                 databasePath = config.databasePath,
                 threadCount = config.threadCount,
                 useMemoryMapping = config.useMemoryMapping,
@@ -135,6 +136,7 @@ class TranscriptionEngine private constructor(
     private external fun nativeCreate(
         whisperModelPath: String,
         llamaModelPath: String,
+        embedModelPath: String,
         databasePath: String,
         threadCount: Int,
         useMemoryMapping: Boolean,

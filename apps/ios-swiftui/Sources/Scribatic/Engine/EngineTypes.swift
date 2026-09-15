@@ -58,6 +58,7 @@ extension ScribaticEngine {
     struct Configuration: Sendable {
         var whisperModelPath: String
         var llamaModelPath: String
+        var embedModelPath: String
         var databasePath: String
         var threadCount: Int32 = 4
         var useMemoryMapping = true
@@ -77,6 +78,7 @@ extension ScribaticEngine {
             return Configuration(
                 whisperModelPath: support.appending(path: "ggml-base.en.bin").path(percentEncoded: false),
                 llamaModelPath: support.appending(path: "insight-q4_k_m.gguf").path(percentEncoded: false),
+                embedModelPath: support.appending(path: "embed-minilm-l6-v2.gguf").path(percentEncoded: false),
                 databasePath: support.appending(path: "scribatic.sqlite").path(percentEncoded: false)
             )
         }
@@ -85,6 +87,7 @@ extension ScribaticEngine {
             var config = scribatic.core.EngineConfig()
             config.whisperModelPath = std.string(whisperModelPath)
             config.llamaModelPath = std.string(llamaModelPath)
+            config.embedModelPath = std.string(embedModelPath)
             config.databasePath = std.string(databasePath)
             config.threadCount = threadCount
             config.useMemoryMapping = useMemoryMapping

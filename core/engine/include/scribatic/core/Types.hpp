@@ -69,6 +69,10 @@ struct RetrievalHit {
 struct EngineConfig {
     std::string  whisperModelPath;    ///< ggml/GGUF acoustic model
     std::string  llamaModelPath;      ///< GGUF instruct model for local insight
+    /// GGUF embedding model. Separate from the instruct model on purpose: an
+    /// instruct model is a poor embedder and does not emit the 384 dimensions
+    /// the vss0 table is declared with. See ADR-007.
+    std::string  embedModelPath;
     std::string  databasePath;        ///< SQLite file hosting the VSS index
     std::int32_t threadCount    = 4;  ///< pinned to performance cores only
     std::int32_t contextWindow  = 4096;

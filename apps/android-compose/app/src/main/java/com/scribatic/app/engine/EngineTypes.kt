@@ -51,6 +51,7 @@ data class TranscriptSegment(
 data class EngineConfig(
     val whisperModelPath: String,
     val llamaModelPath: String,
+    val embedModelPath: String,
     val databasePath: String,
     val threadCount: Int = Runtime.getRuntime().availableProcessors().coerceAtMost(4),
     val useMemoryMapping: Boolean = true,

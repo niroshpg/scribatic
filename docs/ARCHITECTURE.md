@@ -87,3 +87,59 @@ Three consequences follow, and they reverse earlier choices:
 The unwired halves — llama.cpp and SQLite-VSS — are therefore no longer the
 part to do last. They are the part that makes this a product rather than a
 cheaper Voice Memos.
+
+## ADR-007 — Qwen3 1.7B and all-MiniLM-L6-v2, both Apache 2.0
+
+Dated 2026-09-15. Two models had to be chosen before retrieval could be built.
+
+### The embedding model was almost decided already
+
+`Schema.hpp` fixes `kEmbeddingDims = 384` and the virtual table is declared
+`vss0(embedding(384))`. That number is load-bearing: changing it is a schema
+migration, not a config edit. `all-MiniLM-L6-v2` emits exactly 384 dimensions
+from a 22.7M parameter encoder, runs CPU-only, and is Apache 2.0. At Q8_0 it is
+about 25 MB — small enough that quantising it further would trade recall for
+almost nothing.
+
+### The instruct model was chosen on licence first, benchmark second
+
+This ships inside a paid-capable App Store and Play app, so the terms matter
+more than a leaderboard position:
+
+| Model | Licence | Gated | Q4_K_M |
+|---|---|---|---|
+| **Qwen3 1.7B** | Apache 2.0 | no | ~1.2 GB |
+| Phi-4-mini 3.8B | MIT | no | ~2.3 GB |
+| Llama 3.2 3B | Llama Community Licence | yes | ~2 GB |
+| Gemma 3 1B | Gemma Terms of Use | yes | ~0.8 GB |
+
+Llama and Gemma both carry custom terms with use conditions, and both are gated
+downloads requiring an account token — which would put a credential in the path
+of `make fetch-models`. Apache 2.0 and MIT impose no field-of-use restriction
+and no revenue clause; compliance is satisfied by shipping the licence text in
+an "Open Source Licenses" screen, which is required whether the app is free or
+paid.
+
+Qwen3 1.7B over Phi-4-mini on size: the README targets 4 GB Android devices,
+and 1.2 GB of weights alongside a 141 MB acoustic model leaves headroom that
+2.3 GB does not.
+
+The GGUF is taken from `ggml-org`, the llama.cpp organisation's own account,
+rather than a third-party requantisation — the same provenance argument as
+vendoring the backends from upstream rather than a fork.
+
+### Consequences
+
+`EngineConfig` gains a third path. An instruct model is a poor embedder and
+does not emit 384 dimensions, so the two are separate GGUFs and separate
+contexts, not one model serving both purposes.
+
+Total resident weights become roughly 1.4 GB: 141 MB whisper, 25 MB embedder,
+1.2 GB instruct. This is the pressure ADR-004 exists to manage — mapped clean
+and file-backed, evictable under memory pressure, never `read()` into dirty
+anonymous pages.
+
+Weights are downloaded on first run rather than bundled. A 1.2 GB app binary is
+hostile to install and awkward against store limits, and every comparable
+on-device LLM app does the same. That makes the first-run download real product
+surface: progress, resumability, a Wi-Fi preference, and a failure path.

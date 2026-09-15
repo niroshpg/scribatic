@@ -42,12 +42,13 @@ extern "C" {
 JNIEXPORT jlong JNICALL
 Java_com_scribatic_app_engine_TranscriptionEngine_nativeCreate(
         JNIEnv* env, jobject /*thiz*/,
-        jstring whisperModelPath, jstring llamaModelPath, jstring databasePath,
-        jint threadCount, jboolean useMemoryMapping) {
+        jstring whisperModelPath, jstring llamaModelPath, jstring embedModelPath,
+        jstring databasePath, jint threadCount, jboolean useMemoryMapping) {
 
     scribatic::core::EngineConfig config;
     config.whisperModelPath = toStdString(env, whisperModelPath);
     config.llamaModelPath   = toStdString(env, llamaModelPath);
+    config.embedModelPath   = toStdString(env, embedModelPath);
     config.databasePath     = toStdString(env, databasePath);
     config.threadCount      = static_cast<std::int32_t>(threadCount);
     config.useMemoryMapping = (useMemoryMapping == JNI_TRUE);
