@@ -378,7 +378,7 @@ Recorded in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). In brief:
 
 Engine scaffolding, threading model, memory residency, bridges and build pipelines are implemented and building. The whisper.cpp transcription path is wired up and covered by an end-to-end test that pushes recorded speech through the public interface and asserts the words come back. The remaining `TODO(backend)` markers in `EngineImpl.cpp` are the llama.cpp and SQLite-VSS halves.
 
-**The iOS app transcribes speech on-device today**, verified on hardware: microphone → lock-free ring buffer → whisper.cpp → transcript, with playback of the capture and no network path at any point. Android is well behind — it links no whisper and never constructs an engine. The llama.cpp half (`summarize()`), the SQLite-VSS retrieval and any persistence are all still unimplemented, so a transcript does not yet outlive the screen it appears on. [`docs/TESTING.md`](docs/TESTING.md) covers exactly what runs, how to build and run each app, and the remaining gaps.
+**The iOS app transcribes speech on-device today**, verified on hardware: microphone → lock-free ring buffer → whisper.cpp → transcript, with playback of the capture and no network path at any point. Android is wired the same way and builds, though it has not been confirmed on a physical device yet. The llama.cpp half (`summarize()`), the SQLite-VSS retrieval and any persistence are all still unimplemented, so a transcript does not yet outlive the screen it appears on. [`docs/TESTING.md`](docs/TESTING.md) covers exactly what runs, how to build and run each app, and the remaining gaps.
 
 ## Licence
 

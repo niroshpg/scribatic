@@ -19,16 +19,15 @@ The two platforms are a long way apart:
 | | iOS | Android |
 |---|---|---|
 | App builds and launches | yes | yes |
-| whisper linked into the app | yes | **no** |
-| Engine constructed and warmed | yes | **no** |
-| Microphone capture | yes | **no** |
-| Transcribes speech | **yes** | **no** |
+| whisper linked into the app | yes | yes |
+| Engine constructed and warmed | yes | yes |
+| Microphone capture | yes | yes |
+| Transcribes speech | verified on device | built, not yet verified on device |
 
-On Android nothing below the Compose shell is reached. `TranscriptionViewModel`
-takes `engine: TranscriptionEngine? = null` and `MainActivity` resolves it with
-a plain `viewModel()` and no factory, so the engine is always null and `start()`
-returns immediately. Its native build also does not link whisper yet. That is
-the next substantial piece of work.
+Android links whisper through its own CMake path, so it picked the backend up
+automatically; what was missing was the Kotlin half, which is now in place —
+the view model constructs and warms the engine, `AudioRecord` captures at
+16 kHz mono float, and the screen has the same phase-driven transport as iOS.
 
 What is still unimplemented on BOTH platforms:
 
@@ -227,8 +226,9 @@ at all.
 
 ## Known gaps
 
-- Android links no whisper and never constructs an engine, so it transcribes
-  nothing.
+- Android's transcription path is wired but has not been confirmed on a
+  physical device yet.
+- Android has no playback of the captured audio; iOS does.
 - `summarize()` is a stub; llama.cpp is compiled but unwired and no instruct
   model has been chosen.
 - Nothing is persisted: the SQLite schema is defined and unused, and a

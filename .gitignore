@@ -63,3 +63,13 @@ CONTEXT.md
 
 # Vendored backend static libraries, built by `make setup-ios-backends`.
 apps/ios-swiftui/vendor-lib/
+
+# --- DMARC aggregate reports -------------------------------------------------
+# Daily XML/zip reports mailed by Gmail, Outlook et al. to the rua= address in
+# the _dmarc.scribatic.com TXT record. Kept locally for inspection, not vendored.
+ops/dmarc/*.zip
+ops/dmarc/*.gz
+ops/dmarc/*.xml
+
+# Kotlin incremental-compilation scratch dir.
+apps/android-compose/.kotlin/
