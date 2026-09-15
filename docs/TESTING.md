@@ -9,31 +9,38 @@ smoothed over.
 
 ## What actually runs today
 
-The engine scaffolding is complete and the backends are vendored and compiling,
-but the inference calls themselves are not wired up yet — they are the
-`TODO(backend)` markers in `core/engine/src/EngineImpl.cpp`. Concretely:
+**Speech transcription works on iOS**, verified on a physical device: record,
+speak, stop, and the words appear. The chain is microphone → `AVAudioEngine`
+tap → 16 kHz mono conversion → lock-free ring buffer → whisper.cpp → segments
+→ SwiftUI. Playback of the captured audio and clearing both work too.
 
-- `runTranscriptionPass()` drains the ring buffer into its scratch vector and
-  returns `Ok`. It never appends a segment.
-- `drainSegments()` therefore always returns an empty vector.
-
-**No transcript text will ever appear, on either platform.** What you can
-exercise is the app shell, the permission flow, the engine lifecycle
-(`create` → `warmUp` → `hibernate`), model residency, and the language bridges.
-
-The two platforms are not at the same stage:
+The two platforms are a long way apart:
 
 | | iOS | Android |
 |---|---|---|
 | App builds and launches | yes | yes |
+| whisper linked into the app | yes | **no** |
 | Engine constructed and warmed | yes | **no** |
-| Resting UI state | `Listening`, once weights are staged | `Idle`, always |
+| Microphone capture | yes | **no** |
+| Transcribes speech | **yes** | **no** |
 
-On Android, `TranscriptionViewModel` takes `engine: TranscriptionEngine? = null`
-and `MainActivity` resolves it with a plain `viewModel()` and no factory, so the
-engine is always null and `start()` returns immediately. The Compose shell
-renders; nothing below it is reached. Wiring that up is the next piece of work
-on that side.
+On Android nothing below the Compose shell is reached. `TranscriptionViewModel`
+takes `engine: TranscriptionEngine? = null` and `MainActivity` resolves it with
+a plain `viewModel()` and no factory, so the engine is always null and `start()`
+returns immediately. Its native build also does not link whisper yet. That is
+the next substantial piece of work.
+
+What is still unimplemented on BOTH platforms:
+
+- **`summarize()` is a stub.** llama.cpp is vendored and compiling but not
+  wired, and no instruct model has been chosen — `LLAMA_URL` is empty in
+  `scripts/fetch_models.sh`. `create()` still requires the file to exist, so a
+  placeholder is needed even though nothing reads it.
+- **Nothing is persisted.** The `notes` / `segments` / `chunks` schema is
+  defined and unused; a transcript lives only as long as the view model, and
+  the audio file's path is not recorded anywhere.
+- **No retrieval.** `indexNote()` and `search()` are unimplemented, so the
+  SQLite-VSS half of the product does not exist yet.
 
 ---
 
@@ -52,6 +59,18 @@ Submodules are required for anything that compiles ggml:
 ```bash
 git submodule update --init --recursive
 ```
+
+The iOS app does not build the core through CMake — its Xcode target compiles
+`core/engine/src` directly — so the vendored backends have to be staged as
+static libraries before the app will link:
+
+```bash
+make setup-ios-backends      # builds whisper + ggml for device AND simulator
+```
+
+This writes into `apps/ios-swiftui/vendor-lib/<sdk>/` and is gitignored. Device
+and simulator are separate slices; a single one links the wrong architecture and
+fails at the very end of a long build.
 
 The vendor blocks in `core/engine/CMakeLists.txt` are `EXISTS`-guarded, so the
 tree still configures without them — it just silently builds no backend. CI
@@ -141,27 +160,46 @@ them as "copied into the app's private container on first launch", and
 `app/build.gradle.kts` as "streamed into filesDir on first run"; neither piece
 of logic exists yet, so the files have to be placed by hand.
 
-**Placeholders are enough for now.** `warmUp()` only mmaps the files, and
-`ModelResidency::map()` requires nothing more than a non-empty regular file —
-GGUF parsing is part of the unwired backend. Any two small files will take the
-iOS app from `model file not found` to `Listening`, with no multi-gigabyte
-download:
+The two files are not equivalent any more:
+
+- **The Whisper model must be real.** whisper now parses it at `warmUp()`, so a
+  placeholder fails to load. Get it with `make fetch-models`, which downloads
+  `ggml-base.en.bin` (141 MB).
+- **The llama model can still be a placeholder.** Nothing reads it yet, but
+  `EngineInterface::create()` stats both paths and returns `ModelNotFound` if
+  either is missing, so the file has to exist. `LLAMA_URL` is empty in
+  `scripts/fetch_models.sh` because no instruct model has been chosen; that
+  half is skipped with a warning until you set it.
+
+```bash
+make fetch-models
+printf 'placeholder\n' > models/insight-q4_k_m.gguf
+```
+
+Onto a **simulator**, where the container is a normal directory:
 
 ```bash
 C=$(xcrun simctl get_app_container booted com.scribatic.app data)
 mkdir -p "$C/Library/Application Support"
-printf 'placeholder\n' > "$C/Library/Application Support/ggml-base.en.bin"
-printf 'placeholder\n' > "$C/Library/Application Support/insight-q4_k_m.gguf"
+cp models/ggml-base.en.bin models/insight-q4_k_m.gguf "$C/Library/Application Support/"
 ```
 
-For real weights, `make fetch-models` downloads the Whisper model only.
-`LLAMA_URL` is deliberately empty in `scripts/fetch_models.sh` — no instruct
-model is chosen for the project yet, so that half is skipped with a warning
-until you set it:
+Onto a **physical device**. `UIFileSharingEnabled` is deliberately false, so
+there is no Files-app route — that is the privacy guarantee working as designed.
+`devicectl` reaches the container of a development build without weakening it:
 
 ```bash
-LLAMA_URL=https://example.invalid/your-model.gguf make fetch-models
+D=<device udid>          # xcrun devicectl list devices
+xcrun devicectl device copy to --device $D \
+    --domain-type appDataContainer --domain-identifier com.scribatic.app \
+    --source models/ggml-base.en.bin \
+    --destination "Library/Application Support/ggml-base.en.bin"
 ```
+
+This does NOT work against a TestFlight build, which is the practical argument
+for doing device work over cable until first-launch staging is implemented.
+Inspect what landed with `xcrun devicectl device info files --device $D
+--domain-type appDataContainer --domain-identifier com.scribatic.app`.
 
 Filenames are fixed by `Configuration.default()` on iOS: `ggml-base.en.bin` and
 `insight-q4_k_m.gguf`, both directly inside `Library/Application Support`.
@@ -189,9 +227,13 @@ at all.
 
 ## Known gaps
 
-- Inference is unwired; no transcript will appear (`TODO(backend)`).
-- The Android app never constructs an engine.
-- Nothing stages model weights onto the device.
+- Android links no whisper and never constructs an engine, so it transcribes
+  nothing.
+- `summarize()` is a stub; llama.cpp is compiled but unwired and no instruct
+  model has been chosen.
+- Nothing is persisted: the SQLite schema is defined and unused, and a
+  transcript does not survive the view model.
+- Nothing stages model weights onto the device; they must be copied by hand.
 - `LLAMA_URL` is unset, so `make fetch-models` fetches only Whisper.
 - `make test-ios` runs against a simulator name you must supply on most machines.
 - `fmt`, `lint` and `clean` still end in `|| true`, so they cannot fail. The

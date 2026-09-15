@@ -376,9 +376,9 @@ Recorded in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). In brief:
 
 ## Status
 
-Engine scaffolding, threading model, memory residency, bridges and build pipelines are implemented and building. Backend integration points are marked `TODO(backend)` in `EngineImpl.cpp` and are wired up once `make setup-all` has vendored the submodules.
+Engine scaffolding, threading model, memory residency, bridges and build pipelines are implemented and building. The whisper.cpp transcription path is wired up and covered by an end-to-end test that pushes recorded speech through the public interface and asserts the words come back. The remaining `TODO(backend)` markers in `EngineImpl.cpp` are the llama.cpp and SQLite-VSS halves.
 
-Because those integration points are still open, neither app transcribes anything yet, and the two platforms are not at the same stage — the iOS app constructs and warms the engine, the Android app does not yet. [`docs/TESTING.md`](docs/TESTING.md) covers what runs today, how to get each app onto a simulator or emulator, and the known gaps.
+**The iOS app transcribes speech on-device today**, verified on hardware: microphone → lock-free ring buffer → whisper.cpp → transcript, with playback of the capture and no network path at any point. Android is well behind — it links no whisper and never constructs an engine. The llama.cpp half (`summarize()`), the SQLite-VSS retrieval and any persistence are all still unimplemented, so a transcript does not yet outlive the screen it appears on. [`docs/TESTING.md`](docs/TESTING.md) covers exactly what runs, how to build and run each app, and the remaining gaps.
 
 ## Licence
 
