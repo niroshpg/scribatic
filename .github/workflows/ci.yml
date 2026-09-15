@@ -40,6 +40,12 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          # Defaults to installing "tools", which Google has removed from the
+          # SDK repository — sdkmanager then exits 1 and the job dies during
+          # setup, before anything is compiled. Gradle installs the NDK and
+          # build-tools it needs on its own.
+          packages: ''
       - name: Assemble arm64 release
         run: make build-android CONFIG=Release
 
