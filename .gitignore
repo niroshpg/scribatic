@@ -73,3 +73,7 @@ ops/dmarc/*.xml
 
 # Kotlin incremental-compilation scratch dir.
 apps/android-compose/.kotlin/
+
+# Local working notes for AI sessions. Never committed — machine-specific
+# paths, device identifiers and in-progress context.
+claude-notes/
