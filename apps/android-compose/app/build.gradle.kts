@@ -19,13 +19,13 @@ val hasReleaseKeystore = keystoreProperties.getProperty("storeFile") != null
 
 android {
     namespace  = "com.scribatic.app"
-    compileSdk = 35
+    compileSdk = 36
     ndkVersion = "27.0.12077973"
 
     defaultConfig {
         applicationId = "com.scribatic.app"
         minSdk        = 28          // AAudio low-latency callback + mmap headroom
-        targetSdk     = 35
+        targetSdk     = 36
         versionCode   = 1
         versionName   = "0.1.0"
 
