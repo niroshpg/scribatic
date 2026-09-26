@@ -52,6 +52,11 @@ class AudioCapture(private val outputFile: File) {
     fun start(sink: (FloatArray, Int) -> Unit) {
         if (running.get()) return
 
+        injectedSource?.let { source ->
+            startInjected(source, sink)
+            return
+        }
+
         val minBuffer = AudioRecord.getMinBufferSize(
             SAMPLE_RATE,
             AudioFormat.CHANNEL_IN_MONO,
@@ -81,10 +86,11 @@ class AudioCapture(private val outputFile: File) {
 
         worker = thread(name = "scribatic-capture", priority = Thread.MAX_PRIORITY) {
             val buffer = FloatArray(FRAMES_PER_READ)
-            // Raw 16 kHz mono float32, little-endian. No container: the file is
-            // only ever read back by this app, and a header would be one more
-            // thing to keep in step with the format above.
+            // WAV around the same 16 kHz mono float32 samples. The container is
+            // what lets the shared core read the file for speaker diarization
+            // exactly as it reads the iOS app's, with one parser for both.
             BufferedOutputStream(FileOutputStream(outputFile)).use { out ->
+                out.write(WavFile.header(SAMPLE_RATE))
                 val bytes = ByteBuffer.allocate(FRAMES_PER_READ * 4).order(ByteOrder.LITTLE_ENDIAN)
                 while (running.get()) {
                     val read = recorder.read(buffer, 0, buffer.size, AudioRecord.READ_BLOCKING)
@@ -106,6 +112,53 @@ class AudioCapture(private val outputFile: File) {
      * Keeps the recorder and the thread alive but stops consuming frames, so
      * resuming continues one recording rather than starting a second.
      */
+    /**
+     * Debug builds only: a WAV file standing in for the microphone, played into
+     * the pipeline at real-time pace. An emulator has no conversation to hear,
+     * and speaker identification cannot be exercised by one person talking at
+     * a laptop. Everything downstream — engine, recording file, save,
+     * diarization — runs exactly as it does for a real recording.
+     */
+    var injectedSource: File? = null
+
+    private fun startInjected(source: File, sink: (FloatArray, Int) -> Unit) {
+        running.set(true)
+        paused.set(false)
+        worker = thread(name = "scribatic-injected-audio") {
+            val samples = readPcm16Mono(source)
+            val buffer = FloatArray(FRAMES_PER_READ)
+            val bytes = ByteBuffer.allocate(FRAMES_PER_READ * 4).order(ByteOrder.LITTLE_ENDIAN)
+            var offset = 0
+            var next = System.nanoTime()
+            BufferedOutputStream(FileOutputStream(outputFile)).use { out ->
+                out.write(WavFile.header(SAMPLE_RATE))
+                while (running.get()) {
+                    next += 100_000_000L
+                    val wait = (next - System.nanoTime()) / 1_000_000L
+                    if (wait > 0) Thread.sleep(wait)
+                    if (paused.get() || offset >= samples.size) continue
+                    val read = minOf(FRAMES_PER_READ, samples.size - offset)
+                    System.arraycopy(samples, offset, buffer, 0, read)
+                    offset += read
+                    sink(buffer, read)
+                    bytes.clear()
+                    for (i in 0 until read) bytes.putFloat(buffer[i])
+                    out.write(bytes.array(), 0, read * 4)
+                }
+                out.flush()
+            }
+        }
+    }
+
+    /** 16-bit PCM mono 16 kHz, the format the test conversations are in. */
+    private fun readPcm16Mono(file: File): FloatArray {
+        val offset = WavFile.dataOffset(file)
+        val raw = file.readBytes()
+        val count = ((raw.size - offset) / 2).toInt()
+        val shorts = ByteBuffer.wrap(raw, offset.toInt(), count * 2).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+        return FloatArray(count) { shorts.get(it) / 32768f }
+    }
+
     fun pause() {
         paused.set(true)
     }
@@ -123,5 +176,6 @@ class AudioCapture(private val outputFile: File) {
             release()
         }
         record = null
+        WavFile.patchSizes(outputFile)
     }
 }

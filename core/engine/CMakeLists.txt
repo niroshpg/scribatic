@@ -20,6 +20,11 @@ add_library(scribatic_core STATIC
     src/AudioRingBuffer.cpp
     src/ModelResidency.cpp
     src/EngineImpl.cpp
+    src/NoteStore.cpp
+    src/RecordingAudio.cpp
+    src/SpeakerAttribution.cpp
+    src/SpeakerDiarizer.cpp
+    src/TranscriptFormat.cpp
 )
 
 target_include_directories(scribatic_core
@@ -35,6 +40,30 @@ if (NOT TARGET scribatic_database)
                      ${CMAKE_BINARY_DIR}/scribatic_database)
 endif()
 target_link_libraries(scribatic_core PUBLIC scribatic_database)
+target_link_libraries(scribatic_core PRIVATE scribatic_sqlite Threads::Threads)
+
+# --- Speaker diarization (sherpa-onnx, prebuilt) ----------------------------
+# Optional by design. Without it the core compiles SpeakerDiarizer as a stub
+# and canIdentifySpeakers() is false; transcription is unaffected. Staged by
+# scripts/fetch_native_deps.sh. iOS links the framework from project.yml
+# instead, because its Xcode target does not build through this file.
+set(SCRIBATIC_SHERPA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendor-bin/sherpa-onnx)
+if (ANDROID)
+    set(SCRIBATIC_SHERPA_LIB ${SCRIBATIC_SHERPA_DIR}/android/${ANDROID_ABI}/libsherpa-onnx-c-api.so)
+elseif (APPLE AND NOT CMAKE_CROSSCOMPILING)
+    set(SCRIBATIC_SHERPA_LIB ${SCRIBATIC_SHERPA_DIR}/host/lib/libsherpa-onnx-c-api.dylib)
+elseif (NOT CMAKE_CROSSCOMPILING)
+    set(SCRIBATIC_SHERPA_LIB ${SCRIBATIC_SHERPA_DIR}/host/lib/libsherpa-onnx-c-api.so)
+endif()
+if (DEFINED SCRIBATIC_SHERPA_LIB AND EXISTS ${SCRIBATIC_SHERPA_LIB}
+        AND EXISTS ${SCRIBATIC_SHERPA_DIR}/include/sherpa-onnx/c-api/c-api.h)
+    target_include_directories(scribatic_core PRIVATE ${SCRIBATIC_SHERPA_DIR}/include)
+    target_link_libraries(scribatic_core PRIVATE ${SCRIBATIC_SHERPA_LIB})
+    target_compile_definitions(scribatic_core PRIVATE SCRIBATIC_HAVE_SHERPA=1)
+    message(STATUS "scribatic: speaker diarization enabled (${SCRIBATIC_SHERPA_LIB})")
+else()
+    message(STATUS "scribatic: sherpa-onnx not staged; speaker diarization disabled")
+endif()
 
 target_compile_options(scribatic_core PRIVATE
     -Wall -Wextra -Wpedantic
@@ -77,6 +106,15 @@ if (NOT CMAKE_CROSSCOMPILING)
     enable_testing()
     add_executable(scribatic_core_tests tests/RingBufferTests.cpp)
     add_executable(scribatic_transcription_tests tests/TranscriptionTests.cpp)
+    add_executable(scribatic_store_tests tests/NoteStoreTests.cpp)
+    add_executable(scribatic_speaker_tests tests/SpeakerTests.cpp)
+    foreach(test_target scribatic_store_tests scribatic_speaker_tests)
+        target_link_libraries(${test_target} PRIVATE scribatic_core scribatic_sqlite Threads::Threads)
+        target_include_directories(${test_target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+        add_test(NAME ${test_target} COMMAND ${test_target})
+        set_tests_properties(${test_target} PROPERTIES
+            ENVIRONMENT "SCRIBATIC_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/../..")
+    endforeach()
     target_link_libraries(scribatic_transcription_tests PRIVATE scribatic_core Threads::Threads)
     target_include_directories(scribatic_transcription_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     # SCRIBATIC_ROOT lets the test find the uncommitted weights and the fixture
@@ -93,7 +131,8 @@ if (NOT CMAKE_CROSSCOMPILING)
     # Release, so without this the tests ran and reported success while
     # checking absolutely nothing. Undefining it keeps assertions live in every
     # configuration; these binaries are never shipped.
-    foreach(test_target scribatic_core_tests scribatic_transcription_tests)
+    foreach(test_target scribatic_core_tests scribatic_transcription_tests
+                        scribatic_store_tests scribatic_speaker_tests)
         target_compile_options(${test_target} PRIVATE -UNDEBUG)
     endforeach()
 endif()

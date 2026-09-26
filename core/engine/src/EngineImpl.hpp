@@ -5,6 +5,9 @@
 // =============================================================================
 #pragma once
 
+#include "NoteStore.hpp"
+#include "SpeakerAttribution.hpp"
+#include "SpeakerDiarizer.hpp"
 #include "scribatic/core/AudioRingBuffer.hpp"
 #include "scribatic/core/EngineInterface.hpp"
 #include "scribatic/core/ModelResidency.hpp"
@@ -28,6 +31,10 @@ public:
     void         hibernate() noexcept override;
     EngineState  state() const noexcept override;
 
+    void         beginSession() noexcept override;
+    std::int64_t saveSession(const std::string& title, std::int64_t createdAt,
+                             const std::string& audioPath) override;
+
     EngineStatus pushAudio(const float* pcmFrames, std::size_t frameCount) noexcept override;
     EngineStatus runTranscriptionPass() noexcept override;
     EngineStatus flush() noexcept override;
@@ -37,6 +44,18 @@ public:
 
     EngineStatus              indexNote(std::int64_t noteId, const std::string& text) override;
     std::vector<RetrievalHit> search(const std::string& query, std::int32_t topK) override;
+
+    bool         canIdentifySpeakers() const noexcept override;
+    EngineStatus identifySpeakers(std::int64_t noteId, std::int32_t expectedSpeakers) override;
+    EngineStatus renameSpeaker(std::int64_t noteId, std::int32_t speaker,
+                               const std::string& name) override;
+
+    std::vector<NoteSummary> listNotes() override;
+    NoteDetail               loadNote(std::int64_t noteId) override;
+    EngineStatus             deleteRecording(std::int64_t noteId) override;
+    EngineStatus             deleteNote(std::int64_t noteId) override;
+    std::string exportTranscript(std::int64_t noteId, bool includeTimestamps,
+                                 bool anonymiseSpeakers) override;
 
     void requestCancel() noexcept override;
 
@@ -64,6 +83,13 @@ private:
     /// not hold segmentMutex_.
     EngineStatus decodeWindow(bool flushing) noexcept;
 
+    /// Reconciles the store with the recordings directory: forgets recordings
+    /// whose file is gone, and deletes files no note refers to — the leftovers
+    /// of a crash between a file operation and the database write after it.
+    void sweepRecordings();
+
+    [[nodiscard]] std::string recordingPath(const std::string& name) const;
+
     EngineConfig    config_;
     AudioRingBuffer ring_{kRingCapacity};
     ModelResidency  whisperWeights_;
@@ -79,6 +105,16 @@ private:
 
     std::mutex                    segmentMutex_;
     std::deque<TranscriptSegment> pendingSegments_;
+
+    /// Everything the current session has produced, drained or not, guarded
+    /// by segmentMutex_. The segments are what the note is saved with; the
+    /// words are what speakers are later attributed from.
+    std::vector<TranscriptSegment> sessionSegments_;
+    std::vector<WordTiming>        sessionWords_;
+    std::int32_t                   sessionSegmentCount_ = 0;
+
+    NoteStore       store_;
+    SpeakerDiarizer diarizer_;
 
     /// Audio waiting for a decode, and how many samples have already been
     /// decoded before it. whisper reports timestamps relative to the window it

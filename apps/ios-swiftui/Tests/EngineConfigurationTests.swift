@@ -26,9 +26,34 @@ final class EngineConfigurationTests: XCTestCase {
 
         for path in [configuration.whisperModelPath,
                      configuration.llamaModelPath,
-                     configuration.databasePath] {
+                     configuration.databasePath,
+                     configuration.recordingsDirectory,
+                     configuration.segmentationModelPath,
+                     configuration.speakerEmbeddingModelPath] {
             XCTAssertTrue(path.hasPrefix(support), "\(path) escapes the app container")
         }
+    }
+
+    /// Recordings and the transcript database must not reach an iCloud or
+    /// device backup. Deleting a recording has to delete it, and a copy in
+    /// last night's backup would make that claim false.
+    func testRecordingsAndDatabaseAreExcludedFromBackup() throws {
+        let configuration = try ScribaticEngine.Configuration.default()
+        let store = URL(filePath: configuration.databasePath).deletingLastPathComponent()
+        let recordings = URL(filePath: configuration.recordingsDirectory)
+
+        for directory in [store, recordings] {
+            let values = try directory.resourceValues(forKeys: [.isExcludedFromBackupKey])
+            XCTAssertEqual(values.isExcludedFromBackup, true, "\(directory.path()) would be backed up")
+        }
+    }
+
+    /// Recording files are named for the core's sweep, which deletes only
+    /// `recording-*.wav` files that no note refers to.
+    func testRecordingFilesMatchTheSweepContract() {
+        let url = AudioCapture.newRecordingURL(in: URL(filePath: "/tmp"))
+        XCTAssertTrue(url.lastPathComponent.hasPrefix("recording-"))
+        XCTAssertEqual(url.pathExtension, "wav")
     }
 
     /// Regression guard. `URL.path()` defaults to percentEncoded: true, which
@@ -41,7 +66,8 @@ final class EngineConfigurationTests: XCTestCase {
 
         for path in [configuration.whisperModelPath,
                      configuration.llamaModelPath,
-                     configuration.databasePath] {
+                     configuration.databasePath,
+                     configuration.recordingsDirectory] {
             XCTAssertFalse(path.contains("%20"), "\(path) is percent-encoded; stat() will not find it")
             XCTAssertFalse(path.contains("%"), "\(path) looks percent-encoded")
         }
@@ -49,7 +75,7 @@ final class EngineConfigurationTests: XCTestCase {
 
     func testDefaultThreadCountLeavesHeadroomForAudio() {
         let configuration = ScribaticEngine.Configuration(
-            whisperModelPath: "", llamaModelPath: "", databasePath: ""
+            whisperModelPath: "", llamaModelPath: "", embedModelPath: "", databasePath: ""
         )
         XCTAssertEqual(configuration.threadCount, 4)
         XCTAssertTrue(configuration.useMemoryMapping)

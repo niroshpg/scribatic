@@ -25,10 +25,12 @@ actor ScribaticEngine {
     /// ring buffer on the C++ side, an invariant the compiler cannot see, so
     /// it is asserted here instead of checked.
     ///
-    /// The assertion covers exactly the two `nonisolated` entry points below
-    /// (`pushAudio`, `requestCancel`). Adding a third means arguing that the
-    /// method it calls is realtime-safe too — `drainSegments()` is only
-    /// lock-guarded, and the lifecycle calls synchronise nothing at all.
+    /// The assertion covers exactly the three `nonisolated` entry points below
+    /// (`pushAudio`, `requestCancel`, `canIdentifySpeakers`). The third is safe
+    /// because it touches no mutable engine state: it stats two paths fixed at
+    /// construction. Adding a fourth means making the same argument for it —
+    /// `drainSegments()` is only lock-guarded, and the lifecycle calls
+    /// synchronise nothing at all.
     ///
     /// TODO(backend): once `EngineImpl` synchronises every entry point, this
     /// becomes `nonisolated let` with `SWIFT_SENDABLE` on the C++ class, and
@@ -59,6 +61,25 @@ actor ScribaticEngine {
     func hibernate() {
         engine.hibernate()
         state = .Idle
+    }
+
+    // MARK: - Sessions
+
+    /// Before the tap starts: resets the ring buffer and the timeline, so
+    /// segment times line up with the file about to be written.
+    func beginSession() {
+        engine.beginSession()
+    }
+
+    /// Persists the finished session. Call after `flush()`.
+    func saveSession(title: String, createdAt: Date, audioURL: URL?) throws -> Int64 {
+        let id = engine.saveSession(
+            std.string(title),
+            Int64(createdAt.timeIntervalSince1970),
+            std.string(audioURL?.path(percentEncoded: false) ?? "")
+        )
+        guard id > 0 else { throw ScribaticEngineError(status: .DatabaseFailed) }
+        return id
     }
 
     // MARK: - Realtime ingress
@@ -122,6 +143,49 @@ actor ScribaticEngine {
     func summarize(transcript: String) async throws -> String {
         try Task.checkCancellation()
         return String(engine.summarize(std.string(transcript)))
+    }
+
+    // MARK: - Notes
+
+    func listNotes() -> [NoteSummaryValue] {
+        engine.listNotes().map(NoteSummaryValue.init)
+    }
+
+    func loadNote(_ id: Int64) -> NoteDetailValue? {
+        NoteDetailValue(engine.loadNote(id))
+    }
+
+    func deleteRecording(_ id: Int64) throws {
+        try check(engine.deleteRecording(id))
+    }
+
+    func deleteNote(_ id: Int64) throws {
+        try check(engine.deleteNote(id))
+    }
+
+    func exportTranscript(_ id: Int64, includeTimestamps: Bool, anonymise: Bool) -> String {
+        String(engine.exportTranscript(id, includeTimestamps, anonymise))
+    }
+
+    // MARK: - Speakers
+
+    /// `nonisolated` because it only stats two files — no engine state.
+    nonisolated var canIdentifySpeakers: Bool {
+        engine.canIdentifySpeakers()
+    }
+
+    /// Diarizes the note's recording. Seconds of work per minute of audio, on
+    /// this actor's executor. `expected` 0 estimates the count.
+    func identifySpeakers(_ id: Int64, expected: Int32 = 0) throws {
+        try check(engine.identifySpeakers(id, expected))
+    }
+
+    func renameSpeaker(_ id: Int64, speaker: Int32, name: String) throws {
+        try check(engine.renameSpeaker(id, speaker, std.string(name)))
+    }
+
+    private func check(_ status: EngineStatus) throws {
+        guard status == .Ok else { throw ScribaticEngineError(status: status) }
     }
 
     func search(query: String, topK: Int32 = 8) -> [RetrievalHitValue] {

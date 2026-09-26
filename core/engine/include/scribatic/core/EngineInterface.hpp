@@ -83,6 +83,26 @@ public:
     virtual EngineStatus pushAudio(const float* pcmFrames,
                                    std::size_t frameCount) noexcept = 0;
 
+    // -- Sessions -----------------------------------------------------------
+    /// Starts a new recording. Timestamps restart at zero, so they line up
+    /// with the recording file the platform is about to write, and the word
+    /// timings speaker identification works from are cleared.
+    ///
+    /// Call BEFORE the audio tap starts: this resets the ring buffer, which is
+    /// only safe while nothing is producing into it.
+    virtual void beginSession() noexcept = 0;
+
+    /// Persists the session that just finished as a note and returns its id,
+    /// or 0 on failure. Call after `flush()`. `audioPath` must sit inside
+    /// `EngineConfig::recordingsDirectory`; only its file name is stored.
+    ///
+    /// Word-level timings are persisted alongside the segments. They never
+    /// cross the bridge, but they are what lets speakers be re-identified
+    /// later, long after the session that produced them is gone.
+    [[nodiscard]] virtual std::int64_t saveSession(const std::string& title,
+                                                   std::int64_t createdAt,
+                                                   const std::string& audioPath) = 0;
+
     // -- Inference (background threads only) -------------------------------
     /// Drains the ring buffer and runs one whisper.cpp encode/decode pass.
     ///
@@ -115,6 +135,53 @@ public:
     /// Approximate k-NN search across every note ever transcribed on-device.
     [[nodiscard]] virtual std::vector<RetrievalHit> search(const std::string& query,
                                                            std::int32_t topK) = 0;
+
+    // -- Speakers (background threads only) --------------------------------
+    /// True when the diarization library is linked and both of its models
+    /// are present. The UI hides speaker identification when this is false.
+    [[nodiscard]] virtual bool canIdentifySpeakers() const noexcept = 0;
+
+    /// Works out who spoke when in the note's recording and re-cuts its
+    /// transcript so that every segment belongs to exactly one speaker.
+    ///
+    /// `expectedSpeakers` is how many people were talking, or 0 to estimate.
+    /// Estimating errs towards too many speakers rather than too few: two
+    /// labels for one person can be fixed by naming both the same, but one
+    /// label covering two people cannot be fixed at all.
+    ///
+    /// Replaces any earlier identification of this note, including the names
+    /// given to its speakers. Needs the recording, so it fails with
+    /// RecordingNotFound once the audio has been deleted. Blocking, and NOT
+    /// cancellable part-way: the diarization library ignores cancellation.
+    virtual EngineStatus identifySpeakers(std::int64_t noteId,
+                                          std::int32_t expectedSpeakers) = 0;
+
+    /// Names one speaker in one note. An empty name reverts to "Speaker N".
+    virtual EngineStatus renameSpeaker(std::int64_t noteId, std::int32_t speaker,
+                                       const std::string& name) = 0;
+
+    // -- Notes ---------------------------------------------------------------
+    /// Newest first.
+    [[nodiscard]] virtual std::vector<NoteSummary> listNotes() = 0;
+
+    [[nodiscard]] virtual NoteDetail loadNote(std::int64_t noteId) = 0;
+
+    /// Deletes the audio file and keeps the transcript. The file goes first
+    /// and the reference second, so a crash in between leaves a reference to
+    /// a missing file — which the next `warmUp()` clears — rather than an
+    /// unreferenced recording nobody can see or delete.
+    virtual EngineStatus deleteRecording(std::int64_t noteId) = 0;
+
+    /// Deletes the note, its transcript, its search index rows and its audio.
+    virtual EngineStatus deleteNote(std::int64_t noteId) = 0;
+
+    /// Plain-text transcript for the platform share sheet. The engine never
+    /// sends anything anywhere; this only formats text the user then chooses
+    /// to hand to another app. `anonymiseSpeakers` replaces every name with
+    /// "Speaker N" — for sharing a discussion without identifying anyone.
+    [[nodiscard]] virtual std::string exportTranscript(std::int64_t noteId,
+                                                       bool includeTimestamps,
+                                                       bool anonymiseSpeakers) = 0;
 
     /// Cooperative cancellation. Safe to call from any thread; the ggml abort
     /// callback observes the flag between graph nodes.

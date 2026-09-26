@@ -1,0 +1,93 @@
+# End-to-end: record a multi-speaker conversation, identify speakers, name
+# one, delete the recording and keep the transcript, then share it.
+#
+# Runs on an arm64 emulator against a DEBUG build, with the conversation at
+# files/inject/conversation.wav — see docs/TESTING.md, "End-to-end on
+# simulators and emulators".
+appId: com.scribatic.app
+---
+- launchApp
+- extendedWaitUntil:
+    visible:
+      text: "New recording"
+      enabled: true
+    timeout: 90000
+# The button enables once the models are warm; a tap a moment earlier is
+# ignored, so keep tapping until the recorder is open.
+- repeat:
+    while:
+      notVisible: "Record"
+    times: 10
+    commands:
+      - tapOn: "New recording"
+- tapOn: "Record"
+# The conversation plays in real time (about 41 s). The canteen line is the
+# second to last; the last one waits in the decode window until Stop.
+- extendedWaitUntil:
+    visible: ".*canteen.*"
+    timeout: 180000
+- extendedWaitUntil:            # a pause: lets the final line finish playing
+    visible: "never-shown-marker"
+    timeout: 10000
+    optional: true
+- takeScreenshot: android-02-recording
+- tapOn: "Stop"
+# Diarization takes ~30 s on an arm64 emulator — but several minutes while
+# the progress indicator is on screen, because the emulator renders it on the
+# host CPU. Hence the generous timeout; a phone's GPU makes it free.
+- extendedWaitUntil:
+    visible: "SPEAKERS"
+    timeout: 900000
+- assertVisible: "Speaker 1"
+- assertVisible: "Speaker 2"
+- takeScreenshot: android-03-note
+- scrollUntilVisible:
+    element: ".*Thursday.*"
+- takeScreenshot: android-03b-note-end
+- scrollUntilVisible:
+    element: "SPEAKERS"
+    direction: UP
+
+# Name a speaker.
+- tapOn:
+    text: "Speaker 1"
+    index: 0
+- inputText: "Daniel"
+- tapOn: "Save"
+- extendedWaitUntil:
+    visible: "Daniel"
+    timeout: 10000
+- takeScreenshot: android-04-named
+
+# Delete the recording; the transcript and names stay.
+- tapOn: "More"
+- tapOn: "Delete recording…"
+- takeScreenshot: android-05-confirm-delete
+- tapOn: "Delete recording"
+- extendedWaitUntil:
+    visible: ".*Recording deleted.*"
+    timeout: 10000
+- assertVisible: "Daniel"
+- takeScreenshot: android-06-recording-deleted
+- scrollUntilVisible:           # the transcript itself is still all there
+    element: ".*Thursday.*"
+- tapOn: "More"
+- assertNotVisible: "Play recording"
+- assertNotVisible: "Identify speakers again"
+- tapOn: "Delete note…"
+- tapOn: "Cancel"
+
+# Share it, without names.
+- tapOn: "Share"
+- tapOn: "Share without names"
+# The system chooser, showing the text handed over. Android 14+ ignores the
+# chooser title, so its own heading is what is checked.
+- extendedWaitUntil:
+    visible: "Sharing text"
+    timeout: 10000
+- assertVisible: ".*Speaker 1: Good morning.*"   # anonymised: no "Daniel"
+- takeScreenshot: android-07-share-sheet
+- back
+- back
+- assertVisible: ".*Audio deleted.*"
+- takeScreenshot: android-08-list

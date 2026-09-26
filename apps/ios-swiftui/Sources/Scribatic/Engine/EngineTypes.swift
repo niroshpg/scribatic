@@ -22,6 +22,8 @@ struct TranscriptSegmentValue: Identifiable, Sendable, Equatable {
     let text: String
     let confidence: Float
     let isFinal: Bool
+    /// Zero-based speaker within the note; -1 until speakers are identified.
+    let speaker: Int32
 
     init(_ cxx: scribatic.core.TranscriptSegment) {
         self.startMs = cxx.startMs
@@ -29,6 +31,72 @@ struct TranscriptSegmentValue: Identifiable, Sendable, Equatable {
         self.text = String(cxx.text)
         self.confidence = cxx.confidence
         self.isFinal = cxx.isFinal
+        self.speaker = cxx.speaker
+    }
+}
+
+struct SpeakerLabelValue: Identifiable, Sendable, Equatable {
+    var id: Int32 { index }
+    let index: Int32
+    /// What the user called them; empty when unnamed.
+    let name: String
+    /// `name`, or "Speaker N". Spelled once, in the C++ core.
+    let displayName: String
+
+    init(_ cxx: scribatic.core.SpeakerLabel) {
+        self.index = cxx.index
+        self.name = String(cxx.name)
+        self.displayName = String(cxx.displayName)
+    }
+}
+
+struct NoteSummaryValue: Identifiable, Sendable, Equatable {
+    let id: Int64
+    let title: String
+    let createdAt: Date
+    let durationMs: Int64
+    let hasAudio: Bool
+    let speakerCount: Int32
+    let preview: String
+
+    init(_ cxx: scribatic.core.NoteSummary) {
+        self.id = cxx.id
+        self.title = String(cxx.title)
+        self.createdAt = Date(timeIntervalSince1970: TimeInterval(cxx.createdAt))
+        self.durationMs = cxx.durationMs
+        self.hasAudio = cxx.hasAudio
+        self.speakerCount = cxx.speakerCount
+        self.preview = String(cxx.preview)
+    }
+}
+
+struct NoteDetailValue: Identifiable, Sendable, Equatable {
+    let id: Int64
+    let title: String
+    let createdAt: Date
+    let durationMs: Int64
+    /// Absolute path of the recording; nil once it has been deleted.
+    let audioURL: URL?
+    let speakerCount: Int32
+    let speakers: [SpeakerLabelValue]
+    let segments: [TranscriptSegmentValue]
+
+    /// nil when the core reports no such note.
+    init?(_ cxx: scribatic.core.NoteDetail) {
+        guard cxx.id != 0 else { return nil }
+        self.id = cxx.id
+        self.title = String(cxx.title)
+        self.createdAt = Date(timeIntervalSince1970: TimeInterval(cxx.createdAt))
+        self.durationMs = cxx.durationMs
+        let path = String(cxx.audioPath)
+        self.audioURL = path.isEmpty ? nil : URL(filePath: path)
+        self.speakerCount = cxx.speakerCount
+        self.speakers = cxx.speakers.map(SpeakerLabelValue.init)
+        self.segments = cxx.segments.map(TranscriptSegmentValue.init)
+    }
+
+    func speakerName(_ index: Int32) -> String? {
+        speakers.first { $0.index == index }?.displayName
     }
 }
 
@@ -60,6 +128,9 @@ extension ScribaticEngine {
         var llamaModelPath: String
         var embedModelPath: String
         var databasePath: String
+        var recordingsDirectory: String = ""
+        var segmentationModelPath: String = ""
+        var speakerEmbeddingModelPath: String = ""
         var threadCount: Int32 = 4
         var useMemoryMapping = true
 
@@ -75,12 +146,45 @@ extension ScribaticEngine {
             // "Application%20Support" — a directory that does not exist. The
             // C++ side stats the path verbatim, so the engine reported
             // ModelNotFound no matter where the weights actually were.
+            let store = try Self.privateDirectory(support.appending(path: "store"))
+            let recordings = try Self.privateDirectory(support.appending(path: "recordings"))
+            let models = ["ggml-base.en.bin", "insight-q4_k_m.gguf", "embed-minilm-l6-v2.gguf",
+                          "speaker-segmentation.onnx", "speaker-embedding.onnx"]
+                .map { support.appending(path: $0) }
+            // Weights are re-downloadable and over a gigabyte; backing them
+            // up is exactly what Apple's storage guidelines rule out.
+            for var model in models where FileManager.default.fileExists(atPath: model.path(percentEncoded: false)) {
+                try? Self.excludeFromBackup(&model)
+            }
             return Configuration(
-                whisperModelPath: support.appending(path: "ggml-base.en.bin").path(percentEncoded: false),
-                llamaModelPath: support.appending(path: "insight-q4_k_m.gguf").path(percentEncoded: false),
-                embedModelPath: support.appending(path: "embed-minilm-l6-v2.gguf").path(percentEncoded: false),
-                databasePath: support.appending(path: "scribatic.sqlite").path(percentEncoded: false)
+                whisperModelPath: models[0].path(percentEncoded: false),
+                llamaModelPath: models[1].path(percentEncoded: false),
+                embedModelPath: models[2].path(percentEncoded: false),
+                databasePath: store.appending(path: "scribatic.sqlite").path(percentEncoded: false),
+                recordingsDirectory: recordings.path(percentEncoded: false),
+                segmentationModelPath: models[3].path(percentEncoded: false),
+                speakerEmbeddingModelPath: models[4].path(percentEncoded: false)
             )
+        }
+
+        /// Creates `url` if needed and excludes it from iCloud and device
+        /// backup. The exclusion is on the directory, so it covers everything
+        /// written inside it later — including SQLite's -wal and -shm files,
+        /// which a per-file exclusion made at open time would miss.
+        ///
+        /// Load-bearing: without it, deleting a recording removes it from the
+        /// phone but not from last night's iCloud backup.
+        static func privateDirectory(_ url: URL) throws -> URL {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            var url = url
+            try excludeFromBackup(&url)
+            return url
+        }
+
+        private static func excludeFromBackup(_ url: inout URL) throws {
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            try url.setResourceValues(values)
         }
 
         func asCxxConfig() -> scribatic.core.EngineConfig {
@@ -89,6 +193,9 @@ extension ScribaticEngine {
             config.llamaModelPath = std.string(llamaModelPath)
             config.embedModelPath = std.string(embedModelPath)
             config.databasePath = std.string(databasePath)
+            config.recordingsDirectory = std.string(recordingsDirectory)
+            config.segmentationModelPath = std.string(segmentationModelPath)
+            config.speakerEmbeddingModelPath = std.string(speakerEmbeddingModelPath)
             config.threadCount = threadCount
             config.useMemoryMapping = useMemoryMapping
             return config

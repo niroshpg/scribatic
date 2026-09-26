@@ -6,6 +6,7 @@
 
 #include "scribatic/db/Schema.hpp"
 
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -16,10 +17,25 @@ struct Migration {
     std::string_view statements;
 };
 
-/// Empty at v1 (bootstrap creates the current schema directly). New entries are
+/// Bootstrap creates version 1; every later version is reached through this
+/// ladder, on a fresh install as much as on an upgrade. New entries are
 /// appended here and `kSchemaVersion` is incremented in the same commit.
+///
+/// A migration is several statements. `statements` holds them concatenated,
+/// and is executed with sqlite3_exec, which runs each in turn.
 inline const std::vector<Migration>& migrations() {
-    static const std::vector<Migration> kMigrations{};
+    static const std::string kToV2 = [] {
+        std::string sql;
+        for (const auto part : {kCreateSpeakers, kCreateWords, kAddSegmentSpeaker,
+                                kAddNoteSpeakerCount, kCreateFtsTriggers}) {
+            sql.append(part);
+            sql.push_back('\n');
+        }
+        return sql;
+    }();
+    static const std::vector<Migration> kMigrations{
+        {1, kToV2},
+    };
     return kMigrations;
 }
 

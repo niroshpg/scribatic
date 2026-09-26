@@ -143,3 +143,109 @@ Weights are downloaded on first run rather than bundled. A 1.2 GB app binary is
 hostile to install and awkward against store limits, and every comparable
 on-device LLM app does the same. That makes the first-run download real product
 surface: progress, resumability, a Wi-Fi preference, and a failure path.
+
+## ADR-009 — Speakers per note, on device, and no voiceprint outlives a recording
+
+Dated 2026-09-26. Asked for by prospective education users: record a
+discussion between several people, get a transcript that says who said what,
+share it, and delete the audio while keeping the words.
+
+### Diarization is sherpa-onnx, prebuilt, behind the C API
+
+Who-spoke-when is two models: pyannote segmentation 3.0 (MIT) finds speech and
+changes of voice, and a speaker-embedding model turns each stretch into a vector
+that is clustered into speakers. sherpa-onnx runs both through ONNX Runtime and
+exposes a plain C API, which the shared core calls; nothing on either platform
+side knows diarization exists beyond `identifySpeakers()`.
+
+It is linked as a prebuilt binary, pinned by version and SHA-256 in
+`scripts/fetch_native_deps.sh`, rather than vendored as source: building ONNX
+Runtime for three targets is a project of its own. The cost is size — about
+27 MB of native code on Android (`libonnxruntime.so` + `libsherpa-onnx-c-api.so`)
+and a 26 MB dynamic framework on iOS — plus 32 MB of models. The build is
+optional: without the library the core compiles a stub and the UI hides the
+feature.
+
+### The embedding model and threshold were chosen by measurement
+
+Three English embedding models were run over sherpa-onnx's real two-speaker
+recordings and over synthetic three- and four-voice discussions:
+
+| Model | Told "2 speakers" | Estimating |
+|---|---|---|
+| CAM++ (VoxCeleb) | collapsed one clip into a single 24 s turn | 3–4 speakers for 2 |
+| WeSpeaker ResNet34 | clean on one clip, **one speaker** on the other | 1 speaker for 2 |
+| **ERes2Net (VoxCeleb)** | clean alternation on every clip | depends on threshold |
+
+For estimating the count, ERes2Net at a cosine threshold of 0.85 got every
+two-person clip right but merged two of four voices; at 0.7 it kept all four
+apart and sometimes split one person into two. **0.7 is used**, because the two
+failure modes are not symmetric: a person split in two is repaired by giving
+both labels the same name (the export merges them), while two people merged
+into one label cannot be repaired at all. When the count is known, the user can
+say so ("Identify speakers again → 3 people"), which bypasses the estimate.
+
+### Attribution is per word, not per segment
+
+Whisper segments on pauses, not on voices, and a segment regularly spans a
+change of speaker. Labelling whole segments put one person's reply in the
+other's mouth. So the engine keeps word timings and re-cuts segments wherever
+the speaker changes.
+
+Two details were found by running it, not by designing it:
+
+- **Word timings come from whisper's DTW alignment** (`dtw_token_timestamps`),
+  not the default timestamp heuristic, which drifted by hundreds of
+  milliseconds exactly at turn boundaries. DTW is silently disabled by flash
+  attention, which is on by default, so flash attention is off. The alignment
+  scratch is 32 MB rather than the 128 MB default; 8 MB was measured to suffice
+  for the 5 s decode window.
+- **A word counts for at most 700 ms from its onset.** Stored spans run onset
+  to next onset, so the last word before a pause stretched across the pause and
+  was attributed to whoever spoke next.
+
+### What is stored, and what is not
+
+Word timings are persisted (`words` table), so speakers can be re-identified
+later with a different count — but only while the recording exists, because
+diarization needs the audio. The UI identifies speakers immediately after
+recording for that reason.
+
+**No voiceprint is stored.** Embeddings exist only inside one `identifySpeakers()`
+call. Speakers are per note: "Speaker 1" in one recording has no relationship
+to "Speaker 1" in another, and naming someone is a label typed by the user, not
+recognition. Recognising the same person across recordings would require
+keeping a voiceprint, which is biometric data — and for recordings made in
+schools, biometric data about children. That is a product decision to make
+deliberately, with opt-in and consent, not a side effect of this feature.
+
+### Deleting a recording keeps the transcript
+
+`deleteRecording()` removes the file first and the reference second; a crash in
+between leaves a reference to a missing file, which the next `warmUp()` clears.
+`warmUp()` also deletes `recording-*.wav` files no note refers to — the leftovers
+of a crash between capture and save. Notes store a recording's file name, never
+its path: an iOS container moves on reinstall, which was observed during
+verification.
+
+Deleting must also mean deleting from backups. Android already excluded app
+data; iOS did not, and `Application Support` is backed up to iCloud by default.
+The database and recordings now live in `store/` and `recordings/`, both
+excluded from backup, and the model files are excluded too.
+
+### Sharing sends nothing
+
+Share hands plain text to the system share sheet; the app the user picks does
+any sending. No network permission or API is involved, and the no-network CI
+check is unchanged. "Share without names" replaces every name with "Speaker N"
+for sharing a discussion without identifying the people in it.
+
+### Known limits
+
+- Two similar voices can be merged. In the synthetic four-voice test, two
+  female TTS voices were clustered together for one turn whatever the count or
+  gap settings; real recordings of distinct people separated cleanly.
+- Diarization is not cancellable part-way: sherpa-onnx ignores the progress
+  callback's return value.
+- Cost is roughly 3 s per 35 s of audio on an M4 and about 30 s per 41 s on an
+  arm64 emulator. It has not yet been measured on a phone.

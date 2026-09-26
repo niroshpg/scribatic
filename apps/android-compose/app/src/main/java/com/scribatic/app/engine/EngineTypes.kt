@@ -15,7 +15,10 @@ enum class EngineStatus(val code: Int) {
     INFERENCE_FAILED(6),
     DATABASE_FAILED(7),
     CANCELLED(8),
-    OUT_OF_MEMORY(9);
+    OUT_OF_MEMORY(9),
+    RECORDING_NOT_FOUND(10),
+    SPEAKERS_UNAVAILABLE(11),
+    FILE_REMOVAL_FAILED(12);
 
     companion object {
         fun from(code: Int): EngineStatus =
@@ -42,7 +45,40 @@ data class TranscriptSegment(
     val endMs: Long,
     val text: String,
     val confidence: Float,
+    /** Zero-based speaker within the note; -1 until speakers are identified. */
+    val speaker: Int = -1,
 )
+
+/** One voice in one note. `displayName` is the name, or "Speaker N". */
+data class SpeakerLabel(
+    val index: Int,
+    val name: String,
+    val displayName: String,
+)
+
+data class NoteSummary(
+    val id: Long,
+    val title: String,
+    val createdAtSeconds: Long,
+    val durationMs: Long,
+    val hasAudio: Boolean,
+    val speakerCount: Int,
+    val preview: String,
+)
+
+data class NoteDetail(
+    val id: Long,
+    val title: String,
+    val createdAtSeconds: Long,
+    val durationMs: Long,
+    /** Absolute path of the recording; null once it has been deleted. */
+    val audioPath: String?,
+    val speakerCount: Int,
+    val speakers: List<SpeakerLabel>,
+    val segments: List<TranscriptSegment>,
+) {
+    fun speakerName(index: Int): String? = speakers.firstOrNull { it.index == index }?.displayName
+}
 
 /**
  * Paths must resolve inside `Context.filesDir`. Nothing in this app ever reads
@@ -53,6 +89,10 @@ data class EngineConfig(
     val llamaModelPath: String,
     val embedModelPath: String,
     val databasePath: String,
+    /** Recordings live here; notes store a file name relative to it. */
+    val recordingsDirectory: String,
+    val segmentationModelPath: String,
+    val speakerEmbeddingModelPath: String,
     val threadCount: Int = Runtime.getRuntime().availableProcessors().coerceAtMost(4),
     val useMemoryMapping: Boolean = true,
 )

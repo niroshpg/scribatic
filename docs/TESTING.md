@@ -238,3 +238,66 @@ at all.
 - `make test-ios` runs against a simulator name you must supply on most machines.
 - `fmt`, `lint` and `clean` still end in `|| true`, so they cannot fail. The
   build and test recipes no longer do.
+
+---
+
+## End-to-end on simulators and emulators
+
+`e2e/` holds [Maestro](https://maestro.mobile.dev) flows that drive the real
+app through the whole speaker journey: record a conversation, stop, check that
+speakers were identified, name one, delete the recording and check the
+transcript survives, then share it without names. They were last run green on
+2026-09-26 against an iPhone 16 simulator (iOS 18.3) and an arm64 API 35
+emulator with a targetSdk 36 build.
+
+A simulator has no conversation to hear, so **debug builds** can take their
+microphone input from a file instead, played in real time through exactly the
+path a recording takes. Release builds compile this out.
+
+Any 16 kHz mono 16-bit WAV works; `models/fixtures/` has real two-person ones
+after `make fetch-models`. A multi-voice discussion can be made with `say`:
+each line in a different voice, joined with 0.4 s gaps, converted with
+`afconvert -f WAVE -d LEI16@16000 -c 1`.
+
+**iOS** — the file goes in the app container; a launch argument turns it on:
+
+```bash
+UDID=<simulator>; APP=/tmp/scribatic-dd/Build/Products/Debug-iphonesimulator/ScribaticApp.app
+xcrun simctl install $UDID $APP
+C=$(xcrun simctl get_app_container $UDID com.scribatic.app data)
+mkdir -p "$C/Library/Application Support" "$C/Library/Caches"
+for m in ggml-base.en.bin insight-q4_k_m.gguf embed-minilm-l6-v2.gguf \
+         speaker-segmentation.onnx speaker-embedding.onnx; do
+    cp -c "models/$m" "$C/Library/Application Support/"     # APFS clone: instant
+done
+cp conversation.wav "$C/Library/Caches/conversation.wav"
+xcrun simctl privacy $UDID grant microphone com.scribatic.app
+xcrun simctl launch $UDID com.scribatic.app -ScribaticInjectAudio Library/Caches/conversation.wav
+maestro --device $UDID test e2e/ios-speakers-share-delete.yaml
+```
+
+**Android** — the file's presence at `files/inject/conversation.wav` turns it
+on. Stream large models with `exec-in` rather than push-then-copy: the default
+AVD has too little free space for two copies of the 1.2 GB instruct model.
+
+```bash
+adb install -r -t apps/android-compose/app/build/intermediates/apk/debug/app-debug.apk
+adb shell pm grant com.scribatic.app android.permission.RECORD_AUDIO
+adb shell run-as com.scribatic.app mkdir -p files/inject
+for m in ggml-base.en.bin insight-q4_k_m.gguf embed-minilm-l6-v2.gguf \
+         speaker-segmentation.onnx speaker-embedding.onnx; do
+    adb exec-in run-as com.scribatic.app sh -c "cat > files/$m" < models/$m
+done
+adb exec-in run-as com.scribatic.app sh -c 'cat > files/inject/conversation.wav' < conversation.wav
+maestro --device emulator-5554 test e2e/android-speakers-share-delete.yaml
+```
+
+Two emulator traps, both found the hard way:
+
+- **The bundled AVDs have one vCPU and 2 GB of RAM.** Diarization then thrashes
+  indefinitely. Launch with `emulator -avd <name> -cores 4 -memory 4096`, which
+  overrides the AVD without editing it.
+- **Diarization takes ~30 s on the emulator but several minutes with the app
+  in the foreground**, because the emulator draws the progress spinner on the
+  host CPU. This was confirmed by backgrounding the app mid-run; it is an
+  emulator cost, not an engine one, and the flow's timeout allows for it.

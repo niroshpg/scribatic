@@ -2,6 +2,7 @@ package com.scribatic.app.engine
 
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
@@ -25,13 +26,21 @@ import java.util.concurrent.atomic.AtomicLong
  * function because it is invoked from the AAudio callback thread, which must
  * never suspend, allocate, or contend on a lock.
  *
+ * Every other native call runs on ONE lane of that pool, never two at once —
+ * the same serialisation the Swift actor gives iOS. The engine is not
+ * re-entrant: a transcription pass still running on one pool thread while
+ * Stop's flush starts on another is two decodes on one whisper context, and
+ * that segfaults inside ggml. Suspension points (the polling delay) release
+ * the lane, so the stream does not starve other calls.
+ *
  * ## Lifetime
  * The native engine is owned through [Closeable], not through GC finalization.
  * A GGUF mapping is far too large to leave to the collector's discretion.
  */
 class TranscriptionEngine private constructor(
     handle: Long,
-    private val dispatcher: CoroutineDispatcher = Dispatchers.Default,
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val dispatcher: CoroutineDispatcher = Dispatchers.Default.limitedParallelism(1),
 ) : Closeable {
 
     private val nativeHandle = AtomicLong(handle)
@@ -54,6 +63,9 @@ class TranscriptionEngine private constructor(
                 llamaModelPath = config.llamaModelPath,
                 embedModelPath = config.embedModelPath,
                 databasePath = config.databasePath,
+                recordingsDirectory = config.recordingsDirectory,
+                segmentationModelPath = config.segmentationModelPath,
+                speakerEmbeddingModelPath = config.speakerEmbeddingModelPath,
                 threadCount = config.threadCount,
                 useMemoryMapping = config.useMemoryMapping,
             )
@@ -108,6 +120,68 @@ class TranscriptionEngine private constructor(
         nativeSummarize(nativeHandle.get(), transcript)
     }
 
+    // -- Sessions --------------------------------------------------------------
+
+    /** Before capture starts: resets the ring buffer and the timeline. */
+    suspend fun beginSession() = withContext(dispatcher) {
+        nativeBeginSession(nativeHandle.get())
+    }
+
+    /** Persists the finished session; call after [flush]. Returns 0 on failure. */
+    suspend fun saveSession(title: String, createdAtSeconds: Long, audioPath: String?): Long =
+        withContext(dispatcher) {
+            nativeSaveSession(nativeHandle.get(), title, createdAtSeconds, audioPath.orEmpty())
+        }
+
+    // -- Notes -------------------------------------------------------------------
+
+    suspend fun listNotes(): List<NoteSummary> = withContext(dispatcher) {
+        nativeListNotes(nativeHandle.get()).toList().chunked(NOTE_FIELDS).mapNotNull { f ->
+            if (f.size < NOTE_FIELDS) return@mapNotNull null
+            NoteSummary(
+                id = f[0].toLong(),
+                title = f[1],
+                createdAtSeconds = f[2].toLong(),
+                durationMs = f[3].toLong(),
+                hasAudio = f[4] == "1",
+                speakerCount = f[5].toInt(),
+                preview = f[6],
+            )
+        }
+    }
+
+    suspend fun loadNote(noteId: Long): NoteDetail? = withContext(dispatcher) {
+        decodeNote(nativeLoadNote(nativeHandle.get(), noteId))
+    }
+
+    suspend fun deleteRecording(noteId: Long): EngineStatus = withContext(dispatcher) {
+        EngineStatus.from(nativeDeleteRecording(nativeHandle.get(), noteId))
+    }
+
+    suspend fun deleteNote(noteId: Long): EngineStatus = withContext(dispatcher) {
+        EngineStatus.from(nativeDeleteNote(nativeHandle.get(), noteId))
+    }
+
+    suspend fun exportTranscript(noteId: Long, includeTimestamps: Boolean, anonymise: Boolean): String =
+        withContext(dispatcher) {
+            nativeExportTranscript(nativeHandle.get(), noteId, includeTimestamps, anonymise)
+        }
+
+    // -- Speakers ----------------------------------------------------------------
+
+    /** Stats two model files; cheap and safe from any thread. */
+    fun canIdentifySpeakers(): Boolean = nativeCanIdentifySpeakers(nativeHandle.get())
+
+    /** Diarizes the note's recording. [expected] 0 estimates the count. */
+    suspend fun identifySpeakers(noteId: Long, expected: Int = 0): EngineStatus = withContext(dispatcher) {
+        EngineStatus.from(nativeIdentifySpeakers(nativeHandle.get(), noteId, expected))
+    }
+
+    suspend fun renameSpeaker(noteId: Long, speaker: Int, name: String): EngineStatus =
+        withContext(dispatcher) {
+            EngineStatus.from(nativeRenameSpeaker(nativeHandle.get(), noteId, speaker, name))
+        }
+
     suspend fun indexNote(noteId: Long, text: String): EngineStatus = withContext(dispatcher) {
         EngineStatus.from(nativeIndexNote(nativeHandle.get(), noteId, text))
     }
@@ -120,17 +194,49 @@ class TranscriptionEngine private constructor(
         if (handle != 0L) nativeDestroy(handle)
     }
 
-    /** Flat [startMs, endMs, text, confidence] tuples -> typed segments. */
+    /** Flat [startMs, endMs, text, confidence, speaker] tuples -> typed segments. */
     private fun decodeSegments(flat: Array<String>): List<TranscriptSegment> =
-        flat.toList().chunked(4).mapNotNull { tuple ->
-            if (tuple.size < 4) return@mapNotNull null
-            TranscriptSegment(
-                startMs = tuple[0].toLongOrNull() ?: 0L,
-                endMs = tuple[1].toLongOrNull() ?: 0L,
-                text = tuple[2],
-                confidence = tuple[3].toFloatOrNull() ?: 0f,
-            )
+        flat.toList().chunked(SEGMENT_FIELDS).mapNotNull { tuple ->
+            if (tuple.size < SEGMENT_FIELDS) return@mapNotNull null
+            segmentOf(tuple, 0)
         }
+
+    private fun segmentOf(f: List<String>, at: Int) = TranscriptSegment(
+        startMs = f[at].toLongOrNull() ?: 0L,
+        endMs = f[at + 1].toLongOrNull() ?: 0L,
+        text = f[at + 2],
+        confidence = f[at + 3].toFloatOrNull() ?: 0f,
+        speaker = f[at + 4].toIntOrNull() ?: -1,
+    )
+
+    /**
+     * Layout written by nativeLoadNote: six header fields, then a count and
+     * that many (index, name, displayName) triples, then a count and that
+     * many segment tuples. Empty array means no such note.
+     */
+    private fun decodeNote(flat: Array<String>): NoteDetail? {
+        if (flat.size < 8) return null
+        val f = flat.toList()
+        var at = 6
+        val speakerCount = f[at++].toInt()
+        val speakers = (0 until speakerCount).map {
+            SpeakerLabel(f[at].toInt(), f[at + 1], f[at + 2]).also { at += 3 }
+        }
+        val segmentCount = f[at++].toInt()
+        val segments = (0 until segmentCount).map {
+            segmentOf(f, at).also { at += SEGMENT_FIELDS }
+        }
+        return NoteDetail(
+            id = f[0].toLong(),
+            title = f[1],
+            createdAtSeconds = f[2].toLong(),
+            durationMs = f[3].toLong(),
+            audioPath = f[4].ifEmpty { null },
+            speakerCount = f[5].toInt(),
+            speakers = speakers,
+            segments = segments,
+        )
+    }
 
     // -- JNI declarations -----------------------------------------------------
     private external fun nativeCreate(
@@ -138,6 +244,9 @@ class TranscriptionEngine private constructor(
         llamaModelPath: String,
         embedModelPath: String,
         databasePath: String,
+        recordingsDirectory: String,
+        segmentationModelPath: String,
+        speakerEmbeddingModelPath: String,
         threadCount: Int,
         useMemoryMapping: Boolean,
     ): Long
@@ -153,4 +262,22 @@ class TranscriptionEngine private constructor(
     private external fun nativeSummarize(handle: Long, transcript: String): String
     private external fun nativeIndexNote(handle: Long, noteId: Long, text: String): Int
     private external fun nativeRequestCancel(handle: Long)
+    private external fun nativeBeginSession(handle: Long)
+    private external fun nativeSaveSession(handle: Long, title: String, createdAt: Long, audioPath: String): Long
+    private external fun nativeListNotes(handle: Long): Array<String>
+    private external fun nativeLoadNote(handle: Long, noteId: Long): Array<String>
+    private external fun nativeDeleteRecording(handle: Long, noteId: Long): Int
+    private external fun nativeDeleteNote(handle: Long, noteId: Long): Int
+    private external fun nativeExportTranscript(
+        handle: Long,
+        noteId: Long,
+        includeTimestamps: Boolean,
+        anonymise: Boolean,
+    ): String
+    private external fun nativeCanIdentifySpeakers(handle: Long): Boolean
+    private external fun nativeIdentifySpeakers(handle: Long, noteId: Long, expected: Int): Int
+    private external fun nativeRenameSpeaker(handle: Long, noteId: Long, speaker: Int, name: String): Int
 }
+
+private const val SEGMENT_FIELDS = 5
+private const val NOTE_FIELDS = 7

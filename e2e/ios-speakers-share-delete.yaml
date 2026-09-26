@@ -1,0 +1,73 @@
+# End-to-end: record a multi-speaker conversation, identify speakers, name
+# one, delete the recording and keep the transcript, then share it.
+#
+# Runs on a simulator against a DEBUG build started with injected audio —
+# see docs/TESTING.md, "End-to-end on simulators and emulators". The app is
+# launched by simctl rather than here, because the launch argument that
+# injects the conversation has to reach the process verbatim.
+appId: com.scribatic.app
+---
+- extendedWaitUntil:
+    visible: "New recording"
+    timeout: 60000
+- tapOn:
+    text: "New recording"
+    index: 0
+- tapOn: "Record"
+# The conversation plays in real time (about 41 s). The canteen line is the
+# second to last; the last one is still in the decode window until Stop
+# flushes it, so it is checked on the note instead.
+- extendedWaitUntil:
+    visible: ".*canteen.*"
+    timeout: 120000
+- extendedWaitUntil:            # a pause: lets the final line finish playing
+    visible: "never-shown-marker"
+    timeout: 10000
+    optional: true
+- takeScreenshot: ios-02-recording
+- tapOn: "Stop"
+- extendedWaitUntil:
+    visible: "Speakers"
+    timeout: 180000
+- assertVisible: "Speaker 1"
+- assertVisible: "Speaker 2"
+- takeScreenshot: ios-03-note
+- scrollUntilVisible:
+    element: ".*Thursday.*"
+- takeScreenshot: ios-03b-note-end
+- scrollUntilVisible:
+    element: "Speakers"
+    direction: UP
+
+# Name a speaker.
+- tapOn:
+    text: "Speaker 1"
+    index: 0
+- inputText: "Daniel"
+- tapOn: "Save"
+- assertVisible: "Daniel"
+- takeScreenshot: ios-04-named
+
+# Delete the recording; the transcript and names stay.
+- tapOn: "More"
+- tapOn: "Delete recording…"
+- takeScreenshot: ios-05-confirm-delete
+- tapOn: "Delete recording"
+- extendedWaitUntil:
+    visible: ".*Deleted.*"
+    timeout: 10000
+- assertVisible: "Daniel"
+- takeScreenshot: ios-06-recording-deleted
+- scrollUntilVisible:           # the transcript itself is still all there
+    element: ".*Thursday.*"
+- tapOn: "More"
+- assertNotVisible: "Play recording"
+- assertNotVisible: "Identify speakers again"
+- tapOn: "Delete note…"        # opens the menu's last item's dialog…
+- tapOn: "Cancel"              # …which is dismissed: this note is kept
+
+# Share it, without names.
+- tapOn: "Share"
+- tapOn: "Share without names"
+- waitForAnimationToEnd
+- takeScreenshot: ios-07-share-sheet

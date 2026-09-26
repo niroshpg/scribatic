@@ -45,5 +45,34 @@ fetch "${WHISPER_URL}" "${MODELS_DIR}/${WHISPER_MODEL}"
 fetch "${LLAMA_URL}"   "${MODELS_DIR}/${LLAMA_MODEL}"
 fetch "${EMBED_URL}"   "${MODELS_DIR}/${EMBED_MODEL}"
 
+# Speaker diarization (ADR-009). Two small ONNX models run by sherpa-onnx:
+# pyannote segmentation 3.0 (MIT) finds where speech is and where the voice
+# changes; ERes2Net trained on VoxCeleb (3D-Speaker, Apache 2.0) turns each
+# stretch into a voiceprint for clustering. ERes2Net was chosen over CAM++ and
+# WeSpeaker ResNet34 by measurement, not reputation — see the ADR.
+SHERPA_MODELS="https://github.com/k2-fsa/sherpa-onnx/releases/download"
+SEGMENTATION_MODEL="speaker-segmentation.onnx"
+SPEAKER_EMBED_MODEL="speaker-embedding.onnx"
+
+if [[ ! -f "${MODELS_DIR}/${SEGMENTATION_MODEL}" ]]; then
+  echo "==> Fetching ${SEGMENTATION_MODEL}"
+  tmp="$(mktemp -d)"
+  curl -fL --progress-bar \
+    "${SHERPA_MODELS}/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2" \
+    | tar xj -C "${tmp}"
+  mv "${tmp}/sherpa-onnx-pyannote-segmentation-3-0/model.onnx" "${MODELS_DIR}/${SEGMENTATION_MODEL}"
+  rm -rf "${tmp}"
+fi
+fetch "${SHERPA_MODELS}/speaker-recongition-models/3dspeaker_speech_eres2net_sv_en_voxceleb_16k.onnx" \
+  "${MODELS_DIR}/${SPEAKER_EMBED_MODEL}"
+
+# Real two-speaker English conversations, used by the diarization tests. They
+# come from sherpa-onnx's own test set and are not redistributed here.
+mkdir -p "${MODELS_DIR}/fixtures"
+for n in 1 2 3; do
+  fetch "${SHERPA_MODELS}/speaker-segmentation-models/${n}-two-speakers-en.wav" \
+    "${MODELS_DIR}/fixtures/two-speakers-en-${n}.wav"
+done
+
 echo "==> Models in ${MODELS_DIR}:"
 ls -lh "${MODELS_DIR}" | tail -n +2

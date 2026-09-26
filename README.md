@@ -212,13 +212,16 @@ PRAGMA foreign_keys = ON;        -- ON DELETE CASCADE is the deletion guarantee
 
 WAL is the one that matters most in practice: without it, a transcription write would block the retrieval query backing the UI, and the user would see the list freeze while the engine commits.
 
-`ON DELETE CASCADE` is load-bearing. "Delete this note" must remove its segments, its chunks, its vectors and its FTS rows in one transaction. A vector index that outlives the note it describes is a privacy defect, not a housekeeping one.
+`ON DELETE CASCADE` is load-bearing. "Delete this note" must remove its segments, its words, its speakers, its chunks and its FTS rows in one transaction. A search index that outlives the note it describes is a privacy defect, not a housekeeping one.
+
+The cascade alone does not reach the index: `chunks_fts` is a virtual table joined by rowid, and a virtual table cannot be the child of a foreign key. Triggers on `chunks` keep it in step (schema v2), and `NoteStoreTests` checks the index itself — not the content table it hides behind — after a delete. `vss_chunks` is not created yet; it needs a loadable extension nothing loads, and gets the same trigger when embedding lands.
 
 ### Data-at-rest
 
 - **iOS**: `.applicationSupportDirectory` inside the app container, `NSFileProtectionComplete`. `UIFileSharingEnabled` is false.
 - **Android**: `Context.getFilesDir()` only. No `MANAGE_EXTERNAL_STORAGE`, no scoped-storage access, nothing on shared storage.
-- Both platforms exclude every domain from cloud backup and device-to-device transfer (`data_extraction_rules.xml`). Nothing derived from a recording leaves the device by *any* path, including the OS vendor's.
+- **Backups**: Android excludes every domain from cloud backup and device-to-device transfer (`data_extraction_rules.xml`, `allowBackup="false"`). iOS keeps the database in `store/` and recordings in `recordings/` under Application Support, both marked `isExcludedFromBackup` — without that, deleting a recording would leave it in the last iCloud backup.
+- **Recordings** are 16 kHz mono float32 WAV on both platforms, and notes refer to them by file name, never by path. Deleting a recording keeps the transcript (ADR-009).
 
 ---
 
@@ -292,8 +295,10 @@ make doctor
 #    project, verify the Android SDK/NDK pairing
 make setup-all
 
-# 3. Pull GGUF weights into ./models (never committed — hundreds of MB)
+# 3. Pull GGUF weights and the diarization models into ./models (never
+#    committed — hundreds of MB), and the pinned SQLite and sherpa-onnx builds
 make fetch-models
+make fetch-deps
 
 # 4. Build and test the shared core on the host first. Fast feedback, and it
 #    catches portability breaks before either mobile toolchain is involved.
@@ -361,7 +366,8 @@ rather than `build/outputs/apk/`, and the same flag marks it test-only, so
 Stage the models into the app's private storage:
 
 ```bash
-for m in ggml-base.en.bin insight-q4_k_m.gguf embed-minilm-l6-v2.gguf; do
+for m in ggml-base.en.bin insight-q4_k_m.gguf embed-minilm-l6-v2.gguf \
+         speaker-segmentation.onnx speaker-embedding.onnx; do
     adb -s $DEV push models/$m /data/local/tmp/
     adb -s $DEV shell "run-as com.scribatic.app cp /data/local/tmp/$m files/"
 done
@@ -390,7 +396,8 @@ the container — that is the privacy guarantee working as intended. `devicectl`
 reaches a development build's container without weakening it:
 
 ```bash
-for m in ggml-base.en.bin insight-q4_k_m.gguf embed-minilm-l6-v2.gguf; do
+for m in ggml-base.en.bin insight-q4_k_m.gguf embed-minilm-l6-v2.gguf \
+         speaker-segmentation.onnx speaker-embedding.onnx; do
     xcrun devicectl device copy to --device $DEV \
         --domain-type appDataContainer --domain-identifier com.scribatic.app \
         --source models/$m \
@@ -425,11 +432,12 @@ The host build is not a toy: it compiles the exact same translation units with t
 |---|---|
 | `help` | Target summary (default goal) |
 | `doctor` | Report local toolchain versions |
-| `setup-all` | `setup-core` + `setup-ios` + `setup-android` |
+| `setup-all` | `setup-core` + `fetch-deps` + `setup-ios` + `setup-android` |
 | `setup-core` | Vendor whisper.cpp and llama.cpp |
 | `setup-ios` | Symlink shared headers, run XcodeGen |
 | `setup-android` | Verify `ANDROID_HOME` and the Gradle wrapper |
-| `fetch-models` | Download GGUF weights into `./models` |
+| `fetch-models` | Download GGUF weights, diarization models and test conversations into `./models` |
+| `fetch-deps` | SQLite amalgamation + sherpa-onnx prebuilts, version- and SHA-256-pinned; every build target depends on it |
 | `build-core` | Host build of `libscribatic_core.a` + `compile_commands.json` |
 | `build-ios` | `xcodebuild` the SwiftUI app |
 | `build-android` | `./gradlew assemble` the Compose app |

@@ -6,27 +6,31 @@ extension Color {
     static let scribaticAccent = Color(red: 235 / 255, green: 108 / 255, blue: 54 / 255)
 }
 
-struct TranscriptView: View {
+/// The live recording screen. Pushed over the notes list; when the recording
+/// is stopped and saved, the model replaces it with the note it produced.
+struct RecorderView: View {
     @Bindable var model: TranscriptionModel
 
     var body: some View {
-        NavigationStack {
-            content
-                .navigationTitle("Transcript")
-                // The content is a column of prose. Left to itself a List spans
-                // the full width of an iPad, which gives very long measure and
-                // an empty-looking sheet; capping it keeps the line length
-                // readable and the layout deliberate rather than stretched.
-                .frame(maxWidth: 720)
-                .frame(maxWidth: .infinity)
-                .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button("Clear", systemImage: "trash") { model.clear() }
-                            .disabled(!model.canClear)
-                    }
-                }
-                .safeAreaInset(edge: .bottom) { transportBar }
-                .task { await model.prepare() }
+        content
+            .navigationTitle("New recording")
+            .navigationBarTitleDisplayMode(.inline)
+            // Leaving mid-recording would orphan the capture; the only way
+            // out is Stop, which saves it.
+            .navigationBarBackButtonHidden(isCapturing)
+            // The content is a column of prose. Left to itself a List spans
+            // the full width of an iPad, which gives very long measure and
+            // an empty-looking sheet; capping it keeps the line length
+            // readable and the layout deliberate rather than stretched.
+            .frame(maxWidth: 720)
+            .frame(maxWidth: .infinity)
+            .safeAreaInset(edge: .bottom) { transportBar }
+    }
+
+    private var isCapturing: Bool {
+        switch model.phase {
+        case .recording, .paused, .processing: return true
+        default: return false
         }
     }
 
@@ -39,51 +43,60 @@ struct TranscriptView: View {
                 Label("Engine stopped", systemImage: "exclamationmark.triangle")
             } description: {
                 Text(failure)
-            } actions: {
-                Button("Try again") {
-                    Task { await model.prepare() }
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.scribaticAccent)
             }
         } else if model.segments.isEmpty {
             ContentUnavailableView {
-                Label("Nothing transcribed yet", systemImage: "waveform")
+                Label(model.phase == .ready ? "Ready to record" : "Listening",
+                      systemImage: "waveform")
             } description: {
-                Text("Press record to start. Speech is transcribed on this device and appears here — nothing is uploaded, and the microphone is only open while you are recording.")
+                Text("Speech is transcribed on this device and appears here — nothing is uploaded, and the microphone is only open while you are recording. When you stop, Scribatic works out who said what.")
             }
         } else {
-            List(model.segments) { segment in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(segment.text)
-                        .font(.body)
-                        // An interim segment can still change; dimming it says
-                        // so without needing a label to explain it.
-                        .foregroundStyle(segment.isFinal ? .primary : .secondary)
+            ScrollViewReader { proxy in
+                List(model.segments) { segment in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(segment.text)
+                            .font(.body)
+                            // An interim segment can still change; dimming it
+                            // says so without needing a label to explain it.
+                            .foregroundStyle(segment.isFinal ? .primary : .secondary)
 
-                    Text(timestamp(segment))
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.tertiary)
+                        Text(timestamp(segment.startMs))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(.vertical, 2)
+                    .id(segment.id)
                 }
-                .padding(.vertical, 2)
+                .listStyle(.plain)
+                // Follow the words as they arrive; otherwise the newest
+                // sentence lands below the fold after half a minute.
+                .onChange(of: model.segments.count) {
+                    if let last = model.segments.last {
+                        withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+                    }
+                }
             }
-            .listStyle(.plain)
         }
     }
 
     // MARK: - Transport
 
-    /// Record / pause / resume / stop / play, plus the status. Which controls
-    /// appear is driven entirely by the phase, so there is never a button that
-    /// does nothing in the current state.
+    /// Record / pause / resume / stop, plus the status. Which controls appear
+    /// is driven entirely by the phase, so there is never a button that does
+    /// nothing in the current state.
     private var transportBar: some View {
         VStack(spacing: 12) {
             Divider()
 
             HStack(spacing: 10) {
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 10, height: 10)
+                if case .processing = model.phase {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Circle()
+                        .fill(statusColor)
+                        .frame(width: 10, height: 10)
+                }
 
                 Text(model.phase.label)
                     .font(.subheadline.weight(.medium))
@@ -100,14 +113,11 @@ struct TranscriptView: View {
 
             HStack(spacing: 16) {
                 switch model.phase {
-                case .starting, .failed:
+                case .starting, .failed, .processing:
                     EmptyView()
 
                 case .ready:
                     recordButton
-                    if model.hasRecording {
-                        transportButton("Play", systemImage: "play.fill") { model.play() }
-                    }
 
                 case .recording:
                     transportButton("Pause", systemImage: "pause.fill") { model.pauseRecording() }
@@ -116,9 +126,6 @@ struct TranscriptView: View {
                 case .paused:
                     transportButton("Resume", systemImage: "play.fill") { model.resumeRecording() }
                     stopButton
-
-                case .playing:
-                    transportButton("Stop", systemImage: "stop.fill") { model.stopPlayback() }
                 }
             }
             .frame(maxWidth: .infinity)
@@ -164,16 +171,14 @@ struct TranscriptView: View {
 
     private var statusColor: Color {
         switch model.phase {
-        case .starting:            return .yellow
-        case .ready:               return .secondary
+        case .starting, .paused:   return .yellow
+        case .ready, .processing:  return .secondary
         case .recording:           return .scribaticAccent
-        case .paused:              return .yellow
-        case .playing:             return .blue
         case .failed:              return .red
         }
     }
+}
 
-    private func timestamp(_ segment: TranscriptSegmentValue) -> String {
-        Duration.milliseconds(segment.startMs).formatted(.time(pattern: .minuteSecond))
-    }
+func timestamp(_ ms: Int64) -> String {
+    Duration.milliseconds(ms).formatted(.time(pattern: .minuteSecond))
 }

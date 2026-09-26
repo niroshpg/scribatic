@@ -14,10 +14,10 @@ import kotlin.concurrent.thread
 /**
  * Plays back a capture written by [AudioCapture].
  *
- * The file is raw 16 kHz mono float32 with no container, so playback streams it
- * straight into an [AudioTrack] configured identically. There is no header to
- * parse and nothing to negotiate — the format is fixed by the engine's input
- * requirement, which is the whole reason capture writes it this way.
+ * The file is 16 kHz mono float32 WAV, so once past the header playback
+ * streams it straight into an [AudioTrack] configured identically. Nothing to
+ * negotiate — the format is fixed by the engine's input requirement, which is
+ * the whole reason capture writes it this way.
  */
 class AudioPlayback {
 
@@ -69,6 +69,8 @@ class AudioPlayback {
             val bytes = ByteArray(frames * 4)
             val floats = FloatArray(frames)
             BufferedInputStream(FileInputStream(file)).use { input ->
+                // Past the WAV header, or it plays as a click of noise.
+                input.skip(WavFile.dataOffset(file))
                 while (playing.get()) {
                     val read = input.read(bytes)
                     if (read <= 0) break

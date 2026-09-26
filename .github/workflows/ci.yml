@@ -12,6 +12,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # The prebuilt diarization libraries ship in the app, so they are checked
+      # too — by their imported symbols, which needs llvm-nm for arm64 ELF.
+      - name: Stage prebuilt native dependencies
+        run: |
+          sudo apt-get install -y --no-install-recommends llvm
+          bash scripts/fetch_native_deps.sh
       - name: Assert no egress path exists
         run: bash scripts/verify_no_network.sh
 

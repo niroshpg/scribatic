@@ -50,17 +50,31 @@ final class AudioCapture {
     private(set) var isRunning = false
     private(set) var recordingURL: URL?
 
-    /// Where the capture is written. Inside the app container alongside the
-    /// models, never shared storage — the same guarantee the engine paths carry.
-    static func newRecordingURL() throws -> URL {
-        let support = try FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )
-        let name = "recording-\(Int(Date().timeIntervalSince1970)).caf"
-        return support.appending(path: name)
+    #if DEBUG
+    private var injected: InjectedAudioSource?
+    #endif
+
+    /// How the capture is stored: WAV, mono 16 kHz float32 — the engine's own
+    /// input format. The core maps the file straight into speaker diarization
+    /// without converting or copying it (ADR-009), and the same file plays
+    /// back through AVAudioPlayer. The core parses the chunk list, so the
+    /// padding AVAudioFile inserts before `data` is not a problem.
+    private static var fileSettings: [String: Any] { [
+        AVFormatIDKey: kAudioFormatLinearPCM,
+        AVSampleRateKey: 16_000,
+        AVNumberOfChannelsKey: 1,
+        AVLinearPCMBitDepthKey: 32,
+        AVLinearPCMIsFloatKey: true,
+        AVLinearPCMIsBigEndianKey: false,
+        AVLinearPCMIsNonInterleaved: false,
+    ] }
+
+    /// A new, unique file in `directory`, the engine's recordings directory.
+    /// The `recording-` prefix and `.wav` suffix are part of the contract: the
+    /// core only ever sweeps files named that way.
+    static func newRecordingURL(in directory: URL) -> URL {
+        let stamp = Int(Date().timeIntervalSince1970 * 1000)
+        return directory.appending(path: "recording-\(stamp).wav")
     }
 
     /// Static because it touches no instance state. As a method it would send
@@ -81,10 +95,27 @@ final class AudioCapture {
         }
     }
 
-    /// Starts the tap. `sink` is invoked on the render thread — it must do no
-    /// more than hand the frames to the engine.
-    func start(sink: @escaping @Sendable (UnsafePointer<Float>, Int) -> Void) throws {
+    /// Starts the tap, writing the capture to `url`. `sink` is invoked on the
+    /// render thread — it must do no more than hand the frames to the engine.
+    func start(writingTo url: URL, sink: @escaping @Sendable (UnsafePointer<Float>, Int) -> Void) throws {
         guard !isRunning else { return }
+
+        #if DEBUG
+        if let source = InjectedAudioSource.configured() {
+            self.file = try AVAudioFile(forWriting: url, settings: Self.fileSettings)
+            self.recordingURL = url
+            injected = source
+            // Same sharing as the tap closure below, which the compiler does
+            // not check because installTap's block is not @Sendable: the
+            // source thread only converts, sinks, and queues the file write.
+            nonisolated(unsafe) let capture = self
+            try source.start { buffer in
+                capture.deliver(buffer, sink: sink)
+            }
+            isRunning = true
+            return
+        }
+        #endif
 
         let session = AVAudioSession.sharedInstance()
         // .playAndRecord so playback of a finished recording does not require
@@ -103,8 +134,7 @@ final class AudioCapture {
         }
         self.converter = converter
 
-        let url = try Self.newRecordingURL()
-        self.file = try AVAudioFile(forWriting: url, settings: Self.targetFormat.settings)
+        self.file = try AVAudioFile(forWriting: url, settings: Self.fileSettings)
         self.recordingURL = url
 
         input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
@@ -121,19 +151,35 @@ final class AudioCapture {
     /// resuming does not start a new recording.
     func pause() {
         guard isRunning else { return }
+        #if DEBUG
+        if let injected { injected.pause(); return }
+        #endif
         audioEngine.pause()
     }
 
     func resume() throws {
         guard isRunning else { return }
+        #if DEBUG
+        if let injected { injected.resume(); return }
+        #endif
         try audioEngine.start()
     }
 
     func stop() {
         guard isRunning else { return }
+        isRunning = false
+
+        #if DEBUG
+        if let injected {
+            injected.stop()
+            self.injected = nil
+            writeQueue.sync { self.file = nil }
+            return
+        }
+        #endif
+
         audioEngine.inputNode.removeTap(onBus: 0)
         audioEngine.stop()
-        isRunning = false
 
         // Close the file on the same queue the writes go through, so it is not
         // released while a write is still in flight.
@@ -166,8 +212,14 @@ final class AudioCapture {
             return buffer
         }
 
-        guard error == nil, converted.frameLength > 0,
-              let channel = converted.floatChannelData?[0] else { return }
+        guard error == nil, converted.frameLength > 0 else { return }
+        deliver(converted, sink: sink)
+    }
+
+    /// Hands 16 kHz mono frames to the engine, then queues them for the file.
+    /// Render thread (or the injected source's thread in debug builds).
+    private func deliver(_ converted: AVAudioPCMBuffer, sink: (UnsafePointer<Float>, Int) -> Void) {
+        guard let channel = converted.floatChannelData?[0] else { return }
 
         sink(channel, Int(converted.frameLength))
 

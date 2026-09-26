@@ -9,7 +9,7 @@ import Observation
 @Observable
 final class TranscriptionModel {
 
-    /// What the app is doing, as the UI needs to understand it.
+    /// What the recorder is doing, as the UI needs to understand it.
     ///
     /// A single status string conflated two different things — a state to read
     /// calmly and a failure needing action — which left the view unable to tell
@@ -19,17 +19,18 @@ final class TranscriptionModel {
         case ready
         case recording
         case paused
-        case playing
+        /// After stop: finishing the transcript, saving, identifying speakers.
+        case processing(String)
         case failed(String)
 
         var label: String {
             switch self {
-            case .starting:  return "Preparing"
-            case .ready:     return "Ready"
-            case .recording: return "Recording"
-            case .paused:    return "Paused"
-            case .playing:   return "Playing"
-            case .failed:    return "Stopped"
+            case .starting:              return "Preparing"
+            case .ready:                 return "Ready"
+            case .recording:             return "Recording"
+            case .paused:                return "Paused"
+            case let .processing(step):  return step
+            case .failed:                return "Stopped"
             }
         }
 
@@ -39,18 +40,29 @@ final class TranscriptionModel {
         }
     }
 
-    private(set) var segments: [TranscriptSegmentValue] = []
-    private(set) var summary: String?
-    private(set) var phase: Phase = .starting
-
-    /// True once a capture has been made and not cleared, which is what makes
-    /// playback and clearing meaningful.
-    private(set) var hasRecording = false
-
-    /// Clearing is only meaningful when there is something to discard.
-    var canClear: Bool {
-        !segments.isEmpty || hasRecording
+    /// Screens pushed over the notes list.
+    enum Route: Hashable {
+        case recorder
+        case note(Int64)
     }
+
+    // MARK: - Published state
+
+    private(set) var phase: Phase = .starting
+    /// The live transcript of the recording in progress.
+    private(set) var segments: [TranscriptSegmentValue] = []
+    private(set) var notes: [NoteSummaryValue] = []
+    private(set) var canIdentifySpeakers = false
+    /// Which note's recording is playing, if any.
+    private(set) var playingNoteID: Int64?
+    /// A note-level operation in flight ("Identifying speakers…").
+    private(set) var busyNoteID: Int64?
+    /// Bumped whenever a note changes, so an open note screen reloads.
+    private(set) var noteRevision = 0
+    /// Transient failure from a note operation, for an alert.
+    var noteError: String?
+
+    var path: [Route] = []
 
     var failureMessage: String? {
         if case let .failed(message) = phase { return message }
@@ -58,8 +70,10 @@ final class TranscriptionModel {
     }
 
     private var engine: ScribaticEngine?
+    private var configuration: ScribaticEngine.Configuration?
     private var streamTask: Task<Void, Never>?
     private let capture = AudioCapture()
+    private var recordingStartedAt = Date()
     private var player: AVAudioPlayer?
     private var playerDelegate: PlayerDelegate?
 
@@ -74,24 +88,37 @@ final class TranscriptionModel {
         phase = .starting
 
         do {
-            let engine = try ScribaticEngine(configuration: .default())
+            let configuration = try ScribaticEngine.Configuration.default()
+            let engine = try ScribaticEngine(configuration: configuration)
+            self.configuration = configuration
             self.engine = engine
             try await engine.warmUp()
+            canIdentifySpeakers = engine.canIdentifySpeakers
+            await refreshNotes()
             phase = .ready
         } catch {
             phase = .failed("\(error)")
         }
     }
 
-    // MARK: - Transport
+    func refreshNotes() async {
+        guard let engine else { return }
+        notes = await engine.listNotes()
+    }
+
+    // MARK: - Recording
 
     func startRecording() async {
-        guard let engine else { return }
+        guard let engine, let configuration else { return }
         stopPlayback()
 
         do {
             try await AudioCapture.requestPermission()
-            try capture.start { buffer, frameCount in
+            await engine.beginSession()
+            segments = []
+            recordingStartedAt = Date()
+            let url = AudioCapture.newRecordingURL(in: URL(filePath: configuration.recordingsDirectory))
+            try capture.start(writingTo: url) { buffer, frameCount in
                 // Render thread. nonisolated by design — the lock-free ring
                 // buffer on the C++ side is what makes this safe.
                 engine.pushAudio(buffer, frameCount: frameCount)
@@ -119,60 +146,135 @@ final class TranscriptionModel {
         }
     }
 
+    /// Stops capture, then turns the recording into a saved note: decode the
+    /// tail, persist, identify speakers, and open the note.
+    ///
+    /// Speakers are identified here, straight away, because it needs the
+    /// audio — and deleting the audio is the very next thing a user may do.
     func stopRecording() {
         guard phase == .recording || phase == .paused else { return }
         capture.stop()
         streamTask?.cancel()
         streamTask = nil
-        hasRecording = capture.recordingURL != nil
-        phase = .ready
+        let audioURL = capture.recordingURL
+        let startedAt = recordingStartedAt
 
-        // Decode the tail before the recording is considered finished. The
-        // decode window is five seconds, so without this everything said since
-        // the last window boundary would simply never be transcribed.
+        phase = .processing("Finishing transcript")
         Task { [weak self] in
             guard let self, let engine = self.engine else { return }
+            // The decode window is five seconds, so without the flush
+            // everything said since the last boundary would be lost.
             if let tail = try? await engine.flush(), !tail.isEmpty {
                 self.segments.append(contentsOf: tail)
             }
+
+            self.phase = .processing("Saving")
+            let title = startedAt.formatted(date: .abbreviated, time: .shortened)
+            guard let id = try? await engine.saveSession(title: title, createdAt: startedAt, audioURL: audioURL) else {
+                self.phase = .failed("The recording could not be saved.")
+                return
+            }
+
+            if self.canIdentifySpeakers {
+                self.phase = .processing("Identifying speakers")
+                do {
+                    try await engine.identifySpeakers(id)
+                } catch {
+                    // The transcript is saved either way; speakers can be
+                    // identified again from the note while the audio exists.
+                    self.noteError = "Speakers could not be identified: \(error)"
+                }
+            }
+
+            await self.refreshNotes()
+            self.segments = []
+            self.phase = .ready
+            // Replace the recorder with the note it produced.
+            self.path = [.note(id)]
         }
     }
 
-    /// Discards the transcript and the captured audio. Deleting the file rather
-    /// than orphaning it matters here: an audio file that outlives the note it
-    /// belongs to is the same class of defect as a vector index that does.
-    func clear() {
-        stopPlayback()
-        segments.removeAll()
-        summary = nil
+    // MARK: - Notes
 
-        if let url = capture.recordingURL {
-            try? FileManager.default.removeItem(at: url)
+    func loadNote(_ id: Int64) async -> NoteDetailValue? {
+        await engine?.loadNote(id)
+    }
+
+    func identifySpeakers(_ id: Int64, expected: Int32) async {
+        guard let engine else { return }
+        if playingNoteID == id { stopPlayback() }
+        busyNoteID = id
+        defer { busyNoteID = nil }
+        do {
+            try await engine.identifySpeakers(id, expected: expected)
+        } catch {
+            noteError = "Speakers could not be identified: \(error)"
         }
-        hasRecording = false
-        if !phase.isFailure { phase = .ready }
+        await noteChanged()
+    }
+
+    func renameSpeaker(_ id: Int64, speaker: Int32, name: String) async {
+        guard let engine else { return }
+        do {
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            try await engine.renameSpeaker(id, speaker: speaker, name: trimmed)
+        } catch {
+            noteError = "\(error)"
+        }
+        await noteChanged()
+    }
+
+    /// Removes the audio and keeps the transcript.
+    func deleteRecording(_ id: Int64) async {
+        guard let engine else { return }
+        if playingNoteID == id { stopPlayback() }
+        do {
+            try await engine.deleteRecording(id)
+        } catch {
+            noteError = "\(error)"
+        }
+        await noteChanged()
+    }
+
+    func deleteNote(_ id: Int64) async {
+        guard let engine else { return }
+        if playingNoteID == id { stopPlayback() }
+        do {
+            try await engine.deleteNote(id)
+        } catch {
+            noteError = "\(error)"
+        }
+        path.removeAll { $0 == .note(id) }
+        await noteChanged()
+    }
+
+    func exportTranscript(_ id: Int64, anonymise: Bool) async -> String {
+        await engine?.exportTranscript(id, includeTimestamps: true, anonymise: anonymise) ?? ""
+    }
+
+    private func noteChanged() async {
+        noteRevision += 1
+        await refreshNotes()
     }
 
     // MARK: - Playback
 
-    func play() {
-        guard hasRecording, let url = capture.recordingURL else { return }
+    func play(_ note: NoteDetailValue) {
+        guard let url = note.audioURL else { return }
+        stopPlayback()
 
         do {
             let player = try AVAudioPlayer(contentsOf: url)
             let delegate = PlayerDelegate { [weak self] in
-                Task { @MainActor in
-                    guard let self, self.phase == .playing else { return }
-                    self.phase = .ready
-                }
+                Task { @MainActor in self?.playingNoteID = nil }
             }
             player.delegate = delegate
             self.playerDelegate = delegate
             self.player = player
             player.play()
-            phase = .playing
+            playingNoteID = note.id
         } catch {
-            phase = .failed(error.localizedDescription)
+            noteError = error.localizedDescription
         }
     }
 
@@ -180,7 +282,7 @@ final class TranscriptionModel {
         player?.stop()
         player = nil
         playerDelegate = nil
-        if phase == .playing { phase = .ready }
+        playingNoteID = nil
     }
 
     // MARK: - Transcript stream
@@ -201,18 +303,11 @@ final class TranscriptionModel {
         }
     }
 
-    func summarizeTranscript() async {
-        guard let engine else { return }
-        let transcript = segments.map(\.text).joined(separator: " ")
-        summary = try? await engine.summarize(transcript: transcript)
-    }
-
     func hibernate() async {
         stopRecording()
         stopPlayback()
         streamTask?.cancel()
         await engine?.hibernate()
-        phase = .ready
     }
 }
 

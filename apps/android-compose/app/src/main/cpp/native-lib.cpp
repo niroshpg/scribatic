@@ -18,6 +18,7 @@
 #include "scribatic/core/EngineInterface.hpp"
 
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -25,6 +26,28 @@ constexpr const char* kTag = "ScribaticJNI";
 
 inline scribatic::core::EngineInterface* asEngine(jlong handle) {
     return reinterpret_cast<scribatic::core::EngineInterface*>(handle);
+}
+
+/// Builds a String[] from `values`. One array per call is the pattern this
+/// file uses throughout: a single JNI round trip, and no Java class lookups
+/// that R8 could break by renaming.
+jobjectArray toStringArray(JNIEnv* env, const std::vector<std::string>& values) {
+    jclass stringClass = env->FindClass("java/lang/String");
+    jobjectArray out = env->NewObjectArray(static_cast<jsize>(values.size()), stringClass, nullptr);
+    for (jsize i = 0; i < static_cast<jsize>(values.size()); ++i) {
+        jstring element = env->NewStringUTF(values[static_cast<std::size_t>(i)].c_str());
+        env->SetObjectArrayElement(out, i, element);
+        env->DeleteLocalRef(element);   // a long transcript would exhaust the local table
+    }
+    return out;
+}
+
+void appendSegment(std::vector<std::string>& out, const scribatic::core::TranscriptSegment& s) {
+    out.push_back(std::to_string(s.startMs));
+    out.push_back(std::to_string(s.endMs));
+    out.push_back(s.text);
+    out.push_back(std::to_string(s.confidence));
+    out.push_back(std::to_string(s.speaker));
 }
 
 std::string toStdString(JNIEnv* env, jstring value) {
@@ -43,13 +66,17 @@ JNIEXPORT jlong JNICALL
 Java_com_scribatic_app_engine_TranscriptionEngine_nativeCreate(
         JNIEnv* env, jobject /*thiz*/,
         jstring whisperModelPath, jstring llamaModelPath, jstring embedModelPath,
-        jstring databasePath, jint threadCount, jboolean useMemoryMapping) {
+        jstring databasePath, jstring recordingsDirectory, jstring segmentationModelPath,
+        jstring speakerEmbeddingModelPath, jint threadCount, jboolean useMemoryMapping) {
 
     scribatic::core::EngineConfig config;
     config.whisperModelPath = toStdString(env, whisperModelPath);
     config.llamaModelPath   = toStdString(env, llamaModelPath);
     config.embedModelPath   = toStdString(env, embedModelPath);
     config.databasePath     = toStdString(env, databasePath);
+    config.recordingsDirectory       = toStdString(env, recordingsDirectory);
+    config.segmentationModelPath     = toStdString(env, segmentationModelPath);
+    config.speakerEmbeddingModelPath = toStdString(env, speakerEmbeddingModelPath);
     config.threadCount      = static_cast<std::int32_t>(threadCount);
     config.useMemoryMapping = (useMemoryMapping == JNI_TRUE);
 
@@ -134,34 +161,20 @@ Java_com_scribatic_app_engine_TranscriptionEngine_nativeFlush(
     return static_cast<jint>(asEngine(handle)->flush());
 }
 
-/// Returns finalised segments as a flat String[]: [startMs, endMs, text, conf]
-/// per segment. A flat array costs one JNI round trip; constructing typed Java
-/// objects here would cost four calls per segment and pin the env far longer.
+/// Returns finalised segments as a flat String[]: [startMs, endMs, text, conf,
+/// speaker] per segment. A flat array costs one JNI round trip; constructing
+/// typed Java objects here would cost five calls per segment and pin the env
+/// far longer.
 JNIEXPORT jobjectArray JNICALL
 Java_com_scribatic_app_engine_TranscriptionEngine_nativeDrainSegments(
         JNIEnv* env, jobject /*thiz*/, jlong handle) {
-
-    jclass stringClass = env->FindClass("java/lang/String");
-    if (handle == 0) {
-        return env->NewObjectArray(0, stringClass, nullptr);
+    std::vector<std::string> flat;
+    if (handle != 0) {
+        for (const auto& segment : asEngine(handle)->drainSegments()) {
+            appendSegment(flat, segment);
+        }
     }
-
-    const auto segments = asEngine(handle)->drainSegments();
-    const auto count    = static_cast<jsize>(segments.size() * 4);
-    jobjectArray out    = env->NewObjectArray(count, stringClass, nullptr);
-
-    jsize index = 0;
-    for (const auto& segment : segments) {
-        env->SetObjectArrayElement(out, index++,
-            env->NewStringUTF(std::to_string(segment.startMs).c_str()));
-        env->SetObjectArrayElement(out, index++,
-            env->NewStringUTF(std::to_string(segment.endMs).c_str()));
-        env->SetObjectArrayElement(out, index++,
-            env->NewStringUTF(segment.text.c_str()));
-        env->SetObjectArrayElement(out, index++,
-            env->NewStringUTF(std::to_string(segment.confidence).c_str()));
-    }
-    return out;
+    return toStringArray(env, flat);
 }
 
 JNIEXPORT jstring JNICALL
@@ -187,6 +200,123 @@ JNIEXPORT void JNICALL
 Java_com_scribatic_app_engine_TranscriptionEngine_nativeRequestCancel(
         JNIEnv* /*env*/, jobject /*thiz*/, jlong handle) {
     if (handle != 0) { asEngine(handle)->requestCancel(); }
+}
+
+// -- Sessions -------------------------------------------------------------------
+
+JNIEXPORT void JNICALL
+Java_com_scribatic_app_engine_TranscriptionEngine_nativeBeginSession(
+        JNIEnv* /*env*/, jobject /*thiz*/, jlong handle) {
+    if (handle != 0) { asEngine(handle)->beginSession(); }
+}
+
+JNIEXPORT jlong JNICALL
+Java_com_scribatic_app_engine_TranscriptionEngine_nativeSaveSession(
+        JNIEnv* env, jobject /*thiz*/, jlong handle, jstring title, jlong createdAt,
+        jstring audioPath) {
+    if (handle == 0) { return 0; }
+    return static_cast<jlong>(asEngine(handle)->saveSession(
+        toStdString(env, title), static_cast<std::int64_t>(createdAt), toStdString(env, audioPath)));
+}
+
+// -- Notes ----------------------------------------------------------------------
+
+/// [id, title, createdAt, durationMs, hasAudio(0/1), speakerCount, preview] per note.
+JNIEXPORT jobjectArray JNICALL
+Java_com_scribatic_app_engine_TranscriptionEngine_nativeListNotes(
+        JNIEnv* env, jobject /*thiz*/, jlong handle) {
+    std::vector<std::string> flat;
+    if (handle != 0) {
+        for (const auto& note : asEngine(handle)->listNotes()) {
+            flat.push_back(std::to_string(note.id));
+            flat.push_back(note.title);
+            flat.push_back(std::to_string(note.createdAt));
+            flat.push_back(std::to_string(note.durationMs));
+            flat.push_back(note.hasAudio ? "1" : "0");
+            flat.push_back(std::to_string(note.speakerCount));
+            flat.push_back(note.preview);
+        }
+    }
+    return toStringArray(env, flat);
+}
+
+/// [id, title, createdAt, durationMs, audioPath, speakerCount,
+///  nSpeakers, (index, name, displayName) * nSpeakers,
+///  nSegments, (startMs, endMs, text, conf, speaker) * nSegments].
+/// Empty when there is no such note.
+JNIEXPORT jobjectArray JNICALL
+Java_com_scribatic_app_engine_TranscriptionEngine_nativeLoadNote(
+        JNIEnv* env, jobject /*thiz*/, jlong handle, jlong noteId) {
+    std::vector<std::string> flat;
+    if (handle != 0) {
+        const auto note = asEngine(handle)->loadNote(static_cast<std::int64_t>(noteId));
+        if (note.id != 0) {
+            flat.push_back(std::to_string(note.id));
+            flat.push_back(note.title);
+            flat.push_back(std::to_string(note.createdAt));
+            flat.push_back(std::to_string(note.durationMs));
+            flat.push_back(note.audioPath);
+            flat.push_back(std::to_string(note.speakerCount));
+            flat.push_back(std::to_string(note.speakers.size()));
+            for (const auto& speaker : note.speakers) {
+                flat.push_back(std::to_string(speaker.index));
+                flat.push_back(speaker.name);
+                flat.push_back(speaker.displayName);
+            }
+            flat.push_back(std::to_string(note.segments.size()));
+            for (const auto& segment : note.segments) { appendSegment(flat, segment); }
+        }
+    }
+    return toStringArray(env, flat);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_scribatic_app_engine_TranscriptionEngine_nativeDeleteRecording(
+        JNIEnv* /*env*/, jobject /*thiz*/, jlong handle, jlong noteId) {
+    if (handle == 0) { return static_cast<jint>(scribatic::core::EngineStatus::NotInitialized); }
+    return static_cast<jint>(asEngine(handle)->deleteRecording(static_cast<std::int64_t>(noteId)));
+}
+
+JNIEXPORT jint JNICALL
+Java_com_scribatic_app_engine_TranscriptionEngine_nativeDeleteNote(
+        JNIEnv* /*env*/, jobject /*thiz*/, jlong handle, jlong noteId) {
+    if (handle == 0) { return static_cast<jint>(scribatic::core::EngineStatus::NotInitialized); }
+    return static_cast<jint>(asEngine(handle)->deleteNote(static_cast<std::int64_t>(noteId)));
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_scribatic_app_engine_TranscriptionEngine_nativeExportTranscript(
+        JNIEnv* env, jobject /*thiz*/, jlong handle, jlong noteId, jboolean includeTimestamps,
+        jboolean anonymise) {
+    if (handle == 0) { return env->NewStringUTF(""); }
+    const std::string text = asEngine(handle)->exportTranscript(
+        static_cast<std::int64_t>(noteId), includeTimestamps == JNI_TRUE, anonymise == JNI_TRUE);
+    return env->NewStringUTF(text.c_str());
+}
+
+// -- Speakers -------------------------------------------------------------------
+
+JNIEXPORT jboolean JNICALL
+Java_com_scribatic_app_engine_TranscriptionEngine_nativeCanIdentifySpeakers(
+        JNIEnv* /*env*/, jobject /*thiz*/, jlong handle) {
+    return (handle != 0 && asEngine(handle)->canIdentifySpeakers()) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_scribatic_app_engine_TranscriptionEngine_nativeIdentifySpeakers(
+        JNIEnv* /*env*/, jobject /*thiz*/, jlong handle, jlong noteId, jint expected) {
+    if (handle == 0) { return static_cast<jint>(scribatic::core::EngineStatus::NotInitialized); }
+    return static_cast<jint>(asEngine(handle)->identifySpeakers(
+        static_cast<std::int64_t>(noteId), static_cast<std::int32_t>(expected)));
+}
+
+JNIEXPORT jint JNICALL
+Java_com_scribatic_app_engine_TranscriptionEngine_nativeRenameSpeaker(
+        JNIEnv* env, jobject /*thiz*/, jlong handle, jlong noteId, jint speaker, jstring name) {
+    if (handle == 0) { return static_cast<jint>(scribatic::core::EngineStatus::NotInitialized); }
+    return static_cast<jint>(asEngine(handle)->renameSpeaker(
+        static_cast<std::int64_t>(noteId), static_cast<std::int32_t>(speaker),
+        toStdString(env, name)));
 }
 
 } // extern "C"

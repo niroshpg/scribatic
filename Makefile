@@ -39,7 +39,7 @@ IOS_TEST_DEST  ?= platform=iOS Simulator,name=iPhone 16
 # pipefail, that would mask the real build result.
 XCFMT          := $(shell command -v xcbeautify >/dev/null 2>&1 && echo xcbeautify || echo cat)
 
-.PHONY: help setup-all setup-core setup-ios setup-ios-backends setup-android \
+.PHONY: help setup-all setup-core setup-ios setup-ios-backends setup-android fetch-deps \
 	    build-ios build-android build-core \
 	    test-all test-core test-ios test-android \
 	    fmt lint clean distclean doctor
@@ -52,6 +52,8 @@ help:
 	@echo "  Scribatic — offline transcription & local insight engine"
 	@echo "  ---------------------------------------------------------------"
 	@echo "  setup-all       Vendor backends, generate Xcode project, sync NDK"
+	@echo "  fetch-deps      SQLite + sherpa-onnx, pinned and checksummed"
+	@echo "  fetch-models    Whisper, instruct, embedding and diarization models"
 	@echo "  build-core      Build the shared C++ core for the host (CI/tests)"
 	@echo "  build-ios       Build the SwiftUI app  (CONFIG=$(CONFIG))"
 	@echo "  build-android   Build the Compose app  (ABI=$(ANDROID_ABI))"
@@ -65,7 +67,7 @@ help:
 # -----------------------------------------------------------------------------
 #  Setup
 # -----------------------------------------------------------------------------
-setup-all: setup-core setup-ios setup-android
+setup-all: setup-core fetch-deps setup-ios setup-android
 	@echo "==> Workspace ready. Next: make build-ios | make build-android"
 
 ## Vendor whisper.cpp and llama.cpp at pinned revisions.
@@ -136,19 +138,24 @@ fetch-models:
 	@echo "==> Fetching GGUF weights into $(MODELS_DIR)"
 	bash $(ROOT)/scripts/fetch_models.sh
 
+## SQLite amalgamation and sherpa-onnx prebuilts. Idempotent, so every build
+## target depends on it rather than relying on someone remembering to run it.
+fetch-deps:
+	bash $(ROOT)/scripts/fetch_native_deps.sh
+
 # -----------------------------------------------------------------------------
 #  Build
 # -----------------------------------------------------------------------------
 ## Host build of the shared core. Fast feedback loop for engine work; catches
 ## portability breaks before either mobile toolchain is involved.
-build-core:
+build-core: fetch-deps
 	@echo "==> Building scribatic_core for host ($(CONFIG))"
 	cmake -S $(CORE_DIR)/engine -B $(BUILD_DIR)/core \
 	    -DCMAKE_BUILD_TYPE=$(CONFIG) \
 	    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 	cmake --build $(BUILD_DIR)/core --parallel
 
-build-ios: setup-ios
+build-ios: fetch-deps setup-ios
 	@echo "==> Building Scribatic.app ($(CONFIG), $(IOS_SDK))"
 	set -o pipefail
 	cd $(IOS_DIR) && xcodebuild \
@@ -160,7 +167,7 @@ build-ios: setup-ios
 	    SWIFT_OBJC_INTEROP_MODE=objcxx \
 	    build | $(XCFMT)
 
-build-android:
+build-android: fetch-deps
 	@echo "==> Building Scribatic APK ($(CONFIG), $(ANDROID_ABI))"
 	cd $(ANDROID_DIR) && ./gradlew :app:assemble$(CONFIG) \
 	    -Pandroid.injected.build.abi=$(ANDROID_ABI)

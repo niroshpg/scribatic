@@ -52,6 +52,8 @@ keystore.properties
 # Hundreds of MB each; fetched via `make fetch-models`.
 models/*.bin
 models/*.gguf
+models/*.onnx
+models/fixtures/
 
 # --- Editor ------------------------------------------------------------------
 .DS_Store
@@ -63,6 +65,10 @@ CONTEXT.md
 
 # Vendored backend static libraries, built by `make setup-ios-backends`.
 apps/ios-swiftui/vendor-lib/
+
+# Pinned third-party native code fetched by scripts/fetch_native_deps.sh.
+core/database/vendor/
+core/engine/vendor-bin/
 
 # --- DMARC aggregate reports -------------------------------------------------
 # Daily XML/zip reports mailed by Gmail, Outlook et al. to the rua= address in

@@ -41,6 +41,11 @@ targets:
         buildPhase: none      # headers are consumed via the module map only
     dependencies:
       - target: ScribaticCoreEngine
+      # Speaker diarization (ADR-009): sherpa-onnx's C API with ONNX Runtime
+      # linked statically inside one dynamic framework. Staged by
+      # `make fetch-deps`; embedded and signed with the app.
+      - framework: ../../core/engine/vendor-bin/sherpa-onnx/ios/SherpaOnnxC.xcframework
+        embed: true
     info:
       path: Resources/Info.plist
       properties:
@@ -125,6 +130,11 @@ targets:
       - path: ../../core/engine/src
       - path: ../../core/engine/include
         buildPhase: headers
+      # SQLite amalgamation, compiled into the core exactly as CMake does for
+      # Android and the host. -fno-fast-math overrides the target's
+      # -ffast-math, which breaks SQLite's IEEE float handling.
+      - path: ../../core/database/vendor/sqlite/sqlite3.c
+        compilerFlags: "-DSQLITE_ENABLE_FTS5 -DSQLITE_DQS=0 -DSQLITE_DEFAULT_FOREIGN_KEYS=1 -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_DEPRECATED -fno-fast-math -w"
     settings:
       base:
         CLANG_CXX_LANGUAGE_STANDARD: "c++17"
@@ -141,6 +151,11 @@ targets:
           - "$(inherited)"
           - "$(SRCROOT)/../../core/engine/vendor/whisper.cpp/include"
           - "$(SRCROOT)/../../core/engine/vendor/whisper.cpp/ggml/include"
+          - "$(SRCROOT)/../../core/database/vendor/sqlite"
+          - "$(SRCROOT)/../../core/engine/vendor-bin/sherpa-onnx/include"
+        GCC_PREPROCESSOR_DEFINITIONS:
+          - "$(inherited)"
+          - "SCRIBATIC_HAVE_SHERPA=1"
 
 schemes:
   ScribaticApp:

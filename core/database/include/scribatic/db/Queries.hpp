@@ -9,12 +9,64 @@
 
 namespace scribatic::db::queries {
 
+/// `audio_path` is a file name relative to the recordings directory — see
+/// EngineConfig::recordingsDirectory for why it is never absolute.
 inline constexpr std::string_view kInsertNote =
-    "INSERT INTO notes(title, created_at, duration_ms, locale) VALUES(?, ?, ?, ?);";
+    "INSERT INTO notes(title, created_at, duration_ms, locale, audio_path) "
+    "VALUES(?, ?, ?, ?, ?);";
 
 inline constexpr std::string_view kInsertSegment =
-    "INSERT INTO segments(note_id, start_ms, end_ms, text, confidence) "
-    "VALUES(?, ?, ?, ?, ?);";
+    "INSERT INTO segments(note_id, start_ms, end_ms, text, confidence, speaker) "
+    "VALUES(?, ?, ?, ?, ?, ?);";
+
+inline constexpr std::string_view kInsertWord =
+    "INSERT INTO words(note_id, ordinal, segment, start_ms, end_ms, text, probability) "
+    "VALUES(?, ?, ?, ?, ?, ?, ?);";
+
+inline constexpr std::string_view kInsertSpeaker =
+    "INSERT INTO speakers(note_id, idx, name) VALUES(?, ?, '');";
+
+/// Newest first, with the opening of the transcript as a preview.
+inline constexpr std::string_view kListNotes =
+    "SELECT n.id, n.title, n.created_at, n.duration_ms, n.audio_path IS NOT NULL, "
+    "       n.speaker_count, "
+    "       (SELECT group_concat(text, ' ') FROM "
+    "           (SELECT text FROM segments WHERE note_id = n.id "
+    "            ORDER BY start_ms, id LIMIT 3)) "
+    "FROM notes n ORDER BY n.created_at DESC, n.id DESC;";
+
+inline constexpr std::string_view kLoadNote =
+    "SELECT id, title, created_at, duration_ms, audio_path, speaker_count "
+    "FROM notes WHERE id = ?;";
+
+inline constexpr std::string_view kLoadSegments =
+    "SELECT start_ms, end_ms, text, confidence, speaker FROM segments "
+    "WHERE note_id = ? ORDER BY start_ms, id;";
+
+inline constexpr std::string_view kLoadSpeakers =
+    "SELECT idx, name FROM speakers WHERE note_id = ? ORDER BY idx;";
+
+inline constexpr std::string_view kLoadWords =
+    "SELECT segment, start_ms, end_ms, text, probability FROM words "
+    "WHERE note_id = ? ORDER BY ordinal;";
+
+inline constexpr std::string_view kDeleteSegments = "DELETE FROM segments WHERE note_id = ?;";
+inline constexpr std::string_view kDeleteSpeakers = "DELETE FROM speakers WHERE note_id = ?;";
+inline constexpr std::string_view kDeleteChunks   = "DELETE FROM chunks WHERE note_id = ?;";
+
+inline constexpr std::string_view kUpdateSpeakerCount =
+    "UPDATE notes SET speaker_count = ? WHERE id = ?;";
+
+inline constexpr std::string_view kRenameSpeaker =
+    "UPDATE speakers SET name = ? WHERE note_id = ? AND idx = ?;";
+
+inline constexpr std::string_view kNoteAudio = "SELECT audio_path FROM notes WHERE id = ?;";
+
+inline constexpr std::string_view kClearAudio =
+    "UPDATE notes SET audio_path = NULL WHERE id = ?;";
+
+inline constexpr std::string_view kReferencedAudio =
+    "SELECT id, audio_path FROM notes WHERE audio_path IS NOT NULL;";
 
 inline constexpr std::string_view kInsertChunk =
     "INSERT INTO chunks(note_id, ordinal, text) VALUES(?, ?, ?);";

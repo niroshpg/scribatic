@@ -112,6 +112,16 @@ android {
             useLegacyPackaging = false   // uncompressed .so, loaded via mmap
         }
     }
+
+    // Speaker diarization (ADR-009): sherpa-onnx's C API and ONNX Runtime,
+    // prebuilt and staged by `make fetch-deps`. libscribatic_engine.so links
+    // against them, so they ship alongside it. Absent, the engine is built
+    // without diarization and nothing here is packaged.
+    sourceSets {
+        getByName("main") {
+            jniLibs.srcDir(rootProject.file("../../core/engine/vendor-bin/sherpa-onnx/android"))
+        }
+    }
 }
 
 dependencies {
