@@ -78,12 +78,16 @@ resource "aws_route53_record" "spf" {
 # p=none to start: this reports on alignment without asking anyone to reject
 # mail, which is the right setting until the DKIM and SPF records have been
 # observed passing in the wild.
+#
+# rua= points at the dedicated reports address, not the contact address — see
+# dmarc.tf. No external-destination record is needed because the reporting
+# address is inside the domain the policy covers.
 resource "aws_route53_record" "dmarc" {
   zone_id = data.aws_route53_zone.primary.zone_id
   name    = "_dmarc.${var.domain_name}"
   type    = "TXT"
   ttl     = 600
-  records = ["v=DMARC1; p=none; rua=mailto:${local.mail_address}"]
+  records = ["v=DMARC1; p=none; rua=mailto:${local.dmarc_address}"]
 }
 
 # -----------------------------------------------------------------------------
@@ -132,13 +136,48 @@ resource "aws_s3_bucket_lifecycle_configuration" "mail" {
       days = 30
     }
   }
+
+  # Raw report mail is a buffer too: once parsed, the XML is redundant. A
+  # month is long enough to re-read one by hand after a surprising digest.
+  rule {
+    id     = "expire-raw-dmarc-mail"
+    status = "Enabled"
+
+    filter {
+      prefix = local.dmarc_prefix
+    }
+
+    expiration {
+      days = 30
+    }
+  }
+
+  # The parsed form is the archive, and it is kept for a year and a bit —
+  # long enough to show a clean run across seasonal sending and to justify
+  # moving the policy to p=quarantine and then p=reject.
+  rule {
+    id     = "expire-parsed-dmarc"
+    status = "Enabled"
+
+    filter {
+      prefix = local.dmarc_parsed_prefix
+    }
+
+    expiration {
+      days = 400
+    }
+  }
 }
 
 data "aws_iam_policy_document" "mail_bucket" {
   statement {
-    sid       = "AllowSESPut"
-    actions   = ["s3:PutObject"]
-    resources = ["${aws_s3_bucket.mail.arn}/${local.mail_prefix}*"]
+    sid     = "AllowSESPut"
+    actions = ["s3:PutObject"]
+
+    resources = [
+      "${aws_s3_bucket.mail.arn}/${local.mail_prefix}*",
+      "${aws_s3_bucket.mail.arn}/${local.dmarc_prefix}*",
+    ]
 
     principals {
       type        = "Service"

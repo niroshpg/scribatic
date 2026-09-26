@@ -229,6 +229,14 @@ The cascade alone does not reach the index: `chunks_fts` is a virtual table join
 
 The two bridges solve the same problem with different constraints, and both are deliberately thin.
 
+A bridge is only worth its cost if something on the far side genuinely cannot run on the near side. On Android that reduces to four requirements, none of which has a managed equivalent — hand-written ARM intrinsics in the ggml backends, a loadable C++ SQLite extension for vector search, a mapping too large and too `madvise`-dependent for `FileChannel.map()`, and an NDK-only audio callback API. The reasoning is recorded in [the architecture overview](docs/ARCHITECTURE.md#overview--the-managednative-boundary).
+
+<p align="center">
+  <img src="docs/diagrams/native-boundary.png" alt="Kotlin capture, the engine facade and the Compose UI run in the managed ART layer; below a JNI boundary sit four native requirements — the ggml inference backends, the sqlite-vss vector index, the mmap-based model residency wrapper, and AAudio capture — each depending on a kernel or CPU facility the JVM cannot reach." width="900">
+</p>
+
+Solid strokes are wired and verified on device; dashed strokes are designed and not yet linked.
+
 ### iOS — direct Swift-C++ Interop, no Objective-C++
 
 The conventional approach wraps C++ in a `.mm` file exposing an `@objc` class. That means a third API surface to keep in sync, every value type forced through `NSObject`, and an ARC round trip per call.
@@ -259,7 +267,7 @@ Two things make this work rather than merely compile:
 
 - The engine crosses as an opaque `jlong`; Kotlin owns the lifetime through `Closeable`.
 - No cached global `JNIEnv`. An env pointer is thread-local, and using one from the wrong thread is undefined behaviour, not a race you can retry.
-- The realtime path uses `GetPrimitiveArrayCritical` so no copy and no GC pause can be introduced between the AAudio callback and the ring buffer write.
+- The audio path uses `GetPrimitiveArrayCritical` so no copy and no GC pause is introduced between the caller's `FloatArray` and the ring buffer write. Note that the producer today is `AudioRecord` on a JVM thread, not the AAudio callback this was sized for; the guarantee only becomes load-bearing once capture moves below the boundary.
 - Segments return as a flat `String[]` of `[startMs, endMs, text, confidence]` tuples. Constructing typed Java objects across JNI would cost four calls per segment and pin the env far longer; one flat array is one round trip.
 
 The ProGuard rules keep `TranscriptionEngine`'s fully qualified name, because the JNI symbol `Java_com_scribatic_app_engine_TranscriptionEngine_nativeCreate` is resolved by string. R8 renaming that class breaks the link at *runtime*, not at build — the kind of failure that only appears in a release build on a user's device.
