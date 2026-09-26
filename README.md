@@ -268,7 +268,7 @@ Two things make this work rather than merely compile:
 - The engine crosses as an opaque `jlong`; Kotlin owns the lifetime through `Closeable`.
 - No cached global `JNIEnv`. An env pointer is thread-local, and using one from the wrong thread is undefined behaviour, not a race you can retry.
 - The audio path uses `GetPrimitiveArrayCritical` so no copy and no GC pause is introduced between the caller's `FloatArray` and the ring buffer write. Note that the producer today is `AudioRecord` on a JVM thread, not the AAudio callback this was sized for; the guarantee only becomes load-bearing once capture moves below the boundary.
-- Segments return as a flat `String[]` of `[startMs, endMs, text, confidence]` tuples. Constructing typed Java objects across JNI would cost four calls per segment and pin the env far longer; one flat array is one round trip.
+- Segments return as a flat `String[]` of `[startMs, endMs, text, confidence, speaker]` tuples, and notes the same way. Constructing typed Java objects across JNI would cost five calls per segment and pin the env far longer; one flat array is one round trip, and there is no Java class for R8 to rename.
 
 The ProGuard rules keep `TranscriptionEngine`'s fully qualified name, because the JNI symbol `Java_com_scribatic_app_engine_TranscriptionEngine_nativeCreate` is resolved by string. R8 renaming that class breaks the link at *runtime*, not at build — the kind of failure that only appears in a release build on a user's device.
 
