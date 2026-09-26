@@ -5,7 +5,9 @@ MAPPING = "app/build/outputs/mapping/release/mapping.txt".freeze
 MAPPING_ARCHIVE = "playstore/metadata/mapping".freeze
 
 def app_version
-  gradle = File.read("../app/build.gradle.kts")
+  # UTF-8 explicitly: the script has non-ASCII comments, and under a C locale
+  # Ruby reads it as US-ASCII and the version regex raises.
+  gradle = File.read("../app/build.gradle.kts", encoding: "UTF-8")
   name = gradle[/versionName\s*=\s*"([^"]+)"/, 1]
   code = gradle[/versionCode\s*=\s*(\d+)/, 1]
   [name, code]
