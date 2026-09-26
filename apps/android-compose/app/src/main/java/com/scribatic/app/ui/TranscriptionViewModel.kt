@@ -9,6 +9,9 @@ import com.scribatic.app.audio.AudioCapture
 import com.scribatic.app.audio.AudioPlayback
 import com.scribatic.app.engine.EngineConfig
 import com.scribatic.app.engine.EngineStatus
+import com.scribatic.app.engine.ModelInstaller
+import com.scribatic.app.engine.ModelSpec
+import android.net.Uri
 import com.scribatic.app.engine.NoteDetail
 import com.scribatic.app.engine.NoteSummary
 import com.scribatic.app.engine.TranscriptSegment
@@ -21,6 +24,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Date
 
@@ -29,10 +33,15 @@ enum class Phase { STARTING, READY, RECORDING, PAUSED, PROCESSING, FAILED }
 
 /** Which screen is showing. The notes list is the root; the others sit over it. */
 sealed interface Screen {
+    /** First run, or any time a wanted model is missing; also reachable later. */
+    data object Models : Screen
     data object Notes : Screen
     data object Recorder : Screen
     data class Note(val id: Long) : Screen
 }
+
+/** One row of the model setup screen. */
+data class ModelRow(val spec: ModelSpec, val installed: Boolean, val wanted: Boolean)
 
 /** Text the activity should hand to the system share sheet, once. */
 data class ShareRequest(val subject: String, val text: String)
@@ -50,7 +59,13 @@ data class TranscriptUiState(
     val busy: Boolean = false,
     val message: String? = null,
     val share: ShareRequest? = null,
+    val models: List<ModelRow> = emptyList(),
+    /** "Checking ggml-base.en.bin — 40%" while an import runs. */
+    val importing: String? = null,
 ) {
+    /** Every model the user wants is present, so the engine can start. */
+    val modelsReady: Boolean get() = models.isNotEmpty() && models.filter { it.wanted }.all { it.installed }
+
     val label: String
         get() = when (phase) {
             Phase.STARTING   -> "Preparing"
@@ -81,6 +96,8 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
     private var recordingFile: File? = null
     private var recordingStartedAt = 0L
     private val playback = AudioPlayback()
+    private val installer = ModelInstaller(application)
+    private var preparing = false
 
     private val filesDir: File get() = getApplication<Application>().filesDir
 
@@ -93,9 +110,27 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
      * goes live the instant the app launches is the wrong default.
      */
     fun prepare() {
-        if (engine != null) return
+        if (engine != null || preparing) return
+        preparing = true
 
-        viewModelScope.launch(Dispatchers.Default) {
+        // Off the main thread from the first line: the model catalog comes from
+        // the C++ core, so its first read loads libscribatic_engine.so and,
+        // through it, ONNX Runtime and the ggml backends — tens of megabytes of
+        // native code, which on the main thread was an ANR on first launch.
+        viewModelScope.launch(Dispatchers.IO) {
+            installer.sweepPartials()
+            refreshModels()
+            if (!installer.isReady()) {
+                preparing = false
+                _uiState.update { it.copy(screen = Screen.Models) }
+                return@launch
+            }
+            startEngine()
+        }
+    }
+
+    private suspend fun startEngine() = withContext(Dispatchers.Default) {
+        try {
             val config = EngineConfig(
                 whisperModelPath = File(filesDir, "ggml-base.en.bin").absolutePath,
                 llamaModelPath = File(filesDir, "insight-q4_k_m.gguf").absolutePath,
@@ -109,14 +144,14 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
             val created = TranscriptionEngine.create(config)
             if (created == null) {
                 fail("Engine could not be created — are the model files in ${filesDir.absolutePath}?")
-                return@launch
+                return@withContext
             }
 
             val status = created.warmUp()
             if (status != EngineStatus.OK) {
                 fail("Model load failed: $status")
                 created.close()
-                return@launch
+                return@withContext
             }
 
             engine = created
@@ -128,8 +163,67 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
                     notes = created.listNotes(),
                 )
             }
+        } finally {
+            preparing = false
         }
     }
+
+    // -- Models -----------------------------------------------------------------------
+
+    private fun refreshModels() {
+        val rows = installer.catalog.map { ModelRow(it, installer.isInstalled(it), installer.isWanted(it)) }
+        _uiState.update { it.copy(models = rows) }
+    }
+
+    fun openModels() {
+        _uiState.update { it.copy(screen = Screen.Models) }
+        viewModelScope.launch(Dispatchers.IO) { refreshModels() }
+    }
+
+    /**
+     * Leaving out an optional model also deletes it if it is installed: the
+     * only reason to decline the instruct model is its 1.2 GB.
+     */
+    fun setModelWanted(spec: ModelSpec, wanted: Boolean) {
+        // Off the main thread: removing the instruct model deletes 1.2 GB.
+        viewModelScope.launch(Dispatchers.IO) {
+            installer.setWanted(spec, wanted)
+            if (!wanted) installer.remove(spec)
+            refreshModels()
+        }
+    }
+
+    fun importModels(uris: List<Uri>) {
+        if (uris.isEmpty() || _uiState.value.importing != null) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val problems = mutableListOf<String>()
+            for (uri in uris) {
+                val result = installer.import(uri) { name, fraction ->
+                    _uiState.update { it.copy(importing = "Checking $name — ${(fraction * 100).toInt()}%") }
+                }
+                when (result) {
+                    is ModelInstaller.Result.NotAModel ->
+                        problems += "${result.name} is not one of the model files."
+                    is ModelInstaller.Result.Failed ->
+                        problems += "${result.name}: ${result.reason}."
+                    else -> Unit
+                }
+            }
+            refreshModels()
+            _uiState.update {
+                it.copy(importing = null, message = problems.takeIf { p -> p.isNotEmpty() }?.joinToString("\n"))
+            }
+        }
+    }
+
+    /** From the setup screen: start the engine, or just return if it runs. */
+    fun continueFromModels() {
+        if (!_uiState.value.modelsReady) return
+        _uiState.update { it.copy(screen = Screen.Notes) }
+        prepare()
+    }
+
+    fun modelDownloadPage(): String = TranscriptionEngine.modelDownloadPage()
 
     // -- Navigation ---------------------------------------------------------------
 
@@ -147,6 +241,12 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
     fun back(): Boolean {
         val state = _uiState.value
         if (state.screen == Screen.Notes) return false
+        if (state.screen == Screen.Models) {
+            // Nothing behind the setup screen until the engine is running.
+            if (engine == null) return false
+            _uiState.update { it.copy(screen = Screen.Notes) }
+            return true
+        }
         if (state.phase == Phase.RECORDING || state.phase == Phase.PAUSED || state.phase == Phase.PROCESSING) {
             return true
         }

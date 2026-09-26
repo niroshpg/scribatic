@@ -3,7 +3,9 @@ package com.scribatic.app.ui
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
+import android.text.format.Formatter
 import android.text.format.DateUtils
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -30,6 +32,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -137,6 +140,7 @@ private fun ScribaticApp(viewModel: TranscriptionViewModel = viewModel()) {
     // and the record button cannot be pressed.
     Box(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
         when (val screen = state.screen) {
+            Screen.Models -> ModelsScreen(state, viewModel)
             Screen.Notes -> NotesScreen(state, viewModel)
             Screen.Recorder -> RecorderScreen(state, viewModel)
             is Screen.Note -> NoteScreen(screen.id, state, viewModel)
@@ -154,6 +158,7 @@ private fun NotesScreen(state: TranscriptUiState, viewModel: TranscriptionViewMo
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("Notes", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
+            TextButton(onClick = viewModel::openModels) { Text("Models") }
             Button(
                 onClick = viewModel::openRecorder,
                 enabled = state.phase == Phase.READY,
@@ -207,6 +212,116 @@ private fun NoteRow(note: NoteSummary, onClick: () -> Unit) {
             color = MaterialTheme.colorScheme.outline,
             modifier = Modifier.padding(top = 4.dp),
         )
+    }
+}
+
+// -- Model setup ------------------------------------------------------------------------
+
+@Composable
+private fun ModelsScreen(state: TranscriptUiState, viewModel: TranscriptionViewModel) {
+    val context = LocalContext.current
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        viewModel.importModels(uris)
+    }
+    var confirmLeaveOut by remember { mutableStateOf<ModelRow?>(null) }
+    val wantedBytes = state.models.filter { it.wanted }.sumOf { it.spec.sizeBytes }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(modifier = Modifier.weight(1f).padding(horizontal = 16.dp)) {
+            item {
+                Text("Models", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(vertical = 16.dp))
+                Text(
+                    "Scribatic runs entirely on this phone, so it needs these model files. The app " +
+                        "never connects to the internet: download them in your browser, then import them here.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    "Selected: ${Formatter.formatShortFileSize(context, wantedBytes)}",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
+                )
+            }
+            items(state.models, key = { it.spec.fileName }) { row -> ModelRowView(row) { wanted ->
+                if (wanted) viewModel.setModelWanted(row.spec, true) else confirmLeaveOut = row
+            } }
+        }
+
+        HorizontalDivider()
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            state.importing?.let {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Text(it, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(start = 8.dp))
+                }
+            }
+            OutlinedButton(
+                onClick = {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(viewModel.modelDownloadPage())))
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("1. Download model files") }
+            OutlinedButton(
+                onClick = { picker.launch(arrayOf("*/*")) },
+                enabled = state.importing == null,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("2. Import files…") }
+            Button(
+                onClick = viewModel::continueFromModels,
+                enabled = state.modelsReady && state.importing == null,
+                colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Continue") }
+        }
+    }
+
+    confirmLeaveOut?.let { row ->
+        AlertDialog(
+            onDismissRequest = { confirmLeaveOut = null },
+            title = { Text("Leave out ${row.spec.title.lowercase()}?") },
+            text = {
+                Text(
+                    row.spec.withoutIt +
+                        if (row.installed) " Its ${Formatter.formatShortFileSize(context, row.spec.sizeBytes)} is removed from this phone." else "",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmLeaveOut = null
+                    viewModel.setModelWanted(row.spec, false)
+                }) { Text("Leave it out") }
+            },
+            dismissButton = { TextButton(onClick = { confirmLeaveOut = null }) { Text("Keep it") } },
+        )
+    }
+}
+
+@Composable
+private fun ModelRowView(row: ModelRow, onWantedChange: (Boolean) -> Unit) {
+    val context = LocalContext.current
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(row.spec.title, style = MaterialTheme.typography.titleSmall)
+            Text(row.spec.purpose, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                "${row.spec.fileName} · ${Formatter.formatShortFileSize(context, row.spec.sizeBytes)} · " +
+                    when {
+                        row.installed -> "Installed"
+                        !row.wanted -> "Left out"
+                        else -> "Needed"
+                    },
+                style = MaterialTheme.typography.labelSmall,
+                color = if (row.installed) Color(0xFF2E9E5B) else MaterialTheme.colorScheme.outline,
+            )
+        }
+        if (row.spec.required) {
+            Text("Required", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+        } else {
+            Checkbox(checked = row.wanted, onCheckedChange = onWantedChange)
+        }
     }
 }
 

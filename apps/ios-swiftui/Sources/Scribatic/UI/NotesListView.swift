@@ -10,6 +10,9 @@ struct NotesListView: View {
             .frame(maxWidth: 720)
             .frame(maxWidth: .infinity)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Models") { model.showingModels = true }
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Button {
                         model.path.append(.recorder)

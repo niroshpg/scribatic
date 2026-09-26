@@ -96,3 +96,15 @@ data class EngineConfig(
     val threadCount: Int = Runtime.getRuntime().availableProcessors().coerceAtMost(4),
     val useMemoryMapping: Boolean = true,
 )
+
+/** One model file, from the shared catalog in the C++ core. Identified by hash. */
+data class ModelSpec(
+    val fileName: String,
+    val title: String,
+    val purpose: String,
+    /** For an optional model: what stops working without it. */
+    val withoutIt: String,
+    val sizeBytes: Long,
+    val sha256: String,
+    val required: Boolean,
+)

@@ -101,6 +101,23 @@ struct RetrievalHit {
     float        distance = 0.0F;     ///< L2 distance; lower is closer
 };
 
+/// One model file the app can use. The catalog (`modelCatalog()`) is the one
+/// list both apps show on their model setup screen and verify imports against.
+///
+/// A file is identified by its SHA-256, not its name: an imported file is
+/// accepted under whatever name the user downloaded it as, and anything that
+/// does not hash to a catalog entry is rejected rather than trusted.
+struct ModelSpec {
+    std::string  fileName;      ///< what it is stored as in the app container
+    std::string  title;         ///< short name for the setup screen
+    std::string  purpose;       ///< one line: what it does for the user
+    /// Shown when an optional model is left out: what stops working.
+    std::string  withoutIt;
+    std::int64_t sizeBytes = 0;
+    std::string  sha256;        ///< lowercase hex
+    bool         required  = true;
+};
+
 /// Engine construction parameters. Paths are absolute and platform-supplied:
 ///   iOS     -> FileManager container URL (NSFileProtectionComplete)
 ///   Android -> Context.getFilesDir() (app-private, no MANAGE_EXTERNAL_STORAGE)

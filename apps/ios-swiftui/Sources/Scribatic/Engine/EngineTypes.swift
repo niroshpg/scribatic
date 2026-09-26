@@ -202,3 +202,34 @@ extension ScribaticEngine {
         }
     }
 }
+
+/// One model file from the core's catalog, identified by its SHA-256.
+struct ModelSpecValue: Identifiable, Sendable, Equatable {
+    var id: String { fileName }
+    let fileName: String
+    let title: String
+    let purpose: String
+    /// For an optional model: what stops working without it.
+    let withoutIt: String
+    let sizeBytes: Int64
+    let sha256: String
+    let required: Bool
+
+    init(_ cxx: scribatic.core.ModelSpec) {
+        self.fileName = String(cxx.fileName)
+        self.title = String(cxx.title)
+        self.purpose = String(cxx.purpose)
+        self.withoutIt = String(cxx.withoutIt)
+        self.sizeBytes = cxx.sizeBytes
+        self.sha256 = String(cxx.sha256)
+        self.required = cxx.required
+    }
+
+    static func catalog() -> [ModelSpecValue] {
+        scribatic.core.modelCatalog().map(ModelSpecValue.init)
+    }
+
+    static func downloadPage() -> URL? {
+        URL(string: String(scribatic.core.modelDownloadPage()))
+    }
+}

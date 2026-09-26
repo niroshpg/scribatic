@@ -20,6 +20,7 @@ add_library(scribatic_core STATIC
     src/AudioRingBuffer.cpp
     src/ModelResidency.cpp
     src/EngineImpl.cpp
+    src/ModelCatalog.cpp
     src/NoteStore.cpp
     src/RecordingAudio.cpp
     src/SpeakerAttribution.cpp

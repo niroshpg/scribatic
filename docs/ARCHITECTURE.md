@@ -374,3 +374,31 @@ for sharing a discussion without identifying the people in it.
   callback's return value.
 - Cost is roughly 3 s per 35 s of audio on an M4 and about 30 s per 41 s on an
   arm64 emulator. It has not yet been measured on a phone.
+
+## ADR-010 — Models are imported by the user, not downloaded by the app
+
+Dated 2026-09-27. Store builds reached testers with no models and nothing to
+fetch them, so the engine stopped on first launch.
+
+Downloading on first run (ADR-007's plan) needs the network permission, and
+would end the claim this product rests on: that the app is structurally
+incapable of transmitting anything, enforced by the no-network CI check. So the
+app does not download. A setup screen lists the five models from a catalog in
+the shared core, links to a download page opened in the system browser, and
+imports what the user picks through the system file picker.
+
+- **Files are identified by SHA-256, not by name.** Each import is hashed as it
+  is copied in, and accepted only if it matches a catalog entry, under that
+  entry's name. A renamed download is fine; a truncated or wrong file is
+  rejected; nothing unverified is ever mapped by the engine.
+- **The instruct model is optional and selected by default.** Leaving it out
+  saves 1.2 GB and, with the warning shown, costs question answering and
+  summaries — neither built yet. `create()` no longer requires it.
+- **The catalog lives in the core** (`modelCatalog()`), so both apps, their
+  checks and their wording come from one list, and it is the only place a model
+  is added or changed besides `scripts/fetch_models.sh`.
+
+The cost is a clumsier first run than a download button. It is the right trade
+for internal testing and for schools, whose IT can pre-stage the files; a
+public launch may move to Play Asset Delivery and Apple's Background Assets,
+where the store hosts the files and the app still makes no requests itself.

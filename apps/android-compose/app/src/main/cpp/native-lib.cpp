@@ -202,6 +202,29 @@ Java_com_scribatic_app_engine_TranscriptionEngine_nativeRequestCancel(
     if (handle != 0) { asEngine(handle)->requestCancel(); }
 }
 
+// -- Model catalog (static: needed before an engine exists) ---------------------
+
+/// [fileName, title, purpose, withoutIt, sizeBytes, sha256, required(0/1)] per model.
+JNIEXPORT jobjectArray JNICALL
+Java_com_scribatic_app_engine_TranscriptionEngine_nativeModelCatalog(JNIEnv* env, jclass /*cls*/) {
+    std::vector<std::string> flat;
+    for (const auto& model : scribatic::core::modelCatalog()) {
+        flat.push_back(model.fileName);
+        flat.push_back(model.title);
+        flat.push_back(model.purpose);
+        flat.push_back(model.withoutIt);
+        flat.push_back(std::to_string(model.sizeBytes));
+        flat.push_back(model.sha256);
+        flat.push_back(model.required ? "1" : "0");
+    }
+    return toStringArray(env, flat);
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_scribatic_app_engine_TranscriptionEngine_nativeModelDownloadPage(JNIEnv* env, jclass /*cls*/) {
+    return env->NewStringUTF(scribatic::core::modelDownloadPage().c_str());
+}
+
 // -- Sessions -------------------------------------------------------------------
 
 JNIEXPORT void JNICALL

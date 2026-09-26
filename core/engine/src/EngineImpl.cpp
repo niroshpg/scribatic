@@ -85,7 +85,9 @@ EngineInterface* EngineInterface::create(const EngineConfig& config,
         return nullptr;
     };
 
-    if (!fileExists(config.whisperModelPath) || !fileExists(config.llamaModelPath)) {
+    // Only the acoustic model is mandatory. The instruct model is optional by
+    // design (the user may decline its 1.2 GB), and nothing reads it yet.
+    if (!fileExists(config.whisperModelPath)) {
         return fail(EngineStatus::ModelNotFound);
     }
 
@@ -131,8 +133,12 @@ EngineStatus EngineImpl::warmUp() noexcept {
     }
 
     if (config_.useMemoryMapping) {
-        if (!whisperWeights_.map(config_.whisperModelPath) ||
-            !llamaWeights_.map(config_.llamaModelPath)) {
+        if (!whisperWeights_.map(config_.whisperModelPath)) {
+            state_.store(EngineState::Faulted, std::memory_order_release);
+            return EngineStatus::ModelLoadFailed;
+        }
+        // Optional: mapped when present, and its absence is not a failure.
+        if (fileExists(config_.llamaModelPath) && !llamaWeights_.map(config_.llamaModelPath)) {
             state_.store(EngineState::Faulted, std::memory_order_release);
             return EngineStatus::ModelLoadFailed;
         }

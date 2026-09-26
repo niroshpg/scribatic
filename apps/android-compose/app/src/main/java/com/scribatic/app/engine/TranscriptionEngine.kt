@@ -71,6 +71,18 @@ class TranscriptionEngine private constructor(
             )
             return if (handle == 0L) null else TranscriptionEngine(handle)
         }
+
+        /** Every model the app can use, from the core's single catalog. */
+        fun modelCatalog(): List<ModelSpec> =
+            nativeModelCatalog().toList().chunked(7).map { f ->
+                ModelSpec(f[0], f[1], f[2], f[3], f[4].toLong(), f[5], f[6] == "1")
+            }
+
+        /** Opened in the system browser; the app never downloads anything. */
+        fun modelDownloadPage(): String = nativeModelDownloadPage()
+
+        @JvmStatic private external fun nativeModelCatalog(): Array<String>
+        @JvmStatic private external fun nativeModelDownloadPage(): String
     }
 
     /** mmaps the GGUF weights and primes the KV cache. Background only. */

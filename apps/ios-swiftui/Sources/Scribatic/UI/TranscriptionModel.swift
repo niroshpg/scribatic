@@ -64,6 +64,29 @@ final class TranscriptionModel {
 
     var path: [Route] = []
 
+    /// One row of the model setup screen.
+    struct ModelRow: Identifiable, Equatable {
+        var id: String { spec.id }
+        let spec: ModelSpecValue
+        let installed: Bool
+        let wanted: Bool
+    }
+
+    private(set) var models: [ModelRow] = []
+    /// First run, or a wanted model went missing: setup replaces everything.
+    private(set) var modelsNeeded = false
+    /// Setup opened later from the notes list, as a sheet.
+    var showingModels = false
+    /// "Checking ggml-base.en.bin — 40%" while an import runs.
+    private(set) var importing: String?
+
+    /// Every model the user wants is present, so the engine can start.
+    var modelsReady: Bool {
+        !models.isEmpty && models.filter(\.wanted).allSatisfy(\.installed)
+    }
+
+    private let installer = ModelInstaller()
+
     var failureMessage: String? {
         if case let .failed(message) = phase { return message }
         return nil
@@ -87,6 +110,13 @@ final class TranscriptionModel {
         guard engine == nil else { return }
         phase = .starting
 
+        installer.sweepPartials()
+        refreshModels()
+        guard installer.isReady() else {
+            modelsNeeded = true
+            return
+        }
+
         do {
             let configuration = try ScribaticEngine.Configuration.default()
             let engine = try ScribaticEngine(configuration: configuration)
@@ -99,6 +129,52 @@ final class TranscriptionModel {
         } catch {
             phase = .failed("\(error)")
         }
+    }
+
+    // MARK: - Models
+
+    func refreshModels() {
+        models = installer.catalog.map {
+            ModelRow(spec: $0, installed: installer.isInstalled($0), wanted: installer.isWanted($0))
+        }
+    }
+
+    /// Leaving out an optional model also deletes it if installed: the only
+    /// reason to decline the instruct model is its 1.2 GB.
+    func setModelWanted(_ spec: ModelSpecValue, _ wanted: Bool) {
+        installer.setWanted(spec, wanted)
+        refreshModels()
+    }
+
+    func importModels(_ urls: [URL]) async {
+        guard importing == nil, !urls.isEmpty else { return }
+        let installer = self.installer
+        var problems: [String] = []
+        for url in urls {
+            let outcome = await Task.detached(priority: .userInitiated) {
+                installer.importFile(url) { name, fraction in
+                    Task { @MainActor [weak self] in
+                        self?.importing = "Checking \(name) — \(Int(fraction * 100))%"
+                    }
+                }
+            }.value
+            switch outcome {
+            case let .notAModel(name): problems.append("\(name) is not one of the model files.")
+            case let .failed(name, reason): problems.append("\(name): \(reason)")
+            case .installed, .alreadyInstalled: break
+            }
+        }
+        importing = nil
+        refreshModels()
+        if !problems.isEmpty { noteError = problems.joined(separator: "\n") }
+    }
+
+    /// From the setup screen: start the engine, or just close if it runs.
+    func continueFromModels() async {
+        guard modelsReady else { return }
+        modelsNeeded = false
+        showingModels = false
+        await prepare()
     }
 
     func refreshNotes() async {

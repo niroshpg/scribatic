@@ -276,6 +276,13 @@ xcrun simctl launch $UDID com.scribatic.app -ScribaticInjectAudio Library/Caches
 maestro --device $UDID test e2e/ios-speakers-share-delete.yaml
 ```
 
+Staging models directly into the container, as below, skips the model setup
+screen. To exercise that screen instead, leave the models out and put the files
+where the system picker can see them: `adb push` to `/sdcard/Download/` on
+Android, or the simulator's "On My iPhone" storage (the `File Provider Storage`
+folder of the `group.com.apple.FileProvider.LocalStorage` app group, from
+`xcrun simctl get_app_container <udid> com.apple.DocumentsApp groups`) on iOS.
+
 **Android** — the file's presence at `files/inject/conversation.wav` turns it
 on. Stream large models with `exec-in` rather than push-then-copy: the default
 AVD has too little free space for two copies of the 1.2 GB instruct model.

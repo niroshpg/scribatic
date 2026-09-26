@@ -345,6 +345,43 @@ void testRecordingLifecycle() {
     scribaticEngineRelease(engine);
 }
 
+// -- Model catalog --------------------------------------------------------------------
+
+void testCatalogPinsEveryModel() {
+    const auto catalog = modelCatalog();
+    assert(catalog.size() == 5);
+    int optional = 0;
+    for (const auto& model : catalog) {
+        assert(!model.fileName.empty() && !model.title.empty() && !model.purpose.empty());
+        assert(model.sizeBytes > 0);
+        assert(model.sha256.size() == 64);
+        assert(model.sha256.find_first_not_of("0123456789abcdef") == std::string::npos);
+        if (!model.required) {
+            ++optional;
+            assert(!model.withoutIt.empty() && "an optional model must say what is lost");
+        }
+    }
+    assert(optional == 1 && "only the instruct model may be left out");
+    assert(modelDownloadPage().rfind("https://", 0) == 0);
+}
+
+void testEngineStartsWithoutTheInstructModel() {
+    const std::string dir = tempDirectory();
+    touch(dir + "/whisper.bin", "not a model");
+    EngineConfig config;
+    config.whisperModelPath = dir + "/whisper.bin";
+    config.llamaModelPath = dir + "/absent.gguf";
+    config.databasePath = dir + "/notes.sqlite";
+    EngineStatus status = EngineStatus::Ok;
+    EngineInterface* engine = EngineInterface::create(config, &status);
+    assert(engine != nullptr && status == EngineStatus::Ok);
+    scribaticEngineRelease(engine);
+
+    config.whisperModelPath = dir + "/absent.bin";
+    assert(EngineInterface::create(config, &status) == nullptr);
+    assert(status == EngineStatus::ModelNotFound);
+}
+
 } // namespace
 
 int main() {
@@ -361,6 +398,8 @@ int main() {
     testDeletingANoteLeavesNothingSearchable();
     testSpeakerNamesAreIndexedAndRenamable();
     testRecordingLifecycle();
+    testCatalogPinsEveryModel();
+    testEngineStartsWithoutTheInstructModel();
     std::printf("ok\n");
     return 0;
 }

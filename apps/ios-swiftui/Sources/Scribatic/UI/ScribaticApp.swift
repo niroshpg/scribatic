@@ -24,16 +24,32 @@ struct RootView: View {
     @Bindable var model: TranscriptionModel
 
     var body: some View {
-        NavigationStack(path: $model.path) {
-            NotesListView(model: model)
-                .navigationDestination(for: TranscriptionModel.Route.self) { route in
-                    switch route {
-                    case .recorder:
-                        RecorderView(model: model)
-                    case let .note(id):
-                        NoteDetailView(model: model, noteID: id)
-                    }
+        Group {
+            if model.modelsNeeded {
+                NavigationStack { ModelSetupView(model: model) }
+            } else {
+                NavigationStack(path: $model.path) {
+                    NotesListView(model: model)
+                        .navigationDestination(for: TranscriptionModel.Route.self) { route in
+                            switch route {
+                            case .recorder:
+                                RecorderView(model: model)
+                            case let .note(id):
+                                NoteDetailView(model: model, noteID: id)
+                            }
+                        }
                 }
+            }
+        }
+        .sheet(isPresented: $model.showingModels) {
+            NavigationStack {
+                ModelSetupView(model: model)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Done") { model.showingModels = false }
+                        }
+                    }
+            }
         }
         .task { await model.prepare() }
         .alert("Something went wrong", isPresented: errorBinding) {
