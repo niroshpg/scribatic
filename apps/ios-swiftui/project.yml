@@ -92,6 +92,12 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.scribatic.app
+        # Expanded by XcodeGen from the environment, never written here: the
+        # repository is public and a team id identifies the account.
+        # `make setup-ios` exports it from the gitignored fastlane/.env, so the
+        # generated project can sign for a device and survives regeneration.
+        # Unset (CI, a fresh clone) it expands to empty, as before.
+        DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}
         # Device and simulator slices are separate static libraries, so the
         # search path is keyed on the SDK being built. A single path would link
         # the wrong architecture and fail at the very end of a long build.

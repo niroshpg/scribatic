@@ -126,7 +126,12 @@ setup-ios:
 	ln -sfn $(CORE_DIR)/engine/include $(IOS_DIR)/ScribaticCore/include
 	command -v xcodegen >/dev/null 2>&1 || { \
 	    echo "xcodegen not found. Install with: brew install xcodegen"; exit 1; }
-	cd $(IOS_DIR) && xcodegen generate
+	# The team id comes from the gitignored fastlane/.env, not project.yml.
+	# Always defined, empty when there is no .env: XcodeGen leaves an UNSET
+	# variable in the project as a literal "$${DEVELOPMENT_TEAM}".
+	cd $(IOS_DIR) && export DEVELOPMENT_TEAM="$${DEVELOPMENT_TEAM:-}" && \
+	    set -a && { [ ! -f fastlane/.env ] || . fastlane/.env; } && set +a && \
+	    xcodegen generate
 
 ## Verify the NDK/CMake pairing the native build expects.
 setup-android:
