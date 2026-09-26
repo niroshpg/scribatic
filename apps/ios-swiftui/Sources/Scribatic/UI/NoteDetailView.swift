@@ -1,3 +1,4 @@
+import LinkPresentation
 import SwiftUI
 
 /// One saved note: its transcript by speaker, and everything that can be done
@@ -15,6 +16,7 @@ struct NoteDetailView: View {
     @State private var newName = ""
     @State private var confirmDeleteRecording = false
     @State private var confirmDeleteNote = false
+    @State private var sharing: SharePayload?
 
     private var isBusy: Bool { model.busyNoteID == noteID }
 
@@ -41,6 +43,15 @@ struct NoteDetailView: View {
             }
         }
         .task(id: model.noteRevision) { await reload() }
+        // Presented here, from the note screen, and not by a ShareLink inside
+        // the toolbar Menu: that presents while the menu is still dismissing,
+        // anchors to the vanished menu, and shows an empty sheet at the top
+        // edge — a popover pointing at nothing on iPad.
+        .sheet(item: $sharing) { payload in
+            ShareSheet(payload: payload) { sharing = nil }
+                .presentationDetents([.medium, .large])
+                .ignoresSafeArea()
+        }
         .alert("Name this speaker", isPresented: renamingBinding, presenting: renaming) { speaker in
             TextField(speaker.displayName, text: $newName)
                 .textInputAutocapitalization(.words)
@@ -145,12 +156,12 @@ struct NoteDetailView: View {
     private func toolbar(_ note: NoteDetailValue) -> some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
             Menu {
-                ShareLink(item: shareText, subject: Text(note.title)) {
-                    Label("Share transcript", systemImage: "square.and.arrow.up")
+                Button("Share transcript", systemImage: "square.and.arrow.up") {
+                    sharing = SharePayload(subject: note.title, text: shareText)
                 }
                 if note.speakerCount > 0 {
-                    ShareLink(item: anonymisedShareText, subject: Text(note.title)) {
-                        Label("Share without names", systemImage: "person.crop.circle.badge.questionmark")
+                    Button("Share without names", systemImage: "person.crop.circle.badge.questionmark") {
+                        sharing = SharePayload(subject: note.title, text: anonymisedShareText)
                     }
                 }
             } label: {
@@ -243,5 +254,57 @@ struct SpeakerDot: View {
             .fill(Self.color(index))
             .frame(width: 10, height: 10)
             .accessibilityHidden(true)
+    }
+}
+
+// MARK: - Share sheet
+
+struct SharePayload: Identifiable {
+    let id = UUID()
+    let subject: String
+    let text: String
+}
+
+/// The system share sheet around plain text. The app sends nothing itself:
+/// whichever app the user picks does, which is why sharing needs no network.
+private struct ShareSheet: UIViewControllerRepresentable {
+    let payload: SharePayload
+    let onFinish: () -> Void
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let controller = UIActivityViewController(
+            activityItems: [TextItem(subject: payload.subject, text: payload.text)],
+            applicationActivities: nil
+        )
+        controller.completionWithItemsHandler = { _, _, _, _ in onFinish() }
+        return controller
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+
+/// Supplies the text, plus a subject line for targets that have one (Mail).
+private final class TextItem: NSObject, UIActivityItemSource {
+    let subject: String
+    let text: String
+
+    init(subject: String, text: String) {
+        self.subject = subject
+        self.text = text
+    }
+
+    func activityViewControllerPlaceholderItem(_ controller: UIActivityViewController) -> Any { text }
+
+    func activityViewController(_ controller: UIActivityViewController,
+                                itemForActivityType activityType: UIActivity.ActivityType?) -> Any? { text }
+
+    func activityViewController(_ controller: UIActivityViewController,
+                                subjectForActivityType activityType: UIActivity.ActivityType?) -> String { subject }
+
+    /// The sheet's header: the note's title instead of a blank placeholder.
+    func activityViewControllerLinkMetadata(_ controller: UIActivityViewController) -> LPLinkMetadata? {
+        let metadata = LPLinkMetadata()
+        metadata.title = subject
+        return metadata
     }
 }
