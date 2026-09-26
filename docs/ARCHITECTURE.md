@@ -2,6 +2,44 @@
 
 Short, dated notes on the choices that are expensive to reverse.
 
+## Overview — the managed/native boundary
+
+Every ADR below rests on one premise: part of this product cannot run above the
+JVM. That premise is worth stating precisely, because it is narrower than "we
+write system-level C++" and it does not depend on the unfinished work landing.
+
+<p align="center">
+  <img src="diagrams/native-boundary.png" alt="Kotlin capture, the engine facade and the Compose UI run in the managed ART layer; below a JNI boundary sit four native requirements — the ggml inference backends, the sqlite-vss vector index, the mmap-based model residency wrapper, and AAudio capture — each depending on a kernel or CPU facility the JVM cannot reach." width="900">
+</p>
+
+Four requirements sit below the line, and none of them has a managed
+equivalent:
+
+1. **ggml backends.** whisper.cpp and llama.cpp carry hand-written ARM
+   intrinsics — `SDOT`, `UDOT`, FP16 `FMLA`. No JVM path emits them. The
+   managed-language alternatives (ONNX Runtime, LiteRT, MediaPipe) are
+   themselves `.so` files crossing the same ABI; they stop you *writing* C++,
+   not *shipping* it.
+2. **sqlite-vss.** Vector search is a loadable C++ SQLite extension over faiss.
+   Android's platform SQLite does not permit extension loading, and Room and
+   SQLDelight both sit on top of it — so on-device ANN means bundling SQLite.
+3. **Model residency.** `FileChannel.map()` does give Kotlin an `mmap`, but it
+   caps a single mapping at `Integer.MAX_VALUE` and exposes no `madvise`; ggml
+   needs a raw pointer into the mapping regardless.
+4. **AAudio capture.** An NDK-only C API. `AudioRecord` is the managed
+   counterpart and is what runs today.
+
+Solid strokes in the diagram are wired and verified on device; dashed strokes
+are designed and not yet linked. The distinction matters for planning, not for
+the premise — the requirement is a property of the libraries and the platform,
+not of how much of the pipeline is finished.
+
+Note that the premise is carried by the code this repository *links*, not by
+the ~1,100 lines of first-party C++ it contains. That C++ exists to reach the
+libraries above and to share one implementation with iOS (ADR-001); its system
+API surface is a single `mmap` wrapper. Claiming more than that is claiming
+something the tree does not support.
+
 ## ADR-001 — One shared C++ core, two native UIs (not a cross-platform UI)
 
 whisper.cpp and llama.cpp are the only part of this product where platform
@@ -143,3 +181,90 @@ Weights are downloaded on first run rather than bundled. A 1.2 GB app binary is
 hostile to install and awkward against store limits, and every comparable
 on-device LLM app does the same. That makes the first-run download real product
 surface: progress, resumability, a Wi-Fi preference, and a failure path.
+
+## ADR-008 — Retrieval is the only edge, and it is not yet built
+
+Dated 2026-09-23, after surveying what actually ships on Play. ADR-006 argued
+from Apple Voice Memos that transcription is not a differentiator. Two apps in
+the store now make that concrete, and they fail in opposite directions.
+
+### The ground either side of this product is already occupied
+
+| | CraftNote (`com.joyolabs.noteify`) | Notely Voice (`com.module.notelycompose.android`) |
+|---|---|---|
+| Transcription | cloud | on-device whisper |
+| Reach | ~470K installs, 4.64★ / 37K ratings | Play + F-Droid, Android + iOS |
+| Price | subscription | free, GPL-3.0; subscription rebuild on Play |
+| AI layer | summaries, speaker ID, to-dos | none |
+| Search | keyword | keyword |
+| Privacy basis | policy | architecture |
+
+CraftNote's own privacy policy is explicit that audio leaves the device: it
+hands a Cloudflare R2 URL to ElevenLabs Scribe V2, Whisper, Groq Whisper or
+Google Gemini and the provider fetches it. The promise is "encrypted, never
+sold, never trained on" — a commitment about conduct, not a property of the
+system. That is the distinction this product sells against, and it only holds
+while there is genuinely no network path.
+
+Notely Voice is the harder comparison, because it is close to this
+architecture already shipped: Compose Multiplatform on both platforms, whisper
+on-device, no cloud, 100+ languages, actively maintained, and free. It is a
+second proof of ADR-006 rather than a threat to it — but it also ships rich
+text, folders, tags, filtering, audio import, playback and export, all of which
+this repository does not have, in a 20 MiB APK.
+
+So on everything built so far, this product is behind both. That is the honest
+starting position.
+
+### What neither of them does
+
+Notely Voice's search is keyword only. No embeddings, no vector index, no
+retrieval-augmented generation, no local instruct model, no summarisation.
+CraftNote has the AI layer and reaches it over the network.
+
+The intersection — CraftNote's capability with Notely's privacy basis — is
+unoccupied. It is unoccupied because it is the expensive square, not because
+nobody has thought of it. Hobby repositories already pair whisper, embeddings
+and a local LLM on Android; none has shipped it as a product.
+
+### This is where the shared C++ core starts paying
+
+Notely Voice reaches whisper through Kotlin Multiplatform bindings and never
+needed a C++ core. On transcription alone, ADR-001 buys little that KMP does
+not. Its value appears when llama.cpp, an embedder and sqlite-vss have to share
+state and a lifetime — three C++ dependencies that are materially harder to
+wire twice, in Kotlin and in Swift, than once underneath both.
+
+The architecture bet and the product bet are therefore the same bet, and both
+rest on the unbuilt half.
+
+### Definition of done
+
+Ask a question in natural language; get an answer drawn from three recordings
+made in three different months, each cited; with the device in airplane mode.
+
+Neither competitor can do this. Until it works, there is no differentiator to
+describe, and the correct description of this product is "a less complete
+Notely Voice".
+
+### Consequences
+
+1. **Transcription is judged only on whether it produces text worth indexing.**
+   No further investment in the capture or decode path beyond correctness —
+   ADR-006 already demoted it; this fixes the budget.
+2. **Import moves up.** Notely Voice already has it, and retrieval over a
+   corpus of one is worthless. It is both table stakes and a prerequisite for
+   the only feature that differentiates.
+3. **The free GPL competitor anchors the transcription half at zero.** Whatever
+   is charged for must be the retrieval layer. A paid app whose paid-for
+   feature is transcription cannot be defended.
+4. **Three risks are accepted knowingly.** ~1.4 GB of weights against a 20 MiB
+   competitor makes first-run download real product surface (ADR-007). Qwen3
+   1.7B over retrieved chunks on a 4 GB device will be slow, and a confidently
+   wrong answer about what someone said is worse than a keyword search that
+   returns nothing. And the moat is thin: Notely's SQLDelight stack could add
+   an embedder and a vector index without a rewrite.
+5. **The window is finite.** Apple Intelligence already summarises in Voice
+   Memos, and AICore/Gemini Nano is the same move on Android. The unserved
+   thing is semantic retrieval across a personal corpus with no network path —
+   and that is unserved now, not indefinitely.
