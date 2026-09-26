@@ -113,6 +113,16 @@ android {
         }
     }
 
+    // Models ship as Play asset packs, not inside the APK (ADR-011). Only a
+    // bundle built for Play carries them; a debug APK has none and falls back
+    // to importing the files on the setup screen.
+    // -Pscribatic.skipAnswersPack=true leaves the 1.2 GB instruct pack out,
+    // for local bundletool testing on a machine or emulator short of space.
+    assetPacks += listOf(":models-core")
+    if (project.findProperty("scribatic.skipAnswersPack") != "true") {
+        assetPacks += listOf(":models-answers")
+    }
+
     // Speaker diarization (ADR-009): sherpa-onnx's C API and ONNX Runtime,
     // prebuilt and staged by `make fetch-deps`. libscribatic_engine.so links
     // against them, so they ship alongside it. Absent, the engine is built
@@ -125,6 +135,9 @@ android {
 }
 
 dependencies {
+    // Asks the Play Store for the model packs. The Store downloads them; the
+    // app itself still has no INTERNET permission and makes no requests.
+    implementation("com.google.android.play:asset-delivery-ktx:2.3.0")
     implementation(platform("androidx.compose:compose-bom:2024.09.03"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")

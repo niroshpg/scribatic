@@ -134,6 +134,23 @@ extension ScribaticEngine {
         var threadCount: Int32 = 4
         var useMemoryMapping = true
 
+        /// Like `default()`, but with each model at wherever the installer
+        /// found it — its Apple-hosted pack, or an imported file.
+        static func resolved(_ installer: ModelInstaller) throws -> Configuration {
+            var configuration = try `default`()
+            func path(_ name: String, _ fallback: String) -> String {
+                guard let model = installer.catalog.first(where: { $0.fileName == name }),
+                      let url = installer.fileURL(for: model) else { return fallback }
+                return url.path(percentEncoded: false)
+            }
+            configuration.whisperModelPath = path("ggml-base.en.bin", configuration.whisperModelPath)
+            configuration.llamaModelPath = path("insight-q4_k_m.gguf", configuration.llamaModelPath)
+            configuration.embedModelPath = path("embed-minilm-l6-v2.gguf", configuration.embedModelPath)
+            configuration.segmentationModelPath = path("speaker-segmentation.onnx", configuration.segmentationModelPath)
+            configuration.speakerEmbeddingModelPath = path("speaker-embedding.onnx", configuration.speakerEmbeddingModelPath)
+            return configuration
+        }
+
         static func `default`() throws -> Configuration {
             let support = try FileManager.default.url(
                 for: .applicationSupportDirectory,

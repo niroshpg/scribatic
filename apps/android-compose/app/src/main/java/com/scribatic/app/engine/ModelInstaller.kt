@@ -15,7 +15,7 @@ import java.security.MessageDigest
  * entry in the core's catalog, and it is stored under that entry's name —
  * whatever it was called when downloaded, and however many were picked at once.
  */
-class ModelInstaller(private val context: Context) {
+class ModelInstaller(private val context: Context, private val packs: PlayModelPacks) {
 
     /** Lazy, and read off the main thread: the first read loads the native engine. */
     val catalog: List<ModelSpec> by lazy { TranscriptionEngine.modelCatalog() }
@@ -28,8 +28,16 @@ class ModelInstaller(private val context: Context) {
      * launch would cost seconds, and a file only gets here by passing the hash
      * check in [import].
      */
-    fun isInstalled(model: ModelSpec): Boolean =
-        File(filesDir, model.fileName).let { it.isFile && it.length() == model.sizeBytes }
+    fun isInstalled(model: ModelSpec): Boolean = fileFor(model) != null
+
+    /**
+     * Where the model is, if anywhere: the Play asset pack first (ADR-011),
+     * then a file imported into filesDir. The engine maps whichever it gets,
+     * so a pack-delivered model is never copied.
+     */
+    fun fileFor(model: ModelSpec): File? =
+        packs.fileFor(model)
+            ?: File(filesDir, model.fileName).takeIf { it.isFile && it.length() == model.sizeBytes }
 
     /** Whether the user wants an optional model. Required ones always are. */
     fun isWanted(model: ModelSpec): Boolean =

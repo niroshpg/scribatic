@@ -11,6 +11,8 @@ import com.scribatic.app.engine.EngineConfig
 import com.scribatic.app.engine.EngineStatus
 import com.scribatic.app.engine.ModelInstaller
 import com.scribatic.app.engine.ModelSpec
+import com.scribatic.app.engine.PlayModelPacks
+import com.google.android.play.core.assetpacks.model.AssetPackStatus
 import android.net.Uri
 import com.scribatic.app.engine.NoteDetail
 import com.scribatic.app.engine.NoteSummary
@@ -62,6 +64,12 @@ data class TranscriptUiState(
     val models: List<ModelRow> = emptyList(),
     /** "Checking ggml-base.en.bin — 40%" while an import runs. */
     val importing: String? = null,
+    /** This install came from Play, so the models arrive as asset packs. */
+    val playDelivery: Boolean = false,
+    /** "Downloading from Google Play — 40%", or null when idle. */
+    val playStatus: String? = null,
+    /** Play is holding a download for the user's OK (mobile data, large size). */
+    val playNeedsConfirmation: Boolean = false,
 ) {
     /** Every model the user wants is present, so the engine can start. */
     val modelsReady: Boolean get() = models.isNotEmpty() && models.filter { it.wanted }.all { it.installed }
@@ -96,7 +104,9 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
     private var recordingFile: File? = null
     private var recordingStartedAt = 0L
     private val playback = AudioPlayback()
-    private val installer = ModelInstaller(application)
+    private val packs = PlayModelPacks(application)
+    private val installer = ModelInstaller(application, packs)
+    private var packUpdates: Job? = null
     private var preparing = false
 
     private val filesDir: File get() = getApplication<Application>().filesDir
@@ -120,6 +130,10 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
         viewModelScope.launch(Dispatchers.IO) {
             installer.sweepPartials()
             refreshModels()
+            // Alongside, never before: binding to the Play Store's service can
+            // take seconds, and the screen is decided by what is already on
+            // disk. When a pack lands, its update moves the screen on.
+            viewModelScope.launch(Dispatchers.IO) { startPlayDelivery() }
             if (!installer.isReady()) {
                 preparing = false
                 _uiState.update { it.copy(screen = Screen.Models) }
@@ -131,14 +145,19 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
 
     private suspend fun startEngine() = withContext(Dispatchers.Default) {
         try {
+            // From the Play pack if that is where a model is, else from filesDir.
+            fun path(name: String): String {
+                val model = installer.catalog.first { it.fileName == name }
+                return (installer.fileFor(model) ?: File(filesDir, name)).absolutePath
+            }
             val config = EngineConfig(
-                whisperModelPath = File(filesDir, "ggml-base.en.bin").absolutePath,
-                llamaModelPath = File(filesDir, "insight-q4_k_m.gguf").absolutePath,
-                embedModelPath = File(filesDir, "embed-minilm-l6-v2.gguf").absolutePath,
+                whisperModelPath = path("ggml-base.en.bin"),
+                llamaModelPath = path("insight-q4_k_m.gguf"),
+                embedModelPath = path("embed-minilm-l6-v2.gguf"),
                 databasePath = File(File(filesDir, "store").apply { mkdirs() }, "scribatic.sqlite").absolutePath,
                 recordingsDirectory = recordingsDir.absolutePath,
-                segmentationModelPath = File(filesDir, "speaker-segmentation.onnx").absolutePath,
-                speakerEmbeddingModelPath = File(filesDir, "speaker-embedding.onnx").absolutePath,
+                segmentationModelPath = path("speaker-segmentation.onnx"),
+                speakerEmbeddingModelPath = path("speaker-embedding.onnx"),
             )
 
             val created = TranscriptionEngine.create(config)
@@ -170,6 +189,41 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
 
     // -- Models -----------------------------------------------------------------------
 
+    /**
+     * On a Play install, asks for every wanted pack that is not already on the
+     * device and follows their progress. On any other install, does nothing,
+     * and the setup screen offers importing instead.
+     */
+    private suspend fun startPlayDelivery() {
+        val states = packs.states() ?: return
+        _uiState.update { it.copy(playDelivery = true) }
+
+        if (packUpdates == null) {
+            packUpdates = viewModelScope.launch(Dispatchers.IO) {
+                packs.updates.collect { state ->
+                    val waiting = state.status() == AssetPackStatus.WAITING_FOR_WIFI ||
+                        state.status() == AssetPackStatus.REQUIRES_USER_CONFIRMATION
+                    _uiState.update {
+                        it.copy(playStatus = PlayModelPacks.describe(state), playNeedsConfirmation = waiting)
+                    }
+                    if (state.status() == AssetPackStatus.COMPLETED) {
+                        refreshModels()
+                        // First run, blocked only on the download: carry on.
+                        if (engine == null && installer.isReady()) continueFromModels()
+                    }
+                }
+            }
+        }
+
+        val wanted = installer.catalog.filter(installer::isWanted).map(packs::packFor).distinct()
+        val missing = wanted.filter { states[it]?.status() != AssetPackStatus.COMPLETED }
+        packs.fetch(missing)
+    }
+
+    fun confirmPlayDownload(launcher: androidx.activity.result.ActivityResultLauncher<androidx.activity.result.IntentSenderRequest>) {
+        packs.confirmCellular(launcher)
+    }
+
     private fun refreshModels() {
         val rows = installer.catalog.map { ModelRow(it, installer.isInstalled(it), installer.isWanted(it)) }
         _uiState.update { it.copy(models = rows) }
@@ -189,6 +243,9 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
         viewModelScope.launch(Dispatchers.IO) {
             installer.setWanted(spec, wanted)
             if (!wanted) installer.remove(spec)
+            if (_uiState.value.playDelivery) {
+                if (wanted) packs.fetch(listOf(packs.packFor(spec))) else packs.remove(packs.packFor(spec))
+            }
             refreshModels()
         }
     }

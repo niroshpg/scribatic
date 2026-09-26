@@ -1,6 +1,12 @@
 default_platform(:ios)
 
 APP_ID  = "com.scribatic.app".freeze
+# The Background Assets downloader extension (ADR-011). Needs its own App ID
+# and profile, and both IDs need the App Groups capability with
+# group.com.scribatic.app assigned — see docs/RELEASING.md.
+DOWNLOADER_ID = "com.scribatic.app.downloader".freeze
+# App Store Connect's numeric id for the app, used to attach asset packs.
+ASC_APP_APPLE_ID = "6811857809".freeze
 SCHEME  = "ScribaticApp".freeze
 PROJECT = "Scribatic.xcodeproj".freeze
 IPA_DIR = "build".freeze
@@ -73,9 +79,13 @@ platform :ios do
     # This is `match`'s mechanism without `match`'s git repo. If a second
     # machine or CI ever appears, `match import` can adopt this certificate.
     get_certificates(api_key: api_key, development: false)
-    get_provisioning_profile(api_key: api_key, development: false)
+    get_provisioning_profile(api_key: api_key, development: false, app_identifier: DOWNLOADER_ID)
+    downloader_profile = lane_context[SharedValues::SIGH_NAME]
+    # The app's profile last, so SIGH_NAME is the app's for callers.
+    get_provisioning_profile(api_key: api_key, development: false, app_identifier: APP_ID)
 
-    UI.success("Certificate and App Store profile ready: #{lane_context[SharedValues::SIGH_NAME]}")
+    UI.success("Profiles ready: #{lane_context[SharedValues::SIGH_NAME]}, #{downloader_profile}")
+    downloader_profile
   end
 
   desc "Archive and export a signed App Store .ipa. Does not upload."
@@ -91,8 +101,20 @@ platform :ios do
     UI.user_error!("DEVELOPMENT_TEAM is not set — see fastlane/.env.example") if team.nil? || team.empty?
 
     regenerate_project
-    signing
+    downloader_profile = signing
     profile = lane_context[SharedValues::SIGH_NAME]
+
+    # Manual signing, per target, written into the freshly generated project
+    # rather than into project.yml, so day-to-day simulator work stays on
+    # automatic signing. Per target because the app and the downloader
+    # extension each have their own profile; a command-line
+    # PROVISIONING_PROFILE_SPECIFIER would apply one profile to both.
+    { "ScribaticApp" => profile, "ScribaticDownloader" => downloader_profile }.each do |target, name|
+      update_code_signing_settings(
+        path: PROJECT, targets: [target], use_automatic_signing: false,
+        team_id: team, code_sign_identity: "Apple Distribution", profile_name: name
+      )
+    end
 
     build_app(
       project: PROJECT,
@@ -101,18 +123,30 @@ platform :ios do
       export_method: "app-store",
       output_directory: IPA_DIR,
       codesigning_identity: "Apple Distribution",
-      export_options: { provisioningProfiles: { APP_ID => profile } },
-      # Manual signing is forced here rather than written into project.yml, so
-      # the generated project stays on automatic signing for day-to-day
-      # simulator work and nothing has to be regenerated to switch.
+      export_options: { provisioningProfiles: { APP_ID => profile, DOWNLOADER_ID => downloader_profile } },
       xcargs: [
         "CURRENT_PROJECT_VERSION=#{number}",
-        "DEVELOPMENT_TEAM=#{team}",
-        "CODE_SIGN_STYLE=Manual",
-        "CODE_SIGN_IDENTITY='Apple Distribution'",
-        "PROVISIONING_PROFILE_SPECIFIER='#{profile}'"
+        "DEVELOPMENT_TEAM=#{team}"
       ].join(" ")
     )
+  end
+
+  desc "Package the model asset packs and upload them to App Store Connect"
+  desc "Once per model change, not per build: packs are versioned separately (ADR-011)."
+  lane :asset_packs do
+    api_key = asc_api_key
+    out = File.expand_path("../../../build/asset-packs", __dir__)
+    models = File.expand_path("../../../models", __dir__)
+    FileUtils.mkdir_p(out)
+    %w[models-core models-answers].each do |pack|
+      manifest = File.expand_path("../AssetPacks/#{pack}.json", __dir__)
+      # ba-package resolves the manifest's file paths against the working
+      # directory, which is why it runs from models/.
+      sh("cd #{models.shellescape} && xcrun ba-package package #{manifest.shellescape} -o #{out}/#{pack}.aar")
+      sh("xcrun altool --upload-asset-pack #{out}/#{pack}.aar --apple-id #{ASC_APP_APPLE_ID} " \
+         "--api-key #{ENV['ASC_KEY_ID']} --api-issuer #{ENV['ASC_ISSUER_ID']} " \
+         "--p8-file-path #{File.expand_path('AuthKey.p8', __dir__).shellescape}")
+    end
   end
 
   desc "Build and upload to TestFlight for internal testers"

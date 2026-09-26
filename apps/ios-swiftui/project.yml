@@ -11,13 +11,20 @@ name: Scribatic
 options:
   bundleIdPrefix: com.scribatic
   deploymentTarget:
-    iOS: "17.0"          # Swift-C++ Interop and Observation both require 17+
+    # 26: Apple-hosted Background Assets deliver the models (ADR-011). Before
+    # 26 the only Background Assets option was self-hosting, which would need
+    # a network path in the app.
+    iOS: "26.0"
   createIntermediateGroups: true
   generateEmptyDirectories: true
 
 settings:
   base:
     SWIFT_VERSION: "6.0"
+    # A default for local builds. fastlane passes a timestamp for every upload;
+    # without this, a local build has no CFBundleVersion at all, and the
+    # simulator refuses to install the downloader extension.
+    CURRENT_PROJECT_VERSION: "1"
     # --- Swift-C++ Interop ------------------------------------------------
     SWIFT_OBJC_INTEROP_MODE: objcxx
     OTHER_SWIFT_FLAGS: "-cxx-interoperability-mode=default"
@@ -45,6 +52,9 @@ targets:
       # linked statically inside one dynamic framework. Staged by
       # `make fetch-deps`; embedded and signed with the app.
       - framework: ../../core/engine/vendor-bin/sherpa-onnx/ios/SherpaOnnxC.xcframework
+        embed: true
+      # Downloads the Apple-hosted model packs (ADR-011).
+      - target: ScribaticDownloader
         embed: true
     info:
       path: Resources/Info.plist
@@ -89,9 +99,15 @@ targets:
         # TestFlight build behind a manual compliance answer.
         ITSAppUsesNonExemptEncryption: false
         # No NSAppTransportSecurity keys: the app makes no network requests.
+        # Apple-hosted Background Assets (ADR-011): Apple serves the model
+        # packs and the system downloads them into the shared app group.
+        BAAppGroupID: group.com.scribatic.app
+        BAHasManagedAssetPacks: true
+        BAUsesAppleHosting: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.scribatic.app
+        CODE_SIGN_ENTITLEMENTS: Resources/Scribatic.entitlements
         # Expanded by XcodeGen from the environment, never written here: the
         # repository is public and a team id identifies the account.
         # `make setup-ios` exports it from the gitignored fastlane/.env, so the
@@ -109,6 +125,31 @@ targets:
         # it rejects any icon carrying an alpha channel. The catalog holds one
         # opaque 1024 master and Xcode derives the rest.
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+
+  # The Background Assets downloader extension (ADR-011). ExtensionKit, not
+  # an app extension: the system launches it to fetch Apple-hosted packs.
+  ScribaticDownloader:
+    type: extensionkit-extension
+    platform: iOS
+    sources:
+      - path: Downloader
+    info:
+      path: Downloader/Info.plist
+      properties:
+        CFBundleDisplayName: Scribatic Downloader
+        CFBundlePackageType: XPC!
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        EXAppExtensionAttributes:
+          EXExtensionPointIdentifier: com.apple.background-asset-downloader-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.scribatic.app.downloader
+        CODE_SIGN_ENTITLEMENTS: Downloader/ScribaticDownloader.entitlements
+        DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}
+        SWIFT_OBJC_INTEROP_MODE: objc
+        OTHER_SWIFT_FLAGS: ""
+        SKIP_INSTALL: YES
 
   # Unit tests run against the app bundle so they can reach internal types and
   # the imported C++ module without a second copy of the interop settings.

@@ -1,4 +1,5 @@
 import AVFoundation
+import BackgroundAssets
 import Foundation
 import Observation
 
@@ -79,6 +80,10 @@ final class TranscriptionModel {
     var showingModels = false
     /// "Checking ggml-base.en.bin — 40%" while an import runs.
     private(set) var importing: String?
+    /// "Downloading models — 40%" while Apple-hosted packs download.
+    private(set) var packStatus: String?
+    /// Packs could not be fetched from Apple: offer importing instead.
+    private(set) var packsUnavailable = false
 
     /// Every model the user wants is present, so the engine can start.
     var modelsReady: Bool {
@@ -114,11 +119,12 @@ final class TranscriptionModel {
         refreshModels()
         guard installer.isReady() else {
             modelsNeeded = true
+            Task { await fetchWantedPacks() }
             return
         }
 
         do {
-            let configuration = try ScribaticEngine.Configuration.default()
+            let configuration = try ScribaticEngine.Configuration.resolved(installer)
             let engine = try ScribaticEngine(configuration: configuration)
             self.configuration = configuration
             self.engine = engine
@@ -144,6 +150,45 @@ final class TranscriptionModel {
     func setModelWanted(_ spec: ModelSpecValue, _ wanted: Bool) {
         installer.setWanted(spec, wanted)
         refreshModels()
+        let pack = ModelInstaller.packID(for: spec)
+        Task {
+            if wanted {
+                await fetchWantedPacks()
+            } else {
+                await installer.removePack(pack)
+                refreshModels()
+            }
+        }
+    }
+
+    /// Fetches every wanted pack not yet on the device from Apple, reporting
+    /// progress. If this install cannot get packs at all, flags it so the
+    /// setup screen leads with importing.
+    func fetchWantedPacks() async {
+        let missing = Set(models.filter { $0.wanted && !$0.installed }.map { ModelInstaller.packID(for: $0.spec) })
+        guard !missing.isEmpty, packStatus == nil else { return }
+
+        for id in missing.sorted() {
+            let progress = Task { [weak self] in
+                for await update in AssetPackManager.shared.statusUpdates(forAssetPackWithID: id) {
+                    if case let .downloading(_, fraction) = update {
+                        let percent = Int(fraction.fractionCompleted * 100)
+                        await MainActor.run { self?.packStatus = "Downloading models — \(percent)%" }
+                    }
+                }
+            }
+            packStatus = "Downloading models"
+            do {
+                try await installer.fetchPack(id)
+            } catch {
+                packsUnavailable = true
+            }
+            progress.cancel()
+        }
+        packStatus = nil
+        refreshModels()
+        // First run, blocked only on the download: carry on.
+        if engine == nil, modelsNeeded, modelsReady { await continueFromModels() }
     }
 
     func importModels(_ urls: [URL]) async {

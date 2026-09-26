@@ -35,6 +35,12 @@ struct ModelSetupView: View {
             }
 
             Section {
+                if let status = model.packStatus {
+                    HStack {
+                        ProgressView()
+                        Text(status).font(.subheadline)
+                    }
+                }
                 if let importing = model.importing {
                     HStack {
                         ProgressView()

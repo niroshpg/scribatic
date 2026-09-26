@@ -402,3 +402,37 @@ The cost is a clumsier first run than a download button. It is the right trade
 for internal testing and for schools, whose IT can pre-stage the files; a
 public launch may move to Play Asset Delivery and Apple's Background Assets,
 where the store hosts the files and the app still makes no requests itself.
+
+## ADR-011 — The stores deliver the models; import is the fallback
+
+Dated 2026-09-27. Supersedes ADR-010's "import is the way in" for store installs;
+import remains for everything else.
+
+Importing by hand is right for schools and sideloads and wrong as the first
+thing a new user meets. Both stores can host large files and download them on
+the app's behalf, which keeps the app itself free of network code:
+
+- **Android: Play Asset Delivery.** `models_core` (the four required models,
+  205 MB) is a fast-follow pack, downloaded by Play right after install.
+  `models_answers` (the instruct model, 1.28 GB) is on-demand, fetched only if
+  "Answers and summaries" stays selected, and removed if it is deselected.
+  Models are read from the pack's own location, never copied. The library adds
+  no INTERNET permission; through WorkManager it adds ACCESS_NETWORK_STATE,
+  WAKE_LOCK, RECEIVE_BOOT_COMPLETED and FOREGROUND_SERVICE_DATA_SYNC.
+- **iOS: Apple-hosted Background Assets**, which need iOS 26 — so the
+  deployment target is now 26.0. `models-core` has a prefetch policy (downloaded
+  during installation), `models-answers` is on-demand. A `ManagedDownloaderExtension`
+  target does the fetching, sharing the group `group.com.scribatic.app` with the
+  app, and packs are uploaded to App Store Connect separately from builds
+  (`fastlane asset_packs`).
+
+The setup screen stays. On a store install it shows store progress; anywhere
+else — a debug build, a sideload, a device without Play, an Xcode build with no
+packs — the store request fails and it offers the GitHub `models-v1` download
+and import, exactly as before. Files from the stores are trusted as the stores'
+own integrity checks cover them; imported files are still hash-checked.
+
+Consequences: a Play bundle is 1.5 GB and a local build of one needs about
+4.5 GB of scratch space (`-Pscribatic.skipAnswersPack=true` leaves the big pack
+out for local testing). Apple-hosted packs can only be exercised through
+TestFlight or the App Store, not from Xcode.

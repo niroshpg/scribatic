@@ -39,7 +39,7 @@ IOS_TEST_DEST  ?= platform=iOS Simulator,name=iPhone 16
 # pipefail, that would mask the real build result.
 XCFMT          := $(shell command -v xcbeautify >/dev/null 2>&1 && echo xcbeautify || echo cat)
 
-.PHONY: help setup-all setup-core setup-ios setup-ios-backends setup-android fetch-deps \
+.PHONY: help setup-all setup-core setup-ios setup-ios-backends setup-android fetch-deps stage-asset-packs \
 	    build-ios build-android build-core \
 	    test-all test-core test-ios test-android \
 	    fmt lint clean distclean doctor
@@ -142,6 +142,18 @@ setup-android:
 fetch-models:
 	@echo "==> Fetching GGUF weights into $(MODELS_DIR)"
 	bash $(ROOT)/scripts/fetch_models.sh
+
+## Stage the model files into the Play asset-pack modules (ADR-011). APFS
+## clones where possible, so 1.4 GB costs no copy time and no disk.
+ASSET_CORE    := $(ANDROID_DIR)/models-core/src/main/assets
+ASSET_ANSWERS := $(ANDROID_DIR)/models-answers/src/main/assets
+stage-asset-packs:
+	mkdir -p $(ASSET_CORE) $(ASSET_ANSWERS)
+	for m in ggml-base.en.bin speaker-segmentation.onnx speaker-embedding.onnx embed-minilm-l6-v2.gguf; do \
+	    test -f $(ASSET_CORE)/$$m || cp -c $(MODELS_DIR)/$$m $(ASSET_CORE)/$$m 2>/dev/null || cp $(MODELS_DIR)/$$m $(ASSET_CORE)/$$m; \
+	done
+	test -f $(ASSET_ANSWERS)/insight-q4_k_m.gguf || cp -c $(MODELS_DIR)/insight-q4_k_m.gguf $(ASSET_ANSWERS)/ 2>/dev/null || \
+	    cp $(MODELS_DIR)/insight-q4_k_m.gguf $(ASSET_ANSWERS)/
 
 ## SQLite amalgamation and sherpa-onnx prebuilts. Idempotent, so every build
 ## target depends on it rather than relying on someone remembering to run it.

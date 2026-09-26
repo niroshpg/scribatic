@@ -56,7 +56,8 @@ jobs:
         run: make build-android CONFIG=Release
 
   ios:
-    runs-on: macos-14
+    # iOS 26 SDK: the app targets iOS 26 for Apple-hosted Background Assets.
+    runs-on: macos-26
     needs: core
     steps:
       - uses: actions/checkout@v4

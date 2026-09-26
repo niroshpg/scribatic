@@ -83,3 +83,6 @@ apps/android-compose/.kotlin/
 # Local working notes for AI sessions. Never committed — machine-specific
 # paths, device identifiers and in-progress context.
 claude-notes/
+
+# Play asset packs are staged from models/ by `make stage-asset-packs`.
+apps/android-compose/models-*/src/

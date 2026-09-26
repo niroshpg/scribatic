@@ -224,6 +224,9 @@ private fun ModelsScreen(state: TranscriptUiState, viewModel: TranscriptionViewM
         viewModel.importModels(uris)
     }
     var confirmLeaveOut by remember { mutableStateOf<ModelRow?>(null) }
+    // Play's own "download over mobile data?" sheet; the result arrives as pack
+    // state updates, so nothing is done with it here.
+    val playConfirm = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) {}
     val wantedBytes = state.models.filter { it.wanted }.sumOf { it.spec.sizeBytes }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -231,8 +234,13 @@ private fun ModelsScreen(state: TranscriptUiState, viewModel: TranscriptionViewM
             item {
                 Text("Models", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(vertical = 16.dp))
                 Text(
-                    "Scribatic runs entirely on this phone, so it needs these model files. The app " +
-                        "never connects to the internet: download them in your browser, then import them here.",
+                    if (state.playDelivery) {
+                        "Scribatic runs entirely on this phone, so it needs these model files. Google Play " +
+                            "downloads them for you; the app itself never connects to the internet."
+                    } else {
+                        "Scribatic runs entirely on this phone, so it needs these model files. The app " +
+                            "never connects to the internet: download them in your browser, then import them here."
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Text(
@@ -249,23 +257,38 @@ private fun ModelsScreen(state: TranscriptUiState, viewModel: TranscriptionViewM
 
         HorizontalDivider()
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            state.playStatus?.let {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Text(it, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(start = 8.dp))
+                }
+            }
+            if (state.playNeedsConfirmation) {
+                Button(onClick = { viewModel.confirmPlayDownload(playConfirm) }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Continue in Google Play")
+                }
+            }
             state.importing?.let {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                     Text(it, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(start = 8.dp))
                 }
             }
-            OutlinedButton(
-                onClick = {
-                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(viewModel.modelDownloadPage())))
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("1. Download model files") }
+            // A Play install gets its models from Play; the manual route is
+            // still there, for a device where Play can't deliver them.
+            if (!state.playDelivery) {
+                OutlinedButton(
+                    onClick = {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(viewModel.modelDownloadPage())))
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("1. Download model files") }
+            }
             OutlinedButton(
                 onClick = { picker.launch(arrayOf("*/*")) },
                 enabled = state.importing == null,
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text("2. Import files…") }
+            ) { Text(if (state.playDelivery) "Import files instead…" else "2. Import files…") }
             Button(
                 onClick = viewModel::continueFromModels,
                 enabled = state.modelsReady && state.importing == null,

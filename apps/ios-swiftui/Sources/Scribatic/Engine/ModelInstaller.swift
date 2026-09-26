@@ -1,5 +1,7 @@
+import BackgroundAssets
 import CryptoKit
 import Foundation
+import System
 
 /// Brings model files into Application Support from files the user picked.
 ///
@@ -23,10 +25,45 @@ struct ModelInstaller: Sendable {
     /// launch would cost seconds, and a file only gets here by passing the
     /// hash check in `importFile`.
     func isInstalled(_ model: ModelSpecValue) -> Bool {
+        fileURL(for: model) != nil
+    }
+
+    /// Where the model is, if anywhere: its Apple-hosted asset pack first
+    /// (ADR-011), then a file imported into Application Support. The engine
+    /// maps whichever it gets, so a pack-delivered model is never copied.
+    func fileURL(for model: ModelSpecValue) -> URL? {
+        // url(for:) throws when no downloaded pack holds the file (26.0+;
+        // assetPackIsAvailableLocally would need 26.4).
+        if let url = try? AssetPackManager.shared.url(for: FilePath(model.fileName)),
+           Self.size(of: url) == model.sizeBytes {
+            return url
+        }
         guard let url = try? directory.appending(path: model.fileName),
-              let size = try? FileManager.default.attributesOfItem(atPath: url.path(percentEncoded: false))[.size] as? Int64
-        else { return false }
-        return size == model.sizeBytes
+              Self.size(of: url) == model.sizeBytes else { return nil }
+        return url
+    }
+
+    private static func size(of url: URL) -> Int64? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path(percentEncoded: false))[.size]) as? Int64
+    }
+
+    // MARK: - Apple-hosted asset packs
+
+    /// The pack a model ships in; the ids in AssetPacks/*.json.
+    static func packID(for model: ModelSpecValue) -> String {
+        model.required ? "models-core" : "models-answers"
+    }
+
+    /// Asks the system for a pack and waits until it is on the device. Throws
+    /// when this install has no Apple-hosted packs — a build from Xcode with
+    /// no mock server, for instance — which is the cue to offer importing.
+    func fetchPack(_ id: String) async throws {
+        let pack = try await AssetPackManager.shared.assetPack(withID: id)
+        try await AssetPackManager.shared.ensureLocalAvailability(of: pack)
+    }
+
+    func removePack(_ id: String) async {
+        try? await AssetPackManager.shared.remove(assetPackWithID: id)
     }
 
     func isWanted(_ model: ModelSpecValue) -> Bool {

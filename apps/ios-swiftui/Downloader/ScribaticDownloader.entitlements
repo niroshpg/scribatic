@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Shared with the downloader extension: Apple-hosted asset packs land in
+	     this group's container, where both can read them (ADR-011). -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.scribatic.app</string>
+	</array>
+</dict>
+</plist>

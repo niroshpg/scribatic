@@ -1,0 +1,10 @@
+{
+	"assetPackID": "models-answers",
+	"downloadPolicy": {
+		"onDemand": {}
+	},
+	"fileSelectors": [
+		{ "file": "insight-q4_k_m.gguf" }
+	],
+	"platforms": ["iOS"]
+}
