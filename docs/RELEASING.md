@@ -30,11 +30,13 @@ java -jar bundletool-all.jar install-apks --apks=/tmp/local.apks
 One-time setup in the Apple Developer portal, which the App Store Connect API
 cannot do:
 
-1. **Identifiers → App Groups → +**: `group.com.scribatic.app`.
+1. **Identifiers → App Groups → +**: `group.com.scribatic.app.assets`. (App
+   group ids are unique across every Apple team; `group.com.scribatic.app` was
+   not available.)
 2. **Identifiers → App IDs → +**: `com.scribatic.app.downloader` (the
    Background Assets downloader extension).
 3. On **both** `com.scribatic.app` and `com.scribatic.app.downloader`, enable
-   **App Groups** and assign `group.com.scribatic.app`.
+   **App Groups** and assign `group.com.scribatic.app.assets`.
 4. Delete the existing `com.scribatic.app AppStore` profile, so `fastlane`
    regenerates it with the new capability.
 

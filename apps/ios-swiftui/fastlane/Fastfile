@@ -3,7 +3,7 @@ default_platform(:ios)
 APP_ID  = "com.scribatic.app".freeze
 # The Background Assets downloader extension (ADR-011). Needs its own App ID
 # and profile, and both IDs need the App Groups capability with
-# group.com.scribatic.app assigned — see docs/RELEASING.md.
+# group.com.scribatic.app.assets assigned — see docs/RELEASING.md.
 DOWNLOADER_ID = "com.scribatic.app.downloader".freeze
 # App Store Connect's numeric id for the app, used to attach asset packs.
 ASC_APP_APPLE_ID = "6811857809".freeze
