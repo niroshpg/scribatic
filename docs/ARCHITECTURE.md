@@ -422,7 +422,7 @@ the app's behalf, which keeps the app itself free of network code:
 - **iOS: Apple-hosted Background Assets**, which need iOS 26 — so the
   deployment target is now 26.0. `models-core` has a prefetch policy (downloaded
   during installation), `models-answers` is on-demand. A `ManagedDownloaderExtension`
-  target does the fetching, sharing the group `group.com.scribatic.app.assets` with the
+  target does the fetching, sharing the group `group.com.scribatic.app` with the
   app, and packs are uploaded to App Store Connect separately from builds
   (`fastlane asset_packs`).
 

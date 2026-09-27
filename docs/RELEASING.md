@@ -2,6 +2,11 @@
 
 ## Android (internal testing)
 
+Store listing images (hi-res icon, feature graphic) are in
+`apps/android-compose/playstore/metadata/android/en-US/images/`, drawn from the
+launcher icon's geometry by `swift scripts/render_store_images.swift`. Upload
+them in Play Console → Main store listing; the `internal` lane does not.
+
 ```bash
 make fetch-deps
 cd apps/android-compose
@@ -30,13 +35,13 @@ java -jar bundletool-all.jar install-apks --apks=/tmp/local.apks
 One-time setup in the Apple Developer portal, which the App Store Connect API
 cannot do:
 
-1. **Identifiers → App Groups → +**: `group.com.scribatic.app.assets`. (App
-   group ids are unique across every Apple team; `group.com.scribatic.app` was
-   not available.)
+1. **Identifiers → App Groups → +**: `group.com.scribatic.app` (already
+   registered to this team — the portal reports an existing id as "not
+   available" rather than as already yours).
 2. **Identifiers → App IDs → +**: `com.scribatic.app.downloader` (the
    Background Assets downloader extension).
 3. On **both** `com.scribatic.app` and `com.scribatic.app.downloader`, enable
-   **App Groups** and assign `group.com.scribatic.app.assets`.
+   **App Groups** and assign `group.com.scribatic.app`.
 4. Delete the existing `com.scribatic.app AppStore` profile, so `fastlane`
    regenerates it with the new capability.
 

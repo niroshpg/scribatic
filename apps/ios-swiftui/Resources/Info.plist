@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>BAAppGroupID</key>
-	<string>group.com.scribatic.app.assets</string>
+	<string>group.com.scribatic.app</string>
 	<key>BAHasManagedAssetPacks</key>
 	<true/>
 	<key>BAUsesAppleHosting</key>

@@ -101,7 +101,7 @@ targets:
         # No NSAppTransportSecurity keys: the app makes no network requests.
         # Apple-hosted Background Assets (ADR-011): Apple serves the model
         # packs and the system downloads them into the shared app group.
-        BAAppGroupID: group.com.scribatic.app.assets
+        BAAppGroupID: group.com.scribatic.app
         BAHasManagedAssetPacks: true
         BAUsesAppleHosting: true
     settings:
