@@ -6,3 +6,8 @@
 }
 -keep class com.scribatic.app.engine.TranscriptionEngine { *; }
 -keep class com.scribatic.app.engine.TranscriptSegment { *; }
+
+# The Play asset-delivery ktx library references an annotation from
+# play-services-basement that is not shipped at runtime. It only guides the
+# compiler, so its absence is harmless; without this R8 fails the release build.
+-dontwarn com.google.android.gms.common.annotation.NoNullnessRewrite
