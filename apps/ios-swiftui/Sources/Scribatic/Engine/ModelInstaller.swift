@@ -21,9 +21,11 @@ struct ModelInstaller: Sendable {
         }
     }
 
-    /// Present with the catalog size. Size, not hash: hashing 1.4 GB on every
-    /// launch would cost seconds, and a file only gets here by passing the
-    /// hash check in `importFile`.
+    /// Present, the catalog size, and actually readable. Size, not hash:
+    /// hashing 1.4 GB on every launch would cost seconds, and a file only gets
+    /// here by passing the hash check in `importFile` or through the store.
+    /// Readable, not just present: a size comes from metadata alone, and a
+    /// model the setup screen called installed must be one the engine can open.
     func isInstalled(_ model: ModelSpecValue) -> Bool {
         fileURL(for: model) != nil
     }
@@ -32,19 +34,57 @@ struct ModelInstaller: Sendable {
     /// (ADR-011), then a file imported into Application Support. The engine
     /// maps whichever it gets, so a pack-delivered model is never copied.
     func fileURL(for model: ModelSpecValue) -> URL? {
-        // url(for:) throws when no downloaded pack holds the file (26.0+;
-        // assetPackIsAvailableLocally would need 26.4).
-        if let url = try? AssetPackManager.shared.url(for: FilePath(model.fileName)),
-           Self.size(of: url) == model.sizeBytes {
+        if let url = packFileURL(for: model), Self.check(url, model) == nil {
             return url
         }
         guard let url = try? directory.appending(path: model.fileName),
-              Self.size(of: url) == model.sizeBytes else { return nil }
+              Self.check(url, model) == nil else { return nil }
         return url
     }
 
-    private static func size(of url: URL) -> Int64? {
-        (try? FileManager.default.attributesOfItem(atPath: url.path(percentEncoded: false))[.size]) as? Int64
+    /// Each pack keeps its files in a directory named after the pack, and the
+    /// file URL is built from the directory's. iOS 26.0 has a known bug in
+    /// `AssetPackManager.url(for:)` for file paths (fixed in 26.1); asking for
+    /// the containing directory is Apple's documented workaround. It throws
+    /// when no downloaded pack holds the directory.
+    private func packFileURL(for model: ModelSpecValue) -> URL? {
+        guard let directory = try? AssetPackManager.shared.url(for: FilePath(Self.packID(for: model))) else {
+            return nil
+        }
+        return directory.appending(path: model.fileName)
+    }
+
+    /// Why `url` is not a usable copy of `model`, or nil if it is: the right
+    /// size, and opens for reading.
+    private static func check(_ url: URL, _ model: ModelSpecValue) -> String? {
+        let path = url.path(percentEncoded: false)
+        guard let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size]) as? Int64 else {
+            return "not found"
+        }
+        guard size == model.sizeBytes else { return "\(size) bytes, expected \(model.sizeBytes)" }
+        let fd = open(path, O_RDONLY)
+        guard fd >= 0 else { return "cannot be opened (\(String(cString: strerror(errno))))" }
+        close(fd)
+        return nil
+    }
+
+    /// One line per wanted model saying where it was looked for and what was
+    /// wrong, for the failure screen. Without it "model load failed" gives a
+    /// tester nothing to report.
+    func diagnosis() -> String {
+        catalog.filter(isWanted).map { model in
+            var line = "\(model.fileName): "
+            if let url = packFileURL(for: model) {
+                line += "pack \(Self.check(url, model) ?? "ok")"
+            } else {
+                line += "pack not on device"
+            }
+            if let url = try? directory.appending(path: model.fileName),
+               FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) {
+                line += "; imported \(Self.check(url, model) ?? "ok")"
+            }
+            return line
+        }.joined(separator: "\n") + "\niOS \(ProcessInfo.processInfo.operatingSystemVersionString)"
     }
 
     // MARK: - Apple-hosted asset packs
@@ -77,8 +117,9 @@ struct ModelInstaller: Sendable {
         }
     }
 
+    /// The required models are present; see `TranscriptionModel.modelsReady`.
     func isReady() -> Bool {
-        catalog.filter(isWanted).allSatisfy(isInstalled)
+        catalog.filter(\.required).allSatisfy(isInstalled)
     }
 
     enum Outcome: Sendable {

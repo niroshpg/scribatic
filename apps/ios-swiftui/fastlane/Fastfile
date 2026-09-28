@@ -133,20 +133,37 @@ platform :ios do
 
   desc "Package the model asset packs and upload them to App Store Connect"
   desc "Once per model change, not per build: packs are versioned separately (ADR-011)."
-  lane :asset_packs do
+  lane :asset_packs do |options|
     api_key = asc_api_key
     out = File.expand_path("../../../build/asset-packs", __dir__)
     models = File.expand_path("../../../models", __dir__)
+    staging = File.expand_path("../../../build/asset-pack-staging", __dir__)
+    files = {
+      "models-core" => %w[ggml-base.en.bin speaker-segmentation.onnx speaker-embedding.onnx embed-minilm-l6-v2.gguf],
+      "models-answers" => %w[insight-q4_k_m.gguf]
+    }
     FileUtils.mkdir_p(out)
-    %w[models-core models-answers].each do |pack|
+    # `fastlane asset_packs only:models-core` uploads one pack, for when disk
+    # space or bandwidth only allows one at a time.
+    files = files.select { |pack, _| pack == options[:only] } if options[:only]
+    files.each do |pack, names|
+      # Each pack's files live in a directory named after the pack: the app
+      # resolves them through that directory, the workaround for iOS 26.0's
+      # AssetPackManager.url(for:) bug with file paths. APFS clones, so
+      # staging costs no copy time and no space.
+      FileUtils.rm_rf("#{staging}/#{pack}")
+      FileUtils.mkdir_p("#{staging}/#{pack}")
+      names.each { |n| sh("cp -c #{File.join(models, n).shellescape} #{File.join(staging, pack, n).shellescape}") }
       manifest = File.expand_path("../AssetPacks/#{pack}.json", __dir__)
-      # ba-package resolves the manifest's file paths against the working
-      # directory, which is why it runs from models/.
-      sh("cd #{models.shellescape} && xcrun ba-package package #{manifest.shellescape} -o #{out}/#{pack}.aar")
+      # ba-package resolves the manifest's paths against the working directory.
+      sh("cd #{staging.shellescape} && xcrun ba-package package #{manifest.shellescape} -o #{out}/#{pack}.aar")
       sh("xcrun altool --upload-asset-pack #{out}/#{pack}.aar --apple-id #{ASC_APP_APPLE_ID} " \
          "--api-key #{ENV['ASC_KEY_ID']} --api-issuer #{ENV['ASC_ISSUER_ID']} " \
          "--p8-file-path #{File.expand_path('AuthKey.p8', __dir__).shellescape}")
+      # 1.5 GB of archives; the upload is done with them.
+      FileUtils.rm_f("#{out}/#{pack}.aar")
     end
+    FileUtils.rm_rf(staging)
   end
 
   desc "Build and upload to TestFlight for internal testers"

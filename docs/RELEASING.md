@@ -50,6 +50,8 @@ Then:
 ```bash
 cd apps/ios-swiftui
 bundle exec fastlane asset_packs    # only when the models change
+# or one at a time, when disk space is short (each archive is up to 1.3 GB):
+bundle exec fastlane asset_packs only:models-core
 bundle exec fastlane beta
 ```
 

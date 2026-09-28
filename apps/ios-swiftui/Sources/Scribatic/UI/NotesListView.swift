@@ -32,9 +32,13 @@ struct NotesListView: View {
                 Label("Engine stopped", systemImage: "exclamationmark.triangle")
             } description: {
                 Text(failure)
+                    .textSelection(.enabled)
             } actions: {
                 Button("Try again") {
                     Task { await model.prepare() }
+                }
+                Button("Copy details", systemImage: "doc.on.doc") {
+                    UIPasteboard.general.string = failure
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.scribaticAccent)

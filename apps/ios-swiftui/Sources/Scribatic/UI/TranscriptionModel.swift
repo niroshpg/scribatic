@@ -85,9 +85,11 @@ final class TranscriptionModel {
     /// Packs could not be fetched from Apple: offer importing instead.
     private(set) var packsUnavailable = false
 
-    /// Every model the user wants is present, so the engine can start.
+    /// The required models are present, so the engine can start. An optional
+    /// model that is still on its way does not hold the app back: it finishes
+    /// in the background and is picked up the next time the engine starts.
     var modelsReady: Bool {
-        !models.isEmpty && models.filter(\.wanted).allSatisfy(\.installed)
+        !models.isEmpty && models.filter(\.spec.required).allSatisfy(\.installed)
     }
 
     private let installer = ModelInstaller()
@@ -133,7 +135,11 @@ final class TranscriptionModel {
             await refreshNotes()
             phase = .ready
         } catch {
-            phase = .failed("\(error)")
+            // Say which model and why, not only the engine's status: this is
+            // what a tester copies into a report.
+            phase = .failed("\(error)\n\n\(installer.diagnosis())")
+            // Otherwise the `engine == nil` guard makes "Try again" a no-op.
+            self.engine = nil
         }
     }
 
@@ -168,7 +174,9 @@ final class TranscriptionModel {
         let missing = Set(models.filter { $0.wanted && !$0.installed }.map { ModelInstaller.packID(for: $0.spec) })
         guard !missing.isEmpty, packStatus == nil else { return }
 
-        for id in missing.sorted() {
+        // Required pack first: the app can start as soon as it lands, and the
+        // 1.2 GB optional one must not keep it waiting.
+        for id in missing.sorted(by: { a, _ in a == "models-core" }) {
             let progress = Task { [weak self] in
                 for await update in AssetPackManager.shared.statusUpdates(forAssetPackWithID: id) {
                     if case let .downloading(_, fraction) = update {
@@ -184,6 +192,10 @@ final class TranscriptionModel {
                 packsUnavailable = true
             }
             progress.cancel()
+            refreshModels()
+            // First run, blocked only on the required pack: carry on the
+            // moment it lands, without waiting for the optional one.
+            if engine == nil, modelsNeeded, modelsReady { await continueFromModels() }
         }
         packStatus = nil
         refreshModels()

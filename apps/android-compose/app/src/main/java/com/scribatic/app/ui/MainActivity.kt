@@ -141,6 +141,7 @@ private fun ScribaticApp(viewModel: TranscriptionViewModel = viewModel()) {
     Box(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
         when (val screen = state.screen) {
             Screen.Models -> ModelsScreen(state, viewModel)
+            Screen.ModelFiles -> ModelFilesScreen(state, viewModel)
             Screen.Notes -> NotesScreen(state, viewModel)
             Screen.Recorder -> RecorderScreen(state, viewModel)
             is Screen.Note -> NoteScreen(screen.id, state, viewModel)
@@ -219,11 +220,13 @@ private fun NoteRow(note: NoteSummary, onClick: () -> Unit) {
 
 @Composable
 private fun ModelsScreen(state: TranscriptUiState, viewModel: TranscriptionViewModel) {
+    // Installing from files is deliberately NOT on this screen: next to a
+    // download already in progress, a second way to get the same files reads
+    // as a choice the user has to make. It has its own screen, offered here
+    // only when Play can't provide the models, or chosen from the menu.
     val context = LocalContext.current
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        viewModel.importModels(uris)
-    }
     var confirmLeaveOut by remember { mutableStateOf<ModelRow?>(null) }
+    var menu by remember { mutableStateOf(false) }
     // Play's own "download over mobile data?" sheet; the result arrives as pack
     // state updates, so nothing is done with it here.
     val playConfirm = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) {}
@@ -232,15 +235,25 @@ private fun ModelsScreen(state: TranscriptUiState, viewModel: TranscriptionViewM
     Column(modifier = Modifier.fillMaxSize()) {
         LazyColumn(modifier = Modifier.weight(1f).padding(horizontal = 16.dp)) {
             item {
-                Text("Models", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(vertical = 16.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Models",
+                        style = MaterialTheme.typography.headlineMedium,
+                        modifier = Modifier.padding(vertical = 16.dp).weight(1f),
+                    )
+                    Box {
+                        TextButton(onClick = { menu = true }) { Text("⋮", style = MaterialTheme.typography.titleLarge) }
+                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(text = { Text("Install from files…") }, onClick = {
+                                menu = false
+                                viewModel.openModelFiles()
+                            })
+                        }
+                    }
+                }
                 Text(
-                    if (state.playDelivery) {
-                        "Scribatic runs entirely on this phone, so it needs these model files. Google Play " +
-                            "downloads them for you; the app itself never connects to the internet."
-                    } else {
-                        "Scribatic runs entirely on this phone, so it needs these model files. The app " +
-                            "never connects to the internet: download them in your browser, then import them here."
-                    },
+                    "Scribatic runs entirely on this phone, so it needs these models. Google Play " +
+                        "downloads them for you; the app itself never connects to the internet.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Text(
@@ -268,27 +281,18 @@ private fun ModelsScreen(state: TranscriptUiState, viewModel: TranscriptionViewM
                     Text("Continue in Google Play")
                 }
             }
-            state.importing?.let {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                    Text(it, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(start = 8.dp))
+            // The fallback, only once the store route has failed.
+            if (state.storeUnavailable) {
+                Text("Google Play download unavailable", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "The models couldn't be downloaded from Google Play on this phone. You can download " +
+                        "them yourself and install them from files instead.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                OutlinedButton(onClick = viewModel::openModelFiles, modifier = Modifier.fillMaxWidth()) {
+                    Text("Install from files")
                 }
             }
-            // A Play install gets its models from Play; the manual route is
-            // still there, for a device where Play can't deliver them.
-            if (!state.playDelivery) {
-                OutlinedButton(
-                    onClick = {
-                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(viewModel.modelDownloadPage())))
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("1. Download model files") }
-            }
-            OutlinedButton(
-                onClick = { picker.launch(arrayOf("*/*")) },
-                enabled = state.importing == null,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text(if (state.playDelivery) "Import files instead…" else "2. Import files…") }
             Button(
                 onClick = viewModel::continueFromModels,
                 enabled = state.modelsReady && state.importing == null,
@@ -344,6 +348,66 @@ private fun ModelRowView(row: ModelRow, onWantedChange: (Boolean) -> Unit) {
             Text("Required", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
         } else {
             Checkbox(checked = row.wanted, onCheckedChange = onWantedChange)
+        }
+    }
+}
+
+/**
+ * Installing the models from files: download them in a browser from the
+ * project's release page, then import them. A separate screen from the Play
+ * download on purpose — see [ModelsScreen].
+ */
+@Composable
+private fun ModelFilesScreen(state: TranscriptUiState, viewModel: TranscriptionViewModel) {
+    val context = LocalContext.current
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        viewModel.importModels(uris)
+    }
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(8.dp)) {
+            TextButton(onClick = { viewModel.back() }) { Text("Models") }
+            Text("Install from files", style = MaterialTheme.typography.titleMedium)
+        }
+        HorizontalDivider()
+        LazyColumn(modifier = Modifier.weight(1f).padding(horizontal = 16.dp)) {
+            item {
+                Text(
+                    "Download the model files in your browser, then import them here. Each file is " +
+                        "checked before it is used, so its name doesn't matter.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(vertical = 16.dp),
+                )
+                SectionHeader("Needed")
+            }
+            items(state.models.filter { it.wanted }, key = { it.spec.fileName }) { row ->
+                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                    Text(row.spec.fileName, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    Text(
+                        if (row.installed) "Installed" else Formatter.formatShortFileSize(context, row.spec.sizeBytes),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (row.installed) Color(0xFF2E9E5B) else MaterialTheme.colorScheme.outline,
+                    )
+                }
+            }
+        }
+        HorizontalDivider()
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            state.importing?.let {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Text(it, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(start = 8.dp))
+                }
+            }
+            OutlinedButton(
+                onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(viewModel.modelDownloadPage()))) },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("1. Download model files") }
+            Button(
+                onClick = { picker.launch(arrayOf("*/*")) },
+                enabled = state.importing == null,
+                colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("2. Import files…") }
         }
     }
 }

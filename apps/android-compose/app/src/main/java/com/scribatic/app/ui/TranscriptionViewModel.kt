@@ -37,6 +37,8 @@ enum class Phase { STARTING, READY, RECORDING, PAUSED, PROCESSING, FAILED }
 sealed interface Screen {
     /** First run, or any time a wanted model is missing; also reachable later. */
     data object Models : Screen
+    /** Installing from files: download page + import. Its own screen, see ModelsScreen. */
+    data object ModelFiles : Screen
     data object Notes : Screen
     data object Recorder : Screen
     data class Note(val id: Long) : Screen
@@ -70,9 +72,16 @@ data class TranscriptUiState(
     val playStatus: String? = null,
     /** Play is holding a download for the user's OK (mobile data, large size). */
     val playNeedsConfirmation: Boolean = false,
+    /** Whether Play has been asked yet; until then, don't offer a fallback. */
+    val playChecked: Boolean = false,
+    /** Play reported the required pack as failed or cancelled. */
+    val playFailed: Boolean = false,
 ) {
-    /** Every model the user wants is present, so the engine can start. */
-    val modelsReady: Boolean get() = models.isNotEmpty() && models.filter { it.wanted }.all { it.installed }
+    /** The store can't provide the models: offer installing from files. */
+    val storeUnavailable: Boolean get() = playChecked && (!playDelivery || playFailed)
+
+    /** The required models are present, so the engine can start; see ModelInstaller.isReady. */
+    val modelsReady: Boolean get() = models.isNotEmpty() && models.filter { it.spec.required }.all { it.installed }
 
     val label: String
         get() = when (phase) {
@@ -195,16 +204,23 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
      * and the setup screen offers importing instead.
      */
     private suspend fun startPlayDelivery() {
-        val states = packs.states() ?: return
-        _uiState.update { it.copy(playDelivery = true) }
+        val states = packs.states()
+        _uiState.update { it.copy(playDelivery = states != null, playChecked = true) }
+        if (states == null) return
 
         if (packUpdates == null) {
             packUpdates = viewModelScope.launch(Dispatchers.IO) {
                 packs.updates.collect { state ->
                     val waiting = state.status() == AssetPackStatus.WAITING_FOR_WIFI ||
                         state.status() == AssetPackStatus.REQUIRES_USER_CONFIRMATION
+                    val failed = state.name() == PlayModelPacks.CORE &&
+                        (state.status() == AssetPackStatus.FAILED || state.status() == AssetPackStatus.CANCELED)
                     _uiState.update {
-                        it.copy(playStatus = PlayModelPacks.describe(state), playNeedsConfirmation = waiting)
+                        it.copy(
+                            playStatus = PlayModelPacks.describe(state),
+                            playNeedsConfirmation = waiting,
+                            playFailed = it.playFailed || failed,
+                        )
                     }
                     if (state.status() == AssetPackStatus.COMPLETED) {
                         refreshModels()
@@ -228,6 +244,8 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
         val rows = installer.catalog.map { ModelRow(it, installer.isInstalled(it), installer.isWanted(it)) }
         _uiState.update { it.copy(models = rows) }
     }
+
+    fun openModelFiles() = _uiState.update { it.copy(screen = Screen.ModelFiles) }
 
     fun openModels() {
         _uiState.update { it.copy(screen = Screen.Models) }
@@ -268,7 +286,13 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
             }
             refreshModels()
             _uiState.update {
-                it.copy(importing = null, message = problems.takeIf { p -> p.isNotEmpty() }?.joinToString("\n"))
+                it.copy(
+                    importing = null,
+                    message = problems.takeIf { p -> p.isNotEmpty() }?.joinToString("\n"),
+                    // Everything needed is in: back to the setup screen, whose
+                    // Continue is now enabled.
+                    screen = if (it.modelsReady && it.screen == Screen.ModelFiles) Screen.Models else it.screen,
+                )
             }
         }
     }
@@ -298,6 +322,10 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
     fun back(): Boolean {
         val state = _uiState.value
         if (state.screen == Screen.Notes) return false
+        if (state.screen == Screen.ModelFiles) {
+            _uiState.update { it.copy(screen = Screen.Models) }
+            return true
+        }
         if (state.screen == Screen.Models) {
             // Nothing behind the setup screen until the engine is running.
             if (engine == null) return false

@@ -4,7 +4,11 @@
 		"onDemand": {}
 	},
 	"fileSelectors": [
-		{ "file": "insight-q4_k_m.gguf" }
+		{
+			"directory": "models-answers"
+		}
 	],
-	"platforms": ["iOS"]
+	"platforms": [
+		"iOS"
+	]
 }

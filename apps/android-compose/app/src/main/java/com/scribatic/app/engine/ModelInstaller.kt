@@ -47,8 +47,12 @@ class ModelInstaller(private val context: Context, private val packs: PlayModelP
         prefs.edit().putBoolean("want:${model.fileName}", wanted).apply()
     }
 
-    /** Every wanted model is present: the engine can start. */
-    fun isReady(): Boolean = catalog.filter(::isWanted).all(::isInstalled)
+    /**
+     * The required models are present: the engine can start. An optional model
+     * still downloading does not hold the app back; the engine picks it up the
+     * next time it starts.
+     */
+    fun isReady(): Boolean = catalog.filter { it.required }.all(::isInstalled)
 
     sealed interface Result {
         data class Installed(val model: ModelSpec) : Result
