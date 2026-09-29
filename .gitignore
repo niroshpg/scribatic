@@ -86,3 +86,9 @@ claude-notes/
 
 # Play asset packs are staged from models/ by `make stage-asset-packs`.
 apps/android-compose/models-*/src/
+
+# fastlane's gems install per app (`bundle config set --local path
+# vendor/bundle`), not into Homebrew's Ruby, whose plugin stubs are
+# read-only symlinks that make `bundle install` fail with EACCES.
+apps/*/vendor/bundle/
+apps/*/.bundle/
