@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The design-system `paper` token, for the window ground only. Compose
+         reads its colours from ui/theme/Color.kt. -->
+    <color name="paper">#F5F5F5</color>
+</resources>

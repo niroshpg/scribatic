@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.Scribatic" parent="android:Theme.Material.Light.NoActionBar" />
+    <!-- The window ground is `paper`, so the first frame before Compose draws
+         matches the app instead of flashing white or black. values-night
+         holds the dark ground. -->
+    <style name="Theme.Scribatic" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/paper</item>
+    </style>
 </resources>

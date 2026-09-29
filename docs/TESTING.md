@@ -247,7 +247,7 @@ at all.
 app through the whole speaker journey: record a conversation, stop, check that
 speakers were identified, name one, delete the recording and check the
 transcript survives, then share it without names. They were last run green on
-2026-09-26 against an iPhone 16 simulator (iOS 18.3) and an arm64 API 35
+2026-09-30 against an iPhone 17 simulator (iOS 26.5) and an arm64 API 35
 emulator with a targetSdk 36 build.
 
 A simulator has no conversation to hear, so **debug builds** can take their

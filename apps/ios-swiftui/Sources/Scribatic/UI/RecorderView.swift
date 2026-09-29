@@ -1,13 +1,8 @@
 import SwiftUI
 
-extension Color {
-    /// Atomic tangerine — the same accent the diagrams, the docs and
-    /// scribatic.com use, so the product reads as one thing.
-    static let scribaticAccent = Color(red: 235 / 255, green: 108 / 255, blue: 54 / 255)
-}
-
-/// The live recording screen. Pushed over the notes list; when the recording
-/// is stopped and saved, the model replaces it with the note it produced.
+/// The live recording screen. Pushed over the notes list, and capture starts
+/// as it appears, so one tap on the record button is enough. When the
+/// recording is stopped and saved, the model replaces it with the note.
 struct RecorderView: View {
     @Bindable var model: TranscriptionModel
 
@@ -24,7 +19,18 @@ struct RecorderView: View {
             // readable and the layout deliberate rather than stretched.
             .frame(maxWidth: 720)
             .frame(maxWidth: .infinity)
+            .background(Color.paper)
             .safeAreaInset(edge: .bottom) { transportBar }
+            .sensoryFeedback(trigger: model.phase) { _, phase in
+                switch phase {
+                case .recording, .processing: .impact(weight: .medium)
+                case .paused: .impact(weight: .light)
+                default: nil
+                }
+            }
+            .task {
+                if model.phase == .ready { await model.startRecording() }
+            }
     }
 
     private var isCapturing: Bool {
@@ -39,36 +45,32 @@ struct RecorderView: View {
     @ViewBuilder
     private var content: some View {
         if let failure = model.failureMessage {
-            ContentUnavailableView {
-                Label("Engine stopped", systemImage: "exclamationmark.triangle")
-            } description: {
-                Text(failure)
-            }
+            EmptyStateView(title: "Engine stopped", message: failure, failure: true)
         } else if model.segments.isEmpty {
-            ContentUnavailableView {
-                Label(model.phase == .ready ? "Ready to record" : "Listening",
-                      systemImage: "waveform")
-            } description: {
-                Text("Speech is transcribed on this device and appears here — nothing is uploaded, and the microphone is only open while you are recording. When you stop, Scribatic works out who said what.")
-            }
+            EmptyStateView(
+                title: model.phase == .ready ? "Ready to record" : "Listening",
+                message: "Speech is transcribed on this device and appears here — nothing is uploaded, and the microphone is only open while you are recording. When you stop, Scribatic works out who said what."
+            )
         } else {
             ScrollViewReader { proxy in
                 List(model.segments) { segment in
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(timestamp(segment.startMs))
+                            .font(.timestamp)
+                            .foregroundStyle(Color.inkSoft)
                         Text(segment.text)
-                            .font(.body)
+                            .font(.uiBody)
                             // An interim segment can still change; dimming it
                             // says so without needing a label to explain it.
-                            .foregroundStyle(segment.isFinal ? .primary : .secondary)
-
-                        Text(timestamp(segment.startMs))
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(segment.isFinal ? Color.ink : Color.inkMuted)
                     }
                     .padding(.vertical, 2)
+                    .listRowBackground(Color.paper)
+                    .listRowSeparator(.hidden)
                     .id(segment.id)
                 }
                 .listStyle(.plain)
+                .scrollContentBackground(.hidden)
                 // Follow the words as they arrive; otherwise the newest
                 // sentence lands below the fold after half a minute.
                 .onChange(of: model.segments.count) {
@@ -82,103 +84,70 @@ struct RecorderView: View {
 
     // MARK: - Transport
 
-    /// Record / pause / resume / stop, plus the status. Which controls appear
-    /// is driven entirely by the phase, so there is never a button that does
-    /// nothing in the current state.
+    /// Status and controls, in thumb reach. Which controls appear is driven
+    /// entirely by the phase, so there is never a button that does nothing in
+    /// the current state.
     private var transportBar: some View {
-        VStack(spacing: 12) {
-            Divider()
-
-            HStack(spacing: 10) {
-                if case .processing = model.phase {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Circle()
-                        .fill(statusColor)
-                        .frame(width: 10, height: 10)
-                }
-
-                Text(model.phase.label)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(model.phase.isFailure ? Color.primary : .secondary)
-
+        VStack(spacing: 16) {
+            HStack {
+                StatusPill(phase: model.phase)
                 Spacer()
-
                 if !model.segments.isEmpty {
-                    Text("^[\(model.segments.count) segment](inflect: true)")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.tertiary)
+                    Text(model.segments.count == 1 ? "1 line" : "\(model.segments.count) lines")
+                        .font(.timestamp)
+                        .foregroundStyle(Color.inkMuted)
                 }
             }
 
-            HStack(spacing: 16) {
-                switch model.phase {
-                case .starting, .failed, .processing:
-                    EmptyView()
+            switch model.phase {
+            case .starting, .failed, .processing:
+                EmptyView()
 
-                case .ready:
-                    recordButton
+            case .ready:
+                LabelledControl(label: "Record") {
+                    RecordButton(stop: false, label: "Record") {
+                        Task { await model.startRecording() }
+                    }
+                    .accessibilityHint("Opens the microphone and begins transcribing on this device")
+                }
 
-                case .recording:
-                    transportButton("Pause", systemImage: "pause.fill") { model.pauseRecording() }
-                    stopButton
-
-                case .paused:
-                    transportButton("Resume", systemImage: "play.fill") { model.resumeRecording() }
-                    stopButton
+            case .recording, .paused:
+                // Bottom-aligned, so the labels under the two sizes of button share a line.
+                HStack(alignment: .bottom) {
+                    Group {
+                        if model.phase == .recording {
+                            LabelledControl(label: "Pause") {
+                                RoundButton(systemImage: "pause.fill", label: "Pause") { model.pauseRecording() }
+                            }
+                        } else {
+                            LabelledControl(label: "Resume") {
+                                RoundButton(systemImage: "play.fill", label: "Resume") { model.resumeRecording() }
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    LabelledControl(label: "Stop") {
+                        RecordButton(stop: true, label: "Stop and save") { model.stopRecording() }
+                    }
+                    .frame(maxWidth: .infinity)
+                    Color.clear.frame(maxWidth: .infinity, maxHeight: 1)
                 }
             }
-            .frame(maxWidth: .infinity)
         }
         .padding(.horizontal, 20)
+        .padding(.top, 14)
         .padding(.bottom, 12)
         .frame(maxWidth: 720)
         .frame(maxWidth: .infinity)
-        .background(.bar)
-    }
-
-    private var recordButton: some View {
-        Button {
-            Task { await model.startRecording() }
-        } label: {
-            Label("Record", systemImage: "mic.fill")
-                .font(.headline)
-                .padding(.horizontal, 8)
-        }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.large)
-        .tint(.scribaticAccent)
-        .accessibilityHint("Opens the microphone and begins transcribing on this device")
-    }
-
-    private var stopButton: some View {
-        transportButton("Stop", systemImage: "stop.fill") { model.stopRecording() }
-    }
-
-    private func transportButton(
-        _ title: String,
-        systemImage: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .font(.headline)
-                .padding(.horizontal, 8)
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.large)
-    }
-
-    private var statusColor: Color {
-        switch model.phase {
-        case .starting, .paused:   return .yellow
-        case .ready, .processing:  return .secondary
-        case .recording:           return .scribaticAccent
-        case .failed:              return .red
+        .background {
+            // Down under the home indicator, so the panel reads as one surface.
+            UnevenRoundedRectangle(topLeadingRadius: 20, topTrailingRadius: 20)
+                .fill(Color.surfaceRaised)
+                .overlay {
+                    UnevenRoundedRectangle(topLeadingRadius: 20, topTrailingRadius: 20)
+                        .stroke(Color.line, lineWidth: 1)
+                }
+                .ignoresSafeArea(edges: .bottom)
         }
     }
-}
-
-func timestamp(_ ms: Int64) -> String {
-    Duration.milliseconds(ms).formatted(.time(pattern: .minuteSecond))
 }

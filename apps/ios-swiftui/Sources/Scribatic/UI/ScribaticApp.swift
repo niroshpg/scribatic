@@ -5,9 +5,16 @@ struct ScribaticApp: App {
     @Environment(\.scenePhase) private var scenePhase
     @State private var model = TranscriptionModel()
 
+    init() {
+        Appearance.apply()
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView(model: model)
+                // Once, here: system controls (toggles, links, progress, menus)
+                // pick up the brand colour without per-view tints.
+                .tint(Color.accentStrong)
         }
         .onChange(of: scenePhase) { _, phase in
             // Releasing the weight mapping on backgrounding keeps the process
@@ -50,6 +57,7 @@ struct RootView: View {
                         }
                     }
             }
+            .tint(Color.accentStrong)
         }
         .task { await model.prepare() }
         .alert("Something went wrong", isPresented: errorBinding) {

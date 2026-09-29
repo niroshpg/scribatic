@@ -8,12 +8,14 @@
 appId: com.scribatic.app
 ---
 - extendedWaitUntil:
-    visible: "New recording"
+    visible: "No notes yet|Today"
     timeout: 60000
-- tapOn:
-    text: "New recording"
-    index: 0
-- tapOn: "Record"
+- takeScreenshot: ios-01-list
+# One tap both opens the recorder and starts capture.
+- tapOn: "New recording"
+- extendedWaitUntil:
+    visible: "Stop and save"
+    timeout: 20000
 # The conversation plays in real time (about 41 s). The canteen line is the
 # second to last; the last one is still in the decode window until Stop
 # flushes it, so it is checked on the note instead.
@@ -25,9 +27,9 @@ appId: com.scribatic.app
     timeout: 10000
     optional: true
 - takeScreenshot: ios-02-recording
-- tapOn: "Stop"
+- tapOn: "Stop and save"
 - extendedWaitUntil:
-    visible: "Speakers"
+    visible: "SPEAKERS"
     timeout: 180000
 - assertVisible: "Speaker 1"
 - assertVisible: "Speaker 2"
@@ -36,7 +38,7 @@ appId: com.scribatic.app
     element: ".*Thursday.*"
 - takeScreenshot: ios-03b-note-end
 - scrollUntilVisible:
-    element: "Speakers"
+    element: "SPEAKERS"
     direction: UP
 
 # Name a speaker.
@@ -54,17 +56,24 @@ appId: com.scribatic.app
 - takeScreenshot: ios-05-confirm-delete
 - tapOn: "Delete recording"
 - extendedWaitUntil:
-    visible: ".*Deleted.*"
+    visible: ".*Audio deleted.*"
     timeout: 10000
 - assertVisible: "Daniel"
 - takeScreenshot: ios-06-recording-deleted
+- assertNotVisible: "Play recording"
 - scrollUntilVisible:           # the transcript itself is still all there
     element: ".*Thursday.*"
 - tapOn: "More"
-- assertNotVisible: "Play recording"
 - assertNotVisible: "Identify speakers again"
 - tapOn: "Delete note…"        # opens the menu's last item's dialog…
-- tapOn: "Cancel"              # …which is dismissed: this note is kept
+# …which is dismissed, so this note is kept. iOS 18 shows a Cancel button;
+# iOS 26 shows the dialog as a popover with none, dismissed by a tap outside.
+- tapOn:
+    text: "Cancel"
+    optional: true
+- tapOn:
+    point: "50%,92%"
+- assertNotVisible: "Delete note"
 
 # Share it, without names.
 - tapOn: "Share"

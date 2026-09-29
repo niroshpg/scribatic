@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- "Audio deleted": five waveform bars with a slash, the bars cut back
+     where the slash crosses them. Material Icons has no equivalent of the
+     SF Symbol waveform.slash. Tinted by the Icon composable. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:pathData="M4,10 V14 M8,12.54 V17 M12,4 V7.46 M12,16.54 V20 M16,8 V11.46 M20,11 V13 M3,3 L21,21"
+        android:strokeColor="#000000"
+        android:strokeWidth="2"
+        android:strokeLineCap="round" />
+</vector>

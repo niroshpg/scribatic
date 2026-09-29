@@ -64,6 +64,16 @@ targets:
           Scribatic transcribes audio entirely on this device. Recordings and
           transcripts never leave your iPhone.
         UIBackgroundModes: [audio]
+        # The design system's faces (SIL OFL, licences in Resources/Fonts).
+        # Resources are copied flat into the bundle, so bare file names.
+        UIAppFonts:
+          - InstrumentSerif-Regular.ttf
+          - InstrumentSerif-Italic.ttf
+          - Geist-Regular.ttf
+          - Geist-Medium.ttf
+          - Geist-SemiBold.ttf
+          - GeistMono-Regular.ttf
+          - GeistMono-Medium.ttf
         # Required for App Store validation: without a launch screen the bundle
         # is rejected as not supporting iPad multitasking. An empty UILaunchScreen
         # is the iOS 14+ form and gives a plain system-coloured launch — there is

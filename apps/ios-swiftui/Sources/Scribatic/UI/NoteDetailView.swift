@@ -2,8 +2,8 @@ import LinkPresentation
 import SwiftUI
 
 /// One saved note: its transcript by speaker, and everything that can be done
-/// with it — naming speakers, re-identifying them, sharing, and deleting the
-/// recording while keeping the words.
+/// with it — playing it, naming speakers, re-identifying them, sharing, and
+/// deleting the recording while keeping the words.
 struct NoteDetailView: View {
     @Bindable var model: TranscriptionModel
     let noteID: Int64
@@ -25,19 +25,20 @@ struct NoteDetailView: View {
             if let note {
                 transcript(note)
             } else if loaded {
-                ContentUnavailableView("Note not found", systemImage: "doc.questionmark")
+                EmptyStateView(title: "Note not found", message: "It may have been deleted.", failure: true)
             } else {
                 ProgressView()
             }
         }
-        .navigationTitle(note?.title ?? "")
         .navigationBarTitleDisplayMode(.inline)
         .frame(maxWidth: 720)
         .frame(maxWidth: .infinity)
+        .background(Color.paper)
         .toolbar { if let note { toolbar(note) } }
         .overlay {
             if isBusy {
                 ProgressView("Identifying speakers")
+                    .font(.uiLabel)
                     .padding(24)
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
             }
@@ -95,59 +96,115 @@ struct NoteDetailView: View {
 
     private func transcript(_ note: NoteDetailValue) -> some View {
         List {
-            Section {
-                LabeledContent("Length", value: timestamp(note.durationMs))
-                LabeledContent("Recording") {
-                    if note.audioURL != nil {
-                        Text("On this device")
-                    } else {
-                        Label("Deleted", systemImage: "waveform.slash")
-                    }
-                }
+            header(note)
+                .listRowBackground(Color.paper)
+                .listRowSeparator(.hidden)
+
+            if note.audioURL != nil {
+                player(note)
+                    .listRowBackground(Color.paper)
+                    .listRowSeparator(.hidden)
             }
 
+            // Headers here are ordinary rows, not pinned section headers: a
+            // pinned "Speakers" stays on screen after its chips have scrolled
+            // away, and sits over them under the toolbar.
             if !note.speakers.isEmpty {
-                Section {
-                    ForEach(note.speakers) { speaker in
-                        Button {
-                            newName = speaker.name
-                            renaming = speaker
-                        } label: {
-                            HStack {
-                                SpeakerDot(index: speaker.index)
-                                Text(speaker.displayName)
-                                    .foregroundStyle(.primary)
-                                Spacer()
-                                Image(systemName: "pencil")
-                                    .foregroundStyle(.secondary)
+                headerRow("Speakers")
+                VStack(alignment: .leading, spacing: 8) {
+                    FlowLayout(spacing: 8) {
+                        ForEach(note.speakers) { speaker in
+                            SpeakerChip(speaker: speaker) {
+                                newName = speaker.name
+                                renaming = speaker
                             }
                         }
-                        .accessibilityHint("Gives this speaker a name")
                     }
-                } header: {
-                    Text("Speakers")
-                } footer: {
                     Text("Tap to name. If one person was split into two, give both the same name.")
+                        .font(.uiCaption)
+                        .foregroundStyle(Color.inkMuted)
                 }
+                .listRowBackground(Color.paper)
+                .listRowSeparator(.hidden)
             }
 
-            Section("Transcript") {
-                if note.segments.isEmpty {
-                    Text("Nothing was transcribed.")
-                        .foregroundStyle(.secondary)
+            headerRow("Transcript")
+            if note.segments.isEmpty {
+                Text("Nothing was transcribed.")
+                    .font(.uiBodySmall)
+                    .foregroundStyle(Color.inkMuted)
+                    .listRowBackground(Color.paper)
+                    .listRowSeparator(.hidden)
+            }
+            ForEach(Array(note.segments.enumerated()), id: \.offset) { index, segment in
+                SegmentRow(
+                    segment: segment,
+                    speakerName: note.speakerName(segment.speaker),
+                    // A name only where the speaker changes: a run of
+                    // one person's sentences reads as a paragraph.
+                    showsSpeaker: index == 0 || note.segments[index - 1].speaker != segment.speaker
+                )
+                .listRowBackground(Color.paper)
+                .listRowSeparator(.hidden)
+            }
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+    }
+
+    private func headerRow(_ title: String) -> some View {
+        SectionHeader(title: title)
+            .padding(.top, 14)
+            .listRowBackground(Color.paper)
+            .listRowSeparator(.hidden)
+    }
+
+    private func header(_ note: NoteDetailValue) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(note.title)
+                .font(.displayMedium)
+                .foregroundStyle(Color.ink)
+                .accessibilityAddTraits(.isHeader)
+            FlowLayout(spacing: 12) {
+                MetaChip(systemImage: "clock", text: timestamp(note.durationMs))
+                if note.speakerCount > 0 {
+                    MetaChip(systemImage: "person.2", text: note.speakerCount == 1 ? "1 speaker" : "\(note.speakerCount) speakers")
                 }
-                ForEach(Array(note.segments.enumerated()), id: \.offset) { index, segment in
-                    SegmentRow(
-                        segment: segment,
-                        speakerName: note.speakerName(segment.speaker),
-                        // A name only where the speaker changes: a run of
-                        // one person's sentences reads as a paragraph.
-                        showsSpeaker: index == 0 || note.segments[index - 1].speaker != segment.speaker
-                    )
+                if note.audioURL != nil {
+                    MetaBadge(systemImage: "lock.shield", text: "On this device")
+                } else {
+                    MetaChip(systemImage: "waveform.slash", text: "Audio deleted")
                 }
             }
         }
-        .listStyle(.insetGrouped)
+        .padding(.vertical, 4)
+    }
+
+    /// Playback where it can be seen, rather than inside the More menu.
+    private func player(_ note: NoteDetailValue) -> some View {
+        let playing = model.playingNoteID == note.id
+        return HStack(spacing: 12) {
+            Button {
+                if playing { model.stopPlayback() } else { model.play(note) }
+            } label: {
+                Image(systemName: playing ? "stop.fill" : "play.fill")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(Color.paper)
+                    .frame(width: 44, height: 44)
+                    .background(Color.ink, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(playing ? "Stop playback" : "Play recording")
+            VStack(alignment: .leading, spacing: 2) {
+                Text(playing ? "Playing" : "Play recording").font(.uiLabel).foregroundStyle(Color.ink)
+                Text(timestamp(note.durationMs)).font(.timestamp).foregroundStyle(Color.inkMuted)
+            }
+            .accessibilityHidden(true)
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color.surfaceRaised, in: RoundedRectangle(cornerRadius: 12))
     }
 
     // MARK: - Toolbar
@@ -171,12 +228,6 @@ struct NoteDetailView: View {
 
             Menu {
                 if note.audioURL != nil {
-                    if model.playingNoteID == note.id {
-                        Button("Stop playback", systemImage: "stop.fill") { model.stopPlayback() }
-                    } else {
-                        Button("Play recording", systemImage: "play.fill") { model.play(note) }
-                    }
-
                     if model.canIdentifySpeakers {
                         Menu {
                             Button("Work it out") { reidentify(0) }
@@ -186,9 +237,8 @@ struct NoteDetailView: View {
                         } label: {
                             Label("Identify speakers again", systemImage: "person.2.wave.2")
                         }
+                        Divider()
                     }
-
-                    Divider()
                     Button("Delete recording…", systemImage: "waveform.slash", role: .destructive) {
                         confirmDeleteRecording = true
                     }
@@ -214,23 +264,25 @@ private struct SegmentRow: View {
     let showsSpeaker: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 2) {
             if showsSpeaker {
-                HStack(spacing: 6) {
+                HStack(spacing: 8) {
                     if let speakerName {
                         SpeakerDot(index: segment.speaker)
                         Text(speakerName)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(SpeakerDot.color(segment.speaker))
+                            .font(.uiLabel.weight(.semibold))
+                            .foregroundStyle(Color.speaker(segment.speaker))
                     }
                     Spacer()
                     Text(timestamp(segment.startMs))
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.tertiary)
+                        .font(.timestamp)
+                        .foregroundStyle(Color.inkSoft)
                 }
+                .padding(.top, 6)
             }
             Text(segment.text)
-                .font(.body)
+                .font(.uiBody)
+                .foregroundStyle(Color.ink)
                 .textSelection(.enabled)
         }
         .padding(.vertical, 2)
@@ -243,16 +295,10 @@ private struct SegmentRow: View {
 struct SpeakerDot: View {
     let index: Int32
 
-    static func color(_ index: Int32) -> Color {
-        let palette: [Color] = [.scribaticAccent, .blue, .green, .purple, .pink, .teal, .indigo, .brown]
-        guard index >= 0 else { return .secondary }
-        return palette[Int(index) % palette.count]
-    }
-
     var body: some View {
         Circle()
-            .fill(Self.color(index))
-            .frame(width: 10, height: 10)
+            .fill(Color.speaker(index))
+            .frame(width: 8, height: 8)
             .accessibilityHidden(true)
     }
 }

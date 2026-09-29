@@ -21,12 +21,13 @@ struct ModelSetupView: View {
         List {
             Section {
                 Text("Scribatic runs entirely on this device, so it needs these models. The App Store downloads them for you; the app itself never connects to the internet.")
-                    .font(.subheadline)
-            } footer: {
-                Text("Selected: \(ByteCountFormatter.string(fromByteCount: selectedBytes, countStyle: .file))")
+                    .font(.uiBodySmall)
+                    .foregroundStyle(Color.inkMuted)
+                    .listRowBackground(Color.paper)
+                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 4, trailing: 0))
             }
 
-            Section("Models") {
+            Section {
                 ForEach(model.models) { row in
                     ModelRowView(row: row) { wanted in
                         if wanted {
@@ -35,29 +36,36 @@ struct ModelSetupView: View {
                             confirmLeaveOut = row
                         }
                     }
+                    .listRowBackground(Color.surfaceRaised)
                 }
-            }
-
-            if let status = model.packStatus {
-                Section {
-                    HStack {
-                        ProgressView()
-                        Text(status).font(.subheadline)
-                    }
-                }
+            } header: {
+                SectionHeader(
+                    title: "Models",
+                    trailing: "\(ByteCountFormatter.string(fromByteCount: selectedBytes, countStyle: .file)) selected"
+                )
             }
 
             // The fallback, only once the store route has failed.
             if model.packsUnavailable {
                 Section {
-                    Button("Install from files", systemImage: "folder") { showingManual = true }
+                    Button {
+                        showingManual = true
+                    } label: {
+                        Label("Install from files", systemImage: "folder")
+                    }
+                    .listRowBackground(Color.surfaceRaised)
                 } header: {
-                    Text("App Store download unavailable")
+                    SectionHeader(title: "App Store download unavailable")
                 } footer: {
                     Text("The models couldn't be downloaded from the App Store on this device. You can download them yourself and install them from files instead.")
+                        .font(.uiCaption)
+                        .foregroundStyle(Color.inkMuted)
                 }
             }
         }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(Color.paper)
         .navigationTitle("Models")
         .toolbar {
             ToolbarItem(placement: .secondaryAction) {
@@ -69,18 +77,29 @@ struct ModelSetupView: View {
         }
         .frame(maxWidth: 720)
         .frame(maxWidth: .infinity)
+        .background(Color.paper)
         .safeAreaInset(edge: .bottom) {
-            Button {
-                Task { await model.continueFromModels() }
-            } label: {
-                Text("Continue").font(.headline).frame(maxWidth: .infinity)
+            VStack(spacing: 10) {
+                if let status = model.packStatus {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small).tint(Color.accent)
+                        Text(status).font(.uiLabel).foregroundStyle(Color.inkMuted)
+                        Spacer()
+                    }
+                }
+                Button {
+                    Task { await model.continueFromModels() }
+                } label: {
+                    Text("Continue").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(PrimaryButtonStyle())
+                .disabled(!model.modelsReady || model.importing != nil)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .tint(.scribaticAccent)
-            .disabled(!model.modelsReady || model.importing != nil)
-            .padding()
-            .background(.bar)
+            .padding(16)
+            .frame(maxWidth: 720)
+            .frame(maxWidth: .infinity)
+            .background(Color.paper)
+            .overlay(alignment: .top) { Rectangle().fill(Color.line).frame(height: 1) }
         }
         .alert("Leave out \(confirmLeaveOut?.spec.title.lowercased() ?? "")?",
                isPresented: Binding(get: { confirmLeaveOut != nil }, set: { if !$0 { confirmLeaveOut = nil } }),
@@ -101,28 +120,36 @@ private struct ModelRowView: View {
     let onWantedChange: (Bool) -> Void
 
     var body: some View {
-        HStack(alignment: .top) {
+        HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(row.spec.title).font(.headline)
-                Text(row.spec.purpose).font(.subheadline).foregroundStyle(.secondary)
-                Text("\(row.spec.fileName) · \(ByteCountFormatter.string(fromByteCount: row.spec.sizeBytes, countStyle: .file)) · \(status)")
-                    .font(.caption)
-                    .foregroundStyle(row.installed ? Color.green : Color.secondary)
+                Text(row.spec.title).font(.uiTitle).foregroundStyle(Color.ink)
+                Text(row.spec.purpose).font(.uiBodySmall).foregroundStyle(Color.inkMuted)
+                Text("\(row.spec.fileName) · \(ByteCountFormatter.string(fromByteCount: row.spec.sizeBytes, countStyle: .file))")
+                    .font(.timestamp)
+                    .foregroundStyle(Color.inkSoft)
+                status.padding(.top, 2)
             }
             Spacer()
             if row.spec.required {
-                Text("Required").font(.caption).foregroundStyle(.secondary)
+                Label("Required", systemImage: "lock.fill")
+                    .font(.uiLabel)
+                    .foregroundStyle(Color.inkMuted)
+                    .labelStyle(.titleAndIcon)
             } else {
                 Toggle("Use \(row.spec.title)", isOn: Binding(get: { row.wanted }, set: onWantedChange))
                     .labelsHidden()
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 4)
     }
 
-    private var status: String {
-        if row.installed { return "Installed" }
-        return row.wanted ? "Needed" : "Left out"
+    @ViewBuilder
+    private var status: some View {
+        if row.installed {
+            MetaChip(systemImage: "checkmark.circle.fill", text: "Installed", color: .success)
+        } else {
+            Text(row.wanted ? "Needed" : "Left out").font(.uiLabel).foregroundStyle(Color.inkMuted)
+        }
     }
 }
 
@@ -135,43 +162,69 @@ struct ModelFilesView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var picking = false
 
+    private var needed: [TranscriptionModel.ModelRow] { model.models.filter(\.wanted) }
+
     var body: some View {
         List {
             Section {
                 Text("Download the model files in Safari, then import them here. Each file is checked before it is used, so its name doesn't matter.")
-                    .font(.subheadline)
+                    .font(.uiBodySmall)
+                    .foregroundStyle(Color.inkMuted)
+                    .listRowBackground(Color.paper)
+                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 4, trailing: 0))
             }
 
-            Section("Needed") {
-                ForEach(model.models.filter(\.wanted)) { row in
-                    LabeledContent(row.spec.fileName) {
-                        Text(row.installed
-                             ? "Installed"
-                             : ByteCountFormatter.string(fromByteCount: row.spec.sizeBytes, countStyle: .file))
-                            .foregroundStyle(row.installed ? Color.green : Color.secondary)
-                    }
-                    .font(.subheadline)
+            // Numbered because it is a real sequence: download, then import.
+            Section {
+                StepRow(number: 1, title: "Download model files", help: "Opens the release page in Safari.",
+                        systemImage: "safari", tint: .inkMuted) {
+                    if let url = ModelSpecValue.downloadPage() { openURL(url) }
                 }
+                .listRowBackground(Color.surfaceRaised)
+                StepRow(number: 2, title: "Import files…", help: "Pick the downloaded files from Files.",
+                        systemImage: "square.and.arrow.down", tint: .accentStrong) {
+                    picking = true
+                }
+                .disabled(model.importing != nil)
+                .listRowBackground(Color.surfaceRaised)
+                if let importing = model.importing {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small).tint(Color.accent)
+                        Text(importing).font(.uiLabel).foregroundStyle(Color.inkMuted)
+                    }
+                    .listRowBackground(Color.surfaceRaised)
+                }
+            } header: {
+                SectionHeader(title: "Steps")
             }
 
             Section {
-                Button("1. Download model files", systemImage: "safari") {
-                    if let url = ModelSpecValue.downloadPage() { openURL(url) }
-                }
-                Button("2. Import files…", systemImage: "square.and.arrow.down") { picking = true }
-                    .disabled(model.importing != nil)
-                if let importing = model.importing {
+                ForEach(needed) { row in
                     HStack {
-                        ProgressView()
-                        Text(importing).font(.subheadline)
+                        Text(row.spec.fileName).font(.timestamp).foregroundStyle(Color.ink)
+                        Spacer()
+                        if row.installed {
+                            MetaChip(systemImage: "checkmark.circle.fill", text: "Installed", color: .success)
+                        } else {
+                            Text(ByteCountFormatter.string(fromByteCount: row.spec.sizeBytes, countStyle: .file))
+                                .font(.timestamp)
+                                .foregroundStyle(Color.inkMuted)
+                        }
                     }
+                    .listRowBackground(Color.surfaceRaised)
                 }
+            } header: {
+                SectionHeader(title: "Needed", trailing: "\(needed.filter(\.installed).count) of \(needed.count) installed")
             }
         }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(Color.paper)
         .navigationTitle("Install from files")
         .navigationBarTitleDisplayMode(.inline)
         .frame(maxWidth: 720)
         .frame(maxWidth: .infinity)
+        .background(Color.paper)
         .fileImporter(isPresented: $picking, allowedContentTypes: [.data], allowsMultipleSelection: true) { result in
             if case let .success(urls) = result {
                 Task {
@@ -182,5 +235,34 @@ struct ModelFilesView: View {
                 }
             }
         }
+    }
+}
+
+private struct StepRow: View {
+    let number: Int
+    let title: String
+    let help: String
+    let systemImage: String
+    let tint: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                Text("\(number)")
+                    .font(.timestamp)
+                    .foregroundStyle(Color.inkMuted)
+                    .frame(width: 28, height: 28)
+                    .background(Color.fillSecondary, in: Circle())
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.uiTitle).foregroundStyle(Color.ink)
+                    Text(help).font(.uiCaption).foregroundStyle(Color.inkMuted)
+                }
+                Spacer()
+                Image(systemName: systemImage).font(.system(size: 18, weight: .medium)).foregroundStyle(tint)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }

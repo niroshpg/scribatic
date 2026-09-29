@@ -13,14 +13,20 @@ appId: com.scribatic.app
       enabled: true
     timeout: 90000
 # The button enables once the models are warm; a tap a moment earlier is
-# ignored, so keep tapping until the recorder is open.
+# ignored, so keep tapping until recording has started. One tap both opens
+# the recorder and starts capture.
 - repeat:
     while:
-      notVisible: "Record"
+      notVisible: "Stop and save"
     times: 10
     commands:
-      - tapOn: "New recording"
-- tapOn: "Record"
+      - tapOn:
+          text: "New recording"
+          optional: true
+      - extendedWaitUntil:
+          visible: "Stop and save"
+          timeout: 5000
+          optional: true
 # The conversation plays in real time (about 41 s). The canteen line is the
 # second to last; the last one waits in the decode window until Stop.
 - extendedWaitUntil:
@@ -31,7 +37,7 @@ appId: com.scribatic.app
     timeout: 10000
     optional: true
 - takeScreenshot: android-02-recording
-- tapOn: "Stop"
+- tapOn: "Stop and save"
 # Diarization takes ~30 s on an arm64 emulator — but several minutes while
 # the progress indicator is on screen, because the emulator renders it on the
 # host CPU. Hence the generous timeout; a phone's GPU makes it free.
@@ -65,7 +71,7 @@ appId: com.scribatic.app
 - takeScreenshot: android-05-confirm-delete
 - tapOn: "Delete recording"
 - extendedWaitUntil:
-    visible: ".*Recording deleted.*"
+    visible: ".*Audio deleted.*"
     timeout: 10000
 - assertVisible: "Daniel"
 - takeScreenshot: android-06-recording-deleted
