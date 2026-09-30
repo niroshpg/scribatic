@@ -64,13 +64,15 @@ post-upload check runs before Apple has registered the images.
 
 ## Before submitting for review
 
-- [ ] **Version number.** The editable App Store version is **1.0**; the builds are
-      **0.1.0** (`CFBundleShortVersionString` in `project.yml`). Apple attaches a build
-      only to a version with the same number: bump the app to 1.0, or rename the App Store
-      version to 0.1.0.
-- [ ] **Privacy manifest.** Add `PrivacyInfo.xcprivacy` to the app with the reasons for
-      the required-reason APIs it uses (for example `UserDefaults`, reason `CA92.1`).
-      Uploads to TestFlight pass without it; App Review rejects.
-- [ ] **App Privacy label** in App Store Connect: *Data Not Collected*.
+- [x] **Version number.** The App Store version was renamed from 1.0 to **0.1.0** to
+      match `CFBundleShortVersionString` in `project.yml`; Apple attaches a build only to
+      a version with the same number. Keep the two in step for every release.
+- [x] **Privacy manifest.** `Resources/PrivacyInfo.xcprivacy`: no tracking, no data
+      collected, and reasons for UserDefaults (`CA92.1`), file metadata (`C617.1`, SQLite
+      and model sizes) and disk space (`E174.1`, SQLite's `statfs`). Builds from before
+      it was added (202609291529 and earlier) don't carry it: submit a newer one.
+- [ ] **App Privacy label** in App Store Connect: *Data Not Collected*. Not in the API
+      that the fastlane key uses, so set it on the website: App Privacy → Get Started →
+      "No, we do not collect data from this app" → Save → Publish.
 - [ ] **Age rating** questionnaire in App Store Connect.
 - [ ] Pick a build, then submit with manual release selected.
