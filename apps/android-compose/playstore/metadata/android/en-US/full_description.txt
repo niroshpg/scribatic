@@ -1,0 +1,25 @@
+Scribatic records a conversation and turns it into a transcript on your phone, marking who said what. Nothing is uploaded: the app has no internet permission, so it has no way to send your recordings anywhere.
+
+What you can do
+• Record a meeting, lecture, interview or call, and watch the words appear as people speak
+• Pause and resume, then stop to save the note
+• See each speaker's words marked in their own colour, identified automatically when you stop
+• Give speakers names, only on this device and only for that note
+• Play a recording back, or identify the speakers again if the count was off
+• Share a transcript to any app you choose, with or without the speakers' names
+• Delete the audio and keep the words, or delete a note entirely
+• Find notes grouped by day, with light and dark themes
+
+Private by design
+• Transcription and speaker identification run on the phone's own processor
+• The app has no INTERNET permission, so recordings, transcripts and names cannot leave the phone through it
+• No account, no sign-in, no ads, no analytics, no crash reporting
+• When you share a transcript, it goes only to the app you pick, and that app sends it
+
+Good to know
+• Transcription is in English
+• The speech models download once through Google Play when you first open the app: about 205 MB is required, plus an optional 1.3 GB model you can leave out on the setup screen
+• Accuracy depends on the recording: clear speech close to the phone works best
+• Needs a 64-bit (ARM64) Android phone running Android 9 or later
+
+Scribatic is built on the open-source whisper.cpp and sherpa-onnx projects. Its source code is public at github.com/niroshpg/scribatic.

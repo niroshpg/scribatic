@@ -1,0 +1,7 @@
+A new look and a new icon.
+• One tap on the record button starts recording
+• Notes are grouped by day, and each shows its first words
+• Play a recording from the top of the note
+• Tap a speaker's name to rename them
+• Icons on every control, and a dark theme
+• Swipe a note to delete it, with a confirmation first

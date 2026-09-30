@@ -89,6 +89,24 @@ platform :android do
     )
   end
 
+  desc "Push the store listing: text, icon, feature graphic and screenshots"
+  desc "Never uploads a bundle and never changes a release. See docs/play-store-listing.md."
+  lane :listing do
+    name, code = app_version
+    upload_to_play_store(
+      metadata_path: "playstore/metadata/android",
+      # supply attaches listing edits to a release, so it needs one that exists.
+      track: "internal",
+      version_code: code.to_i,
+      skip_upload_aab: true,
+      skip_upload_apk: true,
+      skip_upload_changelogs: true,
+      # Replace the screenshots rather than add to them, so a rerun can't duplicate.
+      sync_image_upload: false
+    )
+    UI.success("Listing for #{name} (#{code}) uploaded")
+  end
+
   desc "Promote the latest Internal build to Production (staged 20%)"
   lane :promote do
     upload_to_play_store(
