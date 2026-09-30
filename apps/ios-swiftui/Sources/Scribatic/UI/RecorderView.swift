@@ -64,12 +64,13 @@ struct RecorderView: View {
                             // says so without needing a label to explain it.
                             .foregroundStyle(segment.isFinal ? Color.ink : Color.inkMuted)
                     }
-                    .padding(.vertical, 2)
+                    .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
                     .listRowBackground(Color.paper)
                     .listRowSeparator(.hidden)
                     .id(segment.id)
                 }
                 .listStyle(.plain)
+                .environment(\.defaultMinListRowHeight, 0)
                 .scrollContentBackground(.hidden)
                 // Follow the words as they arrive; otherwise the newest
                 // sentence lands below the fold after half a minute.

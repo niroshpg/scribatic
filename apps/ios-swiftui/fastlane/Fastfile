@@ -166,6 +166,35 @@ platform :ios do
     FileUtils.rm_rf(staging)
   end
 
+  desc "Push the App Store listing: text, categories, review notes and screenshots"
+  desc "Never uploads a binary and never submits. See docs/app-store-listing.md."
+  lane :listing do
+    # Anchored to this file: a lane runs in fastlane/, so a relative
+    # "fastlane/metadata" would resolve to fastlane/fastlane/metadata.
+    metadata = File.expand_path("metadata", __dir__)
+    screenshots = File.expand_path("screenshots", __dir__)
+    # App Store Connect refuses to create the review record without a contact
+    # phone number, and only says "No data". These files are gitignored.
+    phone = File.join(metadata, "review_information", "phone_number.txt")
+    UI.user_error!("#{phone} is missing: App Review needs a contact phone number.") unless File.exist?(phone)
+
+    upload_to_app_store(
+      api_key: asc_api_key,
+      app_identifier: APP_ID,
+      metadata_path: metadata,
+      screenshots_path: screenshots,
+      skip_binary_upload: true,
+      # Clears the store's screenshot sets first, so a rerun replaces rather
+      # than adds. deliver's post-upload check can still double-upload if it
+      # runs before Apple registers the images: check the counts afterwards.
+      overwrite_screenshots: true,
+      # Submitting is a deliberate decision, never a side effect of a typo fix.
+      submit_for_review: false,
+      force: true,
+      precheck_include_in_app_purchases: false
+    )
+  end
+
   desc "Build and upload to TestFlight for internal testers"
   desc "Internal testing needs no Beta App Review; builds appear within minutes."
   lane :beta do

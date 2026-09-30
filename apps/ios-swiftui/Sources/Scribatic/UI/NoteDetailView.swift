@@ -144,11 +144,15 @@ struct NoteDetailView: View {
                     // one person's sentences reads as a paragraph.
                     showsSpeaker: index == 0 || note.segments[index - 1].speaker != segment.speaker
                 )
+                // Tight rows: one person's run of sentences should read as a
+                // paragraph, not as a list of separate items.
+                .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 16))
                 .listRowBackground(Color.paper)
                 .listRowSeparator(.hidden)
             }
         }
         .listStyle(.plain)
+        .environment(\.defaultMinListRowHeight, 0)
         .scrollContentBackground(.hidden)
     }
 
@@ -278,14 +282,13 @@ private struct SegmentRow: View {
                         .font(.timestamp)
                         .foregroundStyle(Color.inkSoft)
                 }
-                .padding(.top, 6)
+                .padding(.top, 12)
             }
             Text(segment.text)
                 .font(.uiBody)
                 .foregroundStyle(Color.ink)
                 .textSelection(.enabled)
         }
-        .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
     }
 }

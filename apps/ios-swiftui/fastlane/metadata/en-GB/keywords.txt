@@ -1,0 +1,1 @@
+transcription,transcribe,recorder,meeting,lecture,interview,speaker,notes,offline,dictation,voice

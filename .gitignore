@@ -92,3 +92,10 @@ apps/android-compose/models-*/src/
 # read-only symlinks that make `bundle install` fail with EACCES.
 apps/*/vendor/bundle/
 apps/*/.bundle/
+
+# App Review contact details: personal, and this repository is public. Kept
+# locally beside the listing; review_information/notes.txt is committed.
+apps/ios-swiftui/fastlane/metadata/review_information/first_name.txt
+apps/ios-swiftui/fastlane/metadata/review_information/last_name.txt
+apps/ios-swiftui/fastlane/metadata/review_information/email_address.txt
+apps/ios-swiftui/fastlane/metadata/review_information/phone_number.txt
