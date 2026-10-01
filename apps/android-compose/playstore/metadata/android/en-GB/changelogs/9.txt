@@ -1,0 +1,4 @@
+Transcribe in about 99 languages.
+• Scribatic recognises the language from the first words, or choose one in Models > Spoken language
+• Each note shows the language it was transcribed in
+• Long pauses no longer fill the transcript with stray words
