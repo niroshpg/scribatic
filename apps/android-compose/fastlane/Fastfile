@@ -31,6 +31,10 @@ platform :android do
   desc "Build a signed release AAB and archive its R8 mapping"
   lane :build do
     require_signing!
+    # Store builds include Scribatic Pro, cloned into pro/ (see ext/Extensions.kt).
+    # Without it the bundle would be the free build, published by mistake.
+    UI.user_error!("pro/ is missing: clone niroshpg/scribatic-pro into it before a store build") unless
+      File.directory?("../../../pro/android")
 
     # The model files go into the Play asset packs (ADR-011). They are not in
     # git, so a bundle built without staging would ship empty packs.
