@@ -99,3 +99,6 @@ apps/ios-swiftui/fastlane/metadata/review_information/first_name.txt
 apps/ios-swiftui/fastlane/metadata/review_information/last_name.txt
 apps/ios-swiftui/fastlane/metadata/review_information/email_address.txt
 apps/ios-swiftui/fastlane/metadata/review_information/phone_number.txt
+
+# Scribatic Pro: the private repo is cloned here; never part of this one.
+/pro/

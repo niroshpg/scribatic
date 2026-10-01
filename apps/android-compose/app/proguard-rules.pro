@@ -7,6 +7,10 @@
 -keep class com.scribatic.app.engine.TranscriptionEngine { *; }
 -keep class com.scribatic.app.engine.TranscriptSegment { *; }
 
+# Add-ons are found by name (ext/Extensions.kt), so their entry point keeps it.
+# Harmless when the pro tree is absent and the class does not exist.
+-keep class com.scribatic.pro.ProExtensions { public static *; }
+
 # The Play asset-delivery ktx library references an annotation from
 # play-services-basement that is not shipped at runtime. It only guides the
 # compiler, so its absence is harmless; without this R8 fails the release build.

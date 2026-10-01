@@ -91,6 +91,7 @@ struct NoteDetail {
     std::int32_t                   speakerCount = 0;
     std::vector<SpeakerLabel>      speakers;
     std::vector<TranscriptSegment> segments;
+    std::string                    summary;     ///< empty until one is written
 };
 
 /// A row returned from the SQLite-VSS approximate nearest-neighbour index.

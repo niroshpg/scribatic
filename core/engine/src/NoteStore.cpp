@@ -256,6 +256,7 @@ NoteDetail NoteStore::loadLocked(std::int64_t noteId, const std::string& recordi
         detail.audioPath = recordingsDirectory + "/" + note.text(4);
     }
     detail.speakerCount = note.int32(5);
+    if (!note.isNull(6)) { detail.summary = note.text(6); }
 
     Statement speakers(db_, q::kLoadSpeakers);
     speakers.bind(1, noteId);
@@ -354,6 +355,21 @@ EngineStatus NoteStore::renameSpeaker(std::int64_t noteId, std::int32_t speaker,
     // Names are part of the indexed text, so a rename re-indexes the note.
     if (rebuildChunks(noteId) != EngineStatus::Ok) { return EngineStatus::DatabaseFailed; }
     return transaction.commit() ? EngineStatus::Ok : EngineStatus::DatabaseFailed;
+}
+
+EngineStatus NoteStore::setSummary(std::int64_t noteId, const std::string& summary) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (db_ == nullptr) { return EngineStatus::DatabaseFailed; }
+    Statement update(db_, q::kSetSummary);
+    if (summary.empty()) {
+        update.bindNull(1);
+    } else {
+        update.bind(1, summary);
+    }
+    if (!update.bind(2, noteId).run() || sqlite3_changes(db_) != 1) {
+        return EngineStatus::DatabaseFailed;
+    }
+    return EngineStatus::Ok;
 }
 
 std::string NoteStore::audioName(std::int64_t noteId) {

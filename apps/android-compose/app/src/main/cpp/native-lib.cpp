@@ -177,14 +177,6 @@ Java_com_scribatic_app_engine_TranscriptionEngine_nativeDrainSegments(
     return toStringArray(env, flat);
 }
 
-JNIEXPORT jstring JNICALL
-Java_com_scribatic_app_engine_TranscriptionEngine_nativeSummarize(
-        JNIEnv* env, jobject /*thiz*/, jlong handle, jstring transcript) {
-    if (handle == 0) { return env->NewStringUTF(""); }
-    const std::string result = asEngine(handle)->summarize(toStdString(env, transcript));
-    return env->NewStringUTF(result.c_str());
-}
-
 JNIEXPORT jint JNICALL
 Java_com_scribatic_app_engine_TranscriptionEngine_nativeIndexNote(
         JNIEnv* env, jobject /*thiz*/, jlong handle, jlong noteId, jstring text) {
@@ -265,7 +257,7 @@ Java_com_scribatic_app_engine_TranscriptionEngine_nativeListNotes(
 
 /// [id, title, createdAt, durationMs, audioPath, speakerCount,
 ///  nSpeakers, (index, name, displayName) * nSpeakers,
-///  nSegments, (startMs, endMs, text, conf, speaker) * nSegments].
+///  nSegments, (startMs, endMs, text, conf, speaker) * nSegments, summary].
 /// Empty when there is no such note.
 JNIEXPORT jobjectArray JNICALL
 Java_com_scribatic_app_engine_TranscriptionEngine_nativeLoadNote(
@@ -288,6 +280,7 @@ Java_com_scribatic_app_engine_TranscriptionEngine_nativeLoadNote(
             }
             flat.push_back(std::to_string(note.segments.size()));
             for (const auto& segment : note.segments) { appendSegment(flat, segment); }
+            flat.push_back(note.summary);
         }
     }
     return toStringArray(env, flat);

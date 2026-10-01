@@ -40,7 +40,6 @@ public:
     EngineStatus flush() noexcept override;
 
     std::vector<TranscriptSegment> drainSegments() override;
-    std::string                    summarize(const std::string& transcript) override;
 
     EngineStatus              indexNote(std::int64_t noteId, const std::string& text) override;
     std::vector<RetrievalHit> search(const std::string& query, std::int32_t topK) override;
@@ -49,6 +48,7 @@ public:
     EngineStatus identifySpeakers(std::int64_t noteId, std::int32_t expectedSpeakers) override;
     EngineStatus renameSpeaker(std::int64_t noteId, std::int32_t speaker,
                                const std::string& name) override;
+    EngineStatus setNoteSummary(std::int64_t noteId, const std::string& summary) override;
 
     std::vector<NoteSummary> listNotes() override;
     NoteDetail               loadNote(std::int64_t noteId) override;
@@ -100,7 +100,6 @@ private:
     EngineConfig    config_;
     AudioRingBuffer ring_{kRingCapacity};
     ModelResidency  whisperWeights_;
-    ModelResidency  llamaWeights_;
 
     std::atomic<EngineState> state_{EngineState::Idle};
     std::atomic<bool>        cancelRequested_{false};

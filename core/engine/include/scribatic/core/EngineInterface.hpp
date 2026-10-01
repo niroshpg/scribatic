@@ -124,9 +124,11 @@ public:
     /// Swift importer on the happy path (no callbacks, no escaping pointers).
     [[nodiscard]] virtual std::vector<TranscriptSegment> drainSegments() = 0;
 
-    /// Runs the llama.cpp decode loop over `transcript` using the local insight
-    /// prompt template. Blocking, cancellable via `requestCancel()`.
-    [[nodiscard]] virtual std::string summarize(const std::string& transcript) = 0;
+    /// Stores a summary of the note, replacing any earlier one; empty clears
+    /// it. The core writes none itself: summaries come from an add-on, which
+    /// reads the transcript through exportTranscript() and saves the result
+    /// here, so it is loaded and deleted with the note like the rest of it.
+    virtual EngineStatus setNoteSummary(std::int64_t noteId, const std::string& summary) = 0;
 
     // -- Retrieval-augmented history ---------------------------------------
     /// Embeds `text` and upserts it into the SQLite-VSS index.

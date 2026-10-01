@@ -134,6 +134,10 @@ android {
     sourceSets {
         getByName("main") {
             jniLibs.srcDir(rootProject.file("../../core/engine/vendor-bin/sherpa-onnx/android"))
+            // The paid features: a private repository cloned into pro/ at the
+            // repository root. Absent, the app builds without them (ext/Extensions.kt).
+            val pro = rootProject.file("../../pro/android/kotlin")
+            if (pro.isDirectory) java.srcDir(pro)
         }
     }
 }

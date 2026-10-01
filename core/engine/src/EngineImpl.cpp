@@ -138,11 +138,6 @@ EngineStatus EngineImpl::warmUp() noexcept {
             state_.store(EngineState::Faulted, std::memory_order_release);
             return EngineStatus::ModelLoadFailed;
         }
-        // Optional: mapped when present, and its absence is not a failure.
-        if (fileExists(config_.llamaModelPath) && !llamaWeights_.map(config_.llamaModelPath)) {
-            state_.store(EngineState::Faulted, std::memory_order_release);
-            return EngineStatus::ModelLoadFailed;
-        }
     }
 
     if (whisper_ == nullptr) {
@@ -193,8 +188,6 @@ EngineStatus EngineImpl::warmUp() noexcept {
         }
     }
 
-    // TODO(backend): llama_model_load_from_buffer() over llamaWeights_.
-
     state_.store(EngineState::Listening, std::memory_order_release);
     return EngineStatus::Ok;
 }
@@ -212,8 +205,6 @@ void EngineImpl::hibernate() noexcept {
     // on the heap, so they go too. They reload on the next identification.
     diarizer_.unload();
 
-    // TODO(backend): free the llama context here, before its weights unmap.
-    llamaWeights_.unmap();
     whisperWeights_.unmap();
 
     window_.clear();
@@ -487,12 +478,8 @@ std::vector<TranscriptSegment> EngineImpl::drainSegments() {
     return out;
 }
 
-std::string EngineImpl::summarize(const std::string& transcript) {
-    state_.store(EngineState::Summarizing, std::memory_order_release);
-    // TODO(backend): llama_decode() loop over the local insight prompt template.
-    (void)transcript;
-    state_.store(EngineState::Listening, std::memory_order_release);
-    return {};
+EngineStatus EngineImpl::setNoteSummary(std::int64_t noteId, const std::string& summary) {
+    return store_.setSummary(noteId, summary);
 }
 
 // -- Retrieval ----------------------------------------------------------------

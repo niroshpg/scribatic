@@ -85,6 +85,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.scribatic.app.R
 import com.scribatic.app.engine.NoteDetail
+import com.scribatic.app.ext.Extensions
 import com.scribatic.app.engine.NoteSummary
 import com.scribatic.app.engine.SpeakerLabel
 import com.scribatic.app.engine.TranscriptSegment
@@ -898,6 +899,7 @@ private fun NoteScreen(id: Long, state: TranscriptUiState, viewModel: Transcript
                     playing = state.playingNoteId == id,
                     onPlay = { if (state.playingNoteId == id) viewModel.stopPlayback() else viewModel.play(note) },
                     onRename = { renaming = it },
+                    extras = { Extensions.noteSections.forEach { section -> section.Content(note, viewModel) } },
                 )
             }
         }
@@ -991,6 +993,8 @@ private fun NoteBody(
     playing: Boolean,
     onPlay: () -> Unit,
     onRename: (SpeakerLabel) -> Unit,
+    /** Add-on sections (ext/Extensions.kt), under the player. */
+    extras: @Composable () -> Unit,
 ) {
     val c = Scribatic.colors
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
@@ -1050,6 +1054,10 @@ private fun NoteBody(
                     }
                 }
             }
+        }
+
+        if (Extensions.noteSections.isNotEmpty()) {
+            item { extras() }
         }
 
         if (note.speakers.isNotEmpty()) {

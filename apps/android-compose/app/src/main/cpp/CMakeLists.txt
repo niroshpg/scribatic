@@ -43,6 +43,12 @@ target_link_libraries(scribatic_engine
         log
 )
 
+# Pro features (private repo cloned into pro/, see core/engine/CMakeLists.txt)
+# add their JNI entry points to this library when present.
+if (EXISTS ${SCRIBATIC_ROOT}/pro/android/pro.cmake)
+    include(${SCRIBATIC_ROOT}/pro/android/pro.cmake)
+endif()
+
 # --- ARM64 / NEON optimisation profile ---------------------------------------
 if (ANDROID_ABI STREQUAL "arm64-v8a")
     target_compile_options(scribatic_core PRIVATE

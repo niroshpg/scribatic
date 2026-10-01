@@ -137,3 +137,13 @@ if (NOT CMAKE_CROSSCOMPILING)
         target_compile_options(${test_target} PRIVATE -UNDEBUG)
     endforeach()
 endif()
+
+# --- Scribatic Pro ----------------------------------------------------------
+# The paid features live in a private repository, cloned into pro/ at the
+# root of this one (gitignored). Without it — any public checkout — the app
+# builds and runs without them; nothing here depends on their being there.
+set(SCRIBATIC_PRO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../pro CACHE PATH "Private pro tree, if cloned")
+if (EXISTS ${SCRIBATIC_PRO_DIR}/core/CMakeLists.txt)
+    add_subdirectory(${SCRIBATIC_PRO_DIR}/core ${CMAKE_BINARY_DIR}/scribatic_pro)
+    message(STATUS "scribatic: pro features included from ${SCRIBATIC_PRO_DIR}")
+endif()

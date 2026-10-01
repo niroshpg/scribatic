@@ -76,6 +76,8 @@ data class NoteDetail(
     val speakerCount: Int,
     val speakers: List<SpeakerLabel>,
     val segments: List<TranscriptSegment>,
+    /** Empty unless an add-on has written one. */
+    val summary: String = "",
 ) {
     fun speakerName(index: Int): String? = speakers.firstOrNull { it.index == index }?.displayName
 }

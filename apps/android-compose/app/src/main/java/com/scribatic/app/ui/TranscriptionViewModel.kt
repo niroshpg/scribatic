@@ -19,6 +19,8 @@ import com.scribatic.app.engine.NoteSummary
 import com.scribatic.app.engine.TranscriptSegment
 import com.scribatic.app.engine.TranscriptionEngine
 import com.scribatic.app.engine.TranscriptionService
+import com.scribatic.app.ext.ExtensionHost
+import com.scribatic.app.ext.Extensions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
@@ -103,10 +105,10 @@ data class TranscriptUiState(
  * This is an [AndroidViewModel] because the engine's paths are resolved against
  * `filesDir`, which needs a Context.
  */
-class TranscriptionViewModel(application: Application) : AndroidViewModel(application) {
+class TranscriptionViewModel(application: Application) : AndroidViewModel(application), ExtensionHost {
 
     private val _uiState = MutableStateFlow(TranscriptUiState())
-    val uiState: StateFlow<TranscriptUiState> = _uiState.asStateFlow()
+    override val uiState: StateFlow<TranscriptUiState> = _uiState.asStateFlow()
 
     private var engine: TranscriptionEngine? = null
     private var streamJob: Job? = null
@@ -247,7 +249,10 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
     }
 
     private fun refreshModels() {
-        val rows = installer.catalog.map { ModelRow(it, installer.isInstalled(it), installer.isWanted(it)) }
+        // An optional model is offered only when an add-on that uses it is installed.
+        val rows = installer.catalog
+            .filter { it.required || it.fileName in Extensions.optionalModels }
+            .map { ModelRow(it, installer.isInstalled(it), installer.isWanted(it)) }
         _uiState.update { it.copy(models = rows) }
     }
 
@@ -528,7 +533,20 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
-    private fun reloadNote(id: Long) {
+    // -- Add-ons (ext/Extensions.kt) --------------------------------------------------
+
+    override fun engine(): TranscriptionEngine? = engine
+
+    override fun modelFile(fileName: String): File? =
+        installer.catalog.firstOrNull { it.fileName == fileName }?.let(installer::fileFor)
+
+    override fun requestModel(fileName: String) {
+        installer.catalog.firstOrNull { it.fileName == fileName }?.let { setModelWanted(it, true) }
+    }
+
+    override fun showMessage(text: String) = _uiState.update { it.copy(message = text) }
+
+    override fun reloadNote(id: Long) {
         val engine = engine ?: return
         viewModelScope.launch(Dispatchers.Default) {
             val note = engine.loadNote(id)

@@ -59,6 +59,9 @@ public:
     EngineStatus renameSpeaker(std::int64_t noteId, std::int32_t speaker,
                                const std::string& name);
 
+    /// Empty stores NULL: the note has no summary.
+    EngineStatus setSummary(std::int64_t noteId, const std::string& summary);
+
     /// File name of the note's recording; empty if it has none.
     [[nodiscard]] std::string audioName(std::int64_t noteId);
     EngineStatus clearAudio(std::int64_t noteId);

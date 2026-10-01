@@ -10,7 +10,11 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import java.io.Closeable
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.concurrent.read
+import kotlin.concurrent.write
 
 /**
  * Kotlin façade over `libscribatic_engine.so`.
@@ -44,6 +48,10 @@ class TranscriptionEngine private constructor(
 ) : Closeable {
 
     private val nativeHandle = AtomicLong(handle)
+
+    /** Held for reading by [withHandle], for writing by [close]. */
+    private val handleLock = ReentrantReadWriteLock()
+    private val closeListeners = CopyOnWriteArrayList<(Long) -> Unit>()
 
     companion object {
         init {
@@ -128,10 +136,6 @@ class TranscriptionEngine private constructor(
         decodeSegments(nativeDrainSegments(nativeHandle.get()))
     }
 
-    suspend fun summarize(transcript: String): String = withContext(dispatcher) {
-        nativeSummarize(nativeHandle.get(), transcript)
-    }
-
     // -- Sessions --------------------------------------------------------------
 
     /** Before capture starts: resets the ring buffer and the timeline. */
@@ -201,9 +205,28 @@ class TranscriptionEngine private constructor(
     /** Thread-safe; observed by the ggml abort callback between graph nodes. */
     fun requestCancel() = nativeRequestCancel(nativeHandle.get())
 
+    // -- Add-ons -------------------------------------------------------------------
+
+    /**
+     * For add-ons with native code of their own that calls into this engine.
+     * The handle stays valid for the whole of [block], however long it runs:
+     * [close] waits for it. It is 0 once the engine is closed.
+     */
+    fun <T> withHandle(block: (Long) -> T): T = handleLock.read { block(nativeHandle.get()) }
+
+    /**
+     * Told the handle just before the engine is destroyed, so that an add-on
+     * can stop a long [withHandle] call that [close] would otherwise wait out.
+     */
+    fun addCloseListener(listener: (Long) -> Unit) {
+        closeListeners += listener
+    }
+
     override fun close() {
         val handle = nativeHandle.getAndSet(0L)
-        if (handle != 0L) nativeDestroy(handle)
+        if (handle == 0L) return
+        closeListeners.forEach { runCatching { it(handle) } }
+        handleLock.write { nativeDestroy(handle) }
     }
 
     /** Flat [startMs, endMs, text, confidence, speaker] tuples -> typed segments. */
@@ -238,6 +261,7 @@ class TranscriptionEngine private constructor(
         val segments = (0 until segmentCount).map {
             segmentOf(f, at).also { at += SEGMENT_FIELDS }
         }
+        val summary = f.getOrNull(at).orEmpty()
         return NoteDetail(
             id = f[0].toLong(),
             title = f[1],
@@ -247,6 +271,7 @@ class TranscriptionEngine private constructor(
             speakerCount = f[5].toInt(),
             speakers = speakers,
             segments = segments,
+            summary = summary,
         )
     }
 
@@ -271,7 +296,6 @@ class TranscriptionEngine private constructor(
     private external fun nativeRunTranscriptionPass(handle: Long): Int
     private external fun nativeFlush(handle: Long): Int
     private external fun nativeDrainSegments(handle: Long): Array<String>
-    private external fun nativeSummarize(handle: Long, transcript: String): String
     private external fun nativeIndexNote(handle: Long, noteId: Long, text: String): Int
     private external fun nativeRequestCancel(handle: Long)
     private external fun nativeBeginSession(handle: Long)

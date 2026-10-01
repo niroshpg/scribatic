@@ -140,11 +140,6 @@ actor ScribaticEngine {
         }
     }
 
-    func summarize(transcript: String) async throws -> String {
-        try Task.checkCancellation()
-        return String(engine.summarize(std.string(transcript)))
-    }
-
     // MARK: - Notes
 
     func listNotes() -> [NoteSummaryValue] {
