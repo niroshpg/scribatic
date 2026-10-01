@@ -106,8 +106,12 @@ struct ModelInstaller: Sendable {
         try? await AssetPackManager.shared.remove(assetPackWithID: id)
     }
 
+    /// Required models always are. An optional one only once the user asks
+    /// for it — it is never downloaded just because the app was installed.
+    /// One already on the device (an earlier build fetched it unasked) counts
+    /// as wanted until switched off.
     func isWanted(_ model: ModelSpecValue) -> Bool {
-        model.required || (UserDefaults.standard.object(forKey: "want:\(model.fileName)") as? Bool ?? true)
+        model.required || (UserDefaults.standard.object(forKey: "want:\(model.fileName)") as? Bool ?? isInstalled(model))
     }
 
     func setWanted(_ model: ModelSpecValue, _ wanted: Bool) {

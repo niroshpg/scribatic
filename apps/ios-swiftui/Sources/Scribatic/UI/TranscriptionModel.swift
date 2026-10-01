@@ -84,6 +84,8 @@ final class TranscriptionModel {
     private(set) var packStatus: String?
     /// Packs could not be fetched from Apple: offer importing instead.
     private(set) var packsUnavailable = false
+    /// The pack download under way, so switching its model off can stop it.
+    @ObservationIgnored private var packDownload: (id: String, task: Task<Void, Error>)?
 
     /// The required models are present, so the engine can start. An optional
     /// model that is still on its way does not hold the app back: it finishes
@@ -161,6 +163,8 @@ final class TranscriptionModel {
             if wanted {
                 await fetchWantedPacks()
             } else {
+                // Removing alone leaves a download that is under way running.
+                if let download = packDownload, download.id == pack { download.task.cancel() }
                 await installer.removePack(pack)
                 refreshModels()
             }
@@ -186,11 +190,17 @@ final class TranscriptionModel {
                 }
             }
             packStatus = "Downloading models"
+            let installer = self.installer
+            let download = Task { try await installer.fetchPack(id) }
+            packDownload = (id, download)
             do {
-                try await installer.fetchPack(id)
+                try await download.value
             } catch {
-                packsUnavailable = true
+                // A cancel is the user leaving the model out, not a sign that
+                // this install can't get packs.
+                if !download.isCancelled { packsUnavailable = true }
             }
+            packDownload = nil
             progress.cancel()
             refreshModels()
             // First run, blocked only on the required pack: carry on the

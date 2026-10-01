@@ -62,6 +62,11 @@ class PlayModelPacks(context: Context) {
         for (pack in packs) runCatching { manager.requestFetch(listOf(pack)) }
     }
 
+    /** Stops a download in progress. [remove] then frees whatever arrived. */
+    fun cancel(pack: String) {
+        runCatching { manager.cancel(listOf(pack)) }
+    }
+
     /** Frees a pack's space; used when the instruct model is left out. */
     suspend fun remove(pack: String) {
         runCatching { manager.requestRemovePack(pack) }

@@ -268,7 +268,14 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
             installer.setWanted(spec, wanted)
             if (!wanted) installer.remove(spec)
             if (_uiState.value.playDelivery) {
-                if (wanted) packs.fetch(listOf(packs.packFor(spec))) else packs.remove(packs.packFor(spec))
+                val pack = packs.packFor(spec)
+                if (wanted) {
+                    packs.fetch(listOf(pack))
+                } else {
+                    // Removing alone leaves a download that is under way running.
+                    packs.cancel(pack)
+                    packs.remove(pack)
+                }
             }
             refreshModels()
         }

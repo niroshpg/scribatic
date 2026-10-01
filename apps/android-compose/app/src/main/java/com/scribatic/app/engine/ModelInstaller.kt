@@ -39,9 +39,14 @@ class ModelInstaller(private val context: Context, private val packs: PlayModelP
         packs.fileFor(model)
             ?: File(filesDir, model.fileName).takeIf { it.isFile && it.length() == model.sizeBytes }
 
-    /** Whether the user wants an optional model. Required ones always are. */
+    /**
+     * Whether the user wants an optional model. Required ones always are; an
+     * optional one only once the user asks for it — it is never downloaded
+     * just because the app was installed. One already on the device (an
+     * earlier build fetched it unasked) counts as wanted until switched off.
+     */
     fun isWanted(model: ModelSpec): Boolean =
-        model.required || prefs.getBoolean("want:${model.fileName}", true)
+        model.required || prefs.getBoolean("want:${model.fileName}", isInstalled(model))
 
     fun setWanted(model: ModelSpec, wanted: Boolean) {
         prefs.edit().putBoolean("want:${model.fileName}", wanted).apply()

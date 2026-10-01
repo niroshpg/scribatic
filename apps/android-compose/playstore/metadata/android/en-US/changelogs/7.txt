@@ -1,0 +1,3 @@
+Scribatic now downloads only what it needs to transcribe, about 200 MB.
+• The optional answers and summaries model is no longer downloaded unless you switch it on in Models
+• Switching it off now stops a download that is under way
