@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cctype>
+#include <cmath>
 #include <cstring>
 #include <cstdint>
 #include <cstdio>
@@ -153,11 +154,56 @@ void testSpeechBecomesTranscript() {
     scribaticEngineRelease(engine);
 }
 
+/// Whisper invents words for silence ("you"); the engine must not pass them on.
+void testSilenceProducesNothing() {
+    const std::string whisperModel = repoPath("models/ggml-base.en.bin");
+    const std::string llamaModel   = repoPath("models/insight-q4_k_m.gguf");
+    if (!fileExists(whisperModel)) {
+        std::printf("  skip: no weights at %s (run `make fetch-models`)\n", whisperModel.c_str());
+        return;
+    }
+
+    EngineConfig config;
+    config.whisperModelPath = whisperModel;
+    config.llamaModelPath   = llamaModel;
+    config.databasePath     = "/tmp/scribatic-test-silence.sqlite";
+    config.threadCount      = 4;
+    config.useMemoryMapping = true;
+
+    EngineStatus status = EngineStatus::Ok;
+    EngineInterface* engine = EngineInterface::create(config, &status);
+    if (engine == nullptr) {
+        std::printf("  skip: engine not created (status %d)\n", static_cast<int>(status));
+        return;
+    }
+    assert(engine->warmUp() == EngineStatus::Ok && "weights should load");
+
+    // 12 s of a near-silent room: a faint hum well under -60 dBFS, which is
+    // more like a real microphone than digital zeros.
+    constexpr std::size_t kChunk = 1600;
+    std::vector<float> chunk(kChunk);
+    for (std::size_t i = 0; i < kChunk; ++i) {
+        chunk[i] = 0.0003F * static_cast<float>(std::sin(static_cast<double>(i) * 0.1));
+    }
+    for (int k = 0; k < 120; ++k) {
+        engine->pushAudio(chunk.data(), kChunk);
+        engine->runTranscriptionPass();
+    }
+    engine->flush();
+
+    const auto segments = engine->drainSegments();
+    for (const auto& segment : segments) { std::printf("  unexpected: %s\n", segment.text.c_str()); }
+    assert(segments.empty() && "silence should produce no segments");
+
+    scribaticEngineRelease(engine);
+}
+
 } // namespace
 
 int main() {
     std::printf("TranscriptionTests\n");
     testSpeechBecomesTranscript();
+    testSilenceProducesNothing();
     std::printf("ok\n");
     return 0;
 }

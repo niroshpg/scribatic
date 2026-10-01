@@ -18,6 +18,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cerrno>
 #include <cstdlib>
 #include <unordered_set>
@@ -323,6 +324,16 @@ EngineStatus EngineImpl::decodeWindow(bool flushing) noexcept {
 
     const std::size_t minimum = flushing ? kMinFlushSamples : kWindowSamples;
     if (window_.size() < minimum) {
+        return EngineStatus::Ok;
+    }
+
+    // Silence is skipped, not decoded (see kSilenceRms). Its time still
+    // counts, so what is said after it keeps its place in the recording.
+    double energy = 0.0;
+    for (const float sample : window_) { energy += static_cast<double>(sample) * sample; }
+    if (std::sqrt(energy / static_cast<double>(window_.size())) < kSilenceRms) {
+        decodedSamples_ += static_cast<std::int64_t>(window_.size());
+        window_.clear();
         return EngineStatus::Ok;
     }
 

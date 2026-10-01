@@ -79,6 +79,13 @@ private:
     /// is noise or a stray syllable.
     static constexpr std::size_t kMinFlushSamples = kSampleRate / 2;
 
+    /// RMS below which a window is treated as silence and never decoded:
+    /// -60 dBFS, far under any speech a phone microphone picks up. Whisper
+    /// does not return nothing for silence — it tends to invent a short
+    /// phrase ("you", "Thank you."), and a quiet room would fill the
+    /// transcript with them.
+    static constexpr float kSilenceRms = 0.001F;
+
     /// Runs whisper over `window_`, appending finalised segments. Caller must
     /// not hold segmentMutex_.
     EngineStatus decodeWindow(bool flushing) noexcept;
