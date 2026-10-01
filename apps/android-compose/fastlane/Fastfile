@@ -29,19 +29,24 @@ platform :android do
   end
 
   desc "Build a signed release AAB and archive its R8 mapping"
-  lane :build do
+  lane :build do |options|
     require_signing!
-    # Store builds include Scribatic Pro, cloned into pro/ (see ext/Extensions.kt).
-    # Without it the bundle would be the free build, published by mistake.
-    UI.user_error!("pro/ is missing: clone niroshpg/scribatic-pro into it before a store build") unless
-      File.directory?("../../../pro/android")
+    # edition:pro (default) includes Scribatic Pro, cloned into pro/ (see
+    # ext/Extensions.kt); edition:free leaves it out even when it is there.
+    # Pro without pro/ would quietly produce the free build, so that fails.
+    edition = (options[:edition] || "pro").to_s
+    UI.user_error!("edition must be pro or free, not #{edition}") unless %w[pro free].include?(edition)
+    if edition == "pro" && !File.directory?("../../../pro/android")
+      UI.user_error!("pro/ is missing: clone niroshpg/scribatic-pro into it, or build edition:free")
+    end
+    UI.important("Building the #{edition} edition")
 
     # The model files go into the Play asset packs (ADR-011). They are not in
     # git, so a bundle built without staging would ship empty packs.
     sh("make -C ../../.. stage-asset-packs")
 
     gradle(task: "clean")
-    gradle(task: "bundle", build_type: "Release")
+    gradle(task: "bundle", build_type: "Release", properties: { "scribatic.edition" => edition })
 
     # Archive the mapping immediately. It lives under build/, so the next
     # `clean` destroys it — and without the mapping for this exact build its

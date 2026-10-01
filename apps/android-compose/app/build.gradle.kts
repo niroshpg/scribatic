@@ -17,6 +17,12 @@ val keystoreProperties = Properties().apply {
 }
 val hasReleaseKeystore = keystoreProperties.getProperty("storeFile") != null
 
+// Scribatic Pro: a private repository cloned into pro/ at the repository root
+// (see ext/Extensions.kt). Built in when present, unless this is a free-edition
+// build: -Pscribatic.edition=free, for a release without the paid features.
+val proKotlin = rootProject.file("../../pro/android/kotlin")
+val withPro = proKotlin.isDirectory && project.findProperty("scribatic.edition") != "free"
+
 android {
     namespace  = "com.scribatic.app"
     compileSdk = 36
@@ -46,7 +52,8 @@ android {
                     // 16 KB ELF alignment for every shared library, the vendored
                     // whisper/ggml/llama ones included — Play requires it for
                     // Android 15+ targets. NDK r28+ does this by default.
-                    "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON"
+                    "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON",
+                    "-DSCRIBATIC_WITH_PRO=${if (withPro) "ON" else "OFF"}",
                 )
                 cppFlags += "-std=c++17"
             }
@@ -87,6 +94,9 @@ android {
         }
         debug {
             isJniDebuggable = true
+            // -Pscribatic.debugSuffix=true: installs beside a Play-installed
+            // copy (whose signature differs) instead of failing to replace it.
+            if (project.findProperty("scribatic.debugSuffix") == "true") applicationIdSuffix = ".debug"
         }
     }
 
@@ -136,8 +146,7 @@ android {
             jniLibs.srcDir(rootProject.file("../../core/engine/vendor-bin/sherpa-onnx/android"))
             // The paid features: a private repository cloned into pro/ at the
             // repository root. Absent, the app builds without them (ext/Extensions.kt).
-            val pro = rootProject.file("../../pro/android/kotlin")
-            if (pro.isDirectory) java.srcDir(pro)
+            if (withPro) java.srcDir(proKotlin)
         }
     }
 }

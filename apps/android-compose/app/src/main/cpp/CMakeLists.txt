@@ -45,7 +45,7 @@ target_link_libraries(scribatic_engine
 
 # Pro features (private repo cloned into pro/, see core/engine/CMakeLists.txt)
 # add their JNI entry points to this library when present.
-if (EXISTS ${SCRIBATIC_ROOT}/pro/android/pro.cmake)
+if (SCRIBATIC_WITH_PRO AND EXISTS ${SCRIBATIC_ROOT}/pro/android/pro.cmake)
     include(${SCRIBATIC_ROOT}/pro/android/pro.cmake)
 endif()
 
