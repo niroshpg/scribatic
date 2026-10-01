@@ -1,7 +1,7 @@
 # Play Store listing — Scribatic
 
 Package `com.scribatic.app`. Everything here lives as fastlane `supply` metadata under
-`apps/android-compose/playstore/metadata/android/en-US/`, so the listing is versioned with
+`apps/android-compose/playstore/metadata/android/en-GB/`, so the listing is versioned with
 the code and uploaded by fastlane rather than typed into Play Console.
 
 Every claim in the text is true of the current build. It does **not** mention asking

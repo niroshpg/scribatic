@@ -18,7 +18,7 @@ set -euo pipefail
 
 SDK="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 ADB="$SDK/platform-tools/adb"
-IMAGES="$(cd "$(dirname "$0")" && pwd)/metadata/android/en-US/images"
+IMAGES="$(cd "$(dirname "$0")" && pwd)/metadata/android/en-GB/images"
 
 profile() {
   case "$1" in
