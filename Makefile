@@ -95,27 +95,25 @@ IOS_BACKEND_DIR := $(IOS_DIR)/vendor-lib
 ## NEON/dotprod CPU path, and a Metal build drags in a shader library that has
 ## to be embedded and signed for no benefit at base-model sizes.
 setup-ios-backends:
-	@echo "==> Building whisper for iOS (device + simulator)"
-	@test -f $(VENDOR_DIR)/whisper.cpp/CMakeLists.txt || { \
-	    echo "whisper.cpp not vendored. Run: git submodule update --init --recursive"; \
+	@echo "==> Building llama + whisper for iOS (device + simulator)"
+	@test -f $(VENDOR_DIR)/whisper.cpp/CMakeLists.txt -a -f $(VENDOR_DIR)/llama.cpp/CMakeLists.txt || { \
+	    echo "Backends not vendored. Run: git submodule update --init --recursive"; \
 	    exit 1; }
 	for sdk in iphoneos iphonesimulator; do \
-	    cmake -S $(VENDOR_DIR)/whisper.cpp -B $(BUILD_DIR)/whisper-$$sdk \
+	    rm -rf $(IOS_BACKEND_DIR)/$$sdk; \
+	    cmake -S scripts/ios-backends -B $(BUILD_DIR)/ios-backends-$$sdk \
 	        -DCMAKE_SYSTEM_NAME=iOS \
 	        -DCMAKE_OSX_SYSROOT=$$sdk \
 	        -DCMAKE_OSX_ARCHITECTURES=arm64 \
 	        -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
 	        -DCMAKE_BUILD_TYPE=Release \
 	        -DBUILD_SHARED_LIBS=OFF \
-	        -DWHISPER_BUILD_EXAMPLES=OFF \
-	        -DWHISPER_BUILD_TESTS=OFF \
-	        -DWHISPER_BUILD_SERVER=OFF \
 	        -DGGML_METAL=OFF \
 	        -DGGML_OPENMP=OFF \
 	        -DGGML_ACCELERATE=ON; \
-	    cmake --build $(BUILD_DIR)/whisper-$$sdk --config Release --parallel; \
+	    cmake --build $(BUILD_DIR)/ios-backends-$$sdk --config Release --parallel; \
 	    mkdir -p $(IOS_BACKEND_DIR)/$$sdk; \
-	    find $(BUILD_DIR)/whisper-$$sdk -name '*.a' -exec cp {} $(IOS_BACKEND_DIR)/$$sdk/ \; ; \
+	    find $(BUILD_DIR)/ios-backends-$$sdk -name '*.a' -exec cp {} $(IOS_BACKEND_DIR)/$$sdk/ \; ; \
 	done
 	@echo "==> Backends staged in $(IOS_BACKEND_DIR)"
 
