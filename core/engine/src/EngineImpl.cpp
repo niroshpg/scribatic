@@ -222,6 +222,10 @@ EngineState EngineImpl::state() const noexcept {
 // -- Sessions -----------------------------------------------------------------
 
 void EngineImpl::beginSession() noexcept {
+    {
+        std::lock_guard<std::mutex> lock(languageMutex_);
+        sessionLanguage_ = languagePreference_ == "auto" ? std::string() : languagePreference_;
+    }
     ring_.reset();
     window_.clear();
     decodedSamples_ = 0;
@@ -247,9 +251,25 @@ std::int64_t EngineImpl::saveSession(const std::string& title, std::int64_t crea
     const auto samples = decodedSamples_ + static_cast<std::int64_t>(window_.size());
     const std::int64_t durationMs = samples * 1000 / static_cast<std::int64_t>(kSampleRate);
 
+    // Never detected (no speech, or an English-only model): English, which
+    // is also what such a model wrote.
+    std::string language = sessionLanguage();
+    if (language.empty() || (whisper_ != nullptr && whisper_is_multilingual(whisper_) == 0)) {
+        language = "en";
+    }
     return store_.insertNote(title, createdAt, durationMs,
                              audioPath.empty() ? std::string() : baseName(audioPath),
-                             segments, words);
+                             segments, words, language);
+}
+
+void EngineImpl::setLanguage(const std::string& code) {
+    std::lock_guard<std::mutex> lock(languageMutex_);
+    languagePreference_ = code.empty() ? std::string("auto") : code;
+}
+
+std::string EngineImpl::sessionLanguage() {
+    std::lock_guard<std::mutex> lock(languageMutex_);
+    return sessionLanguage_;
 }
 
 // -- Realtime path ------------------------------------------------------------
@@ -331,7 +351,13 @@ EngineStatus EngineImpl::decodeWindow(bool flushing) noexcept {
     whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
     params.n_threads        = config_.threadCount > 0 ? config_.threadCount : 4;
     params.translate        = false;
-    params.language         = "en";
+    // A multilingual model is told the session's language once it is known,
+    // and detects it until then; an English-only model only has English.
+    const bool multilingual = whisper_is_multilingual(whisper_) != 0;
+    std::string language = multilingual ? sessionLanguage() : std::string("en");
+    const bool detecting = language.empty();
+    params.language         = detecting ? "auto" : language.c_str();
+    params.detect_language  = false;
     params.no_timestamps    = false;
     // Nothing is allowed to write to stdout from inside a mobile app.
     params.print_progress   = false;
@@ -454,6 +480,17 @@ EngineStatus EngineImpl::decodeWindow(bool flushing) noexcept {
 
     decodedSamples_ += static_cast<std::int64_t>(window_.size());
     window_.clear();
+
+    // The first window with speech decides the recording's language. One
+    // with nothing in it says nothing about the language: keep detecting.
+    if (detecting && !decoded.empty()) {
+        const int id = whisper_full_lang_id(whisper_);
+        const char* code = id >= 0 ? whisper_lang_str(id) : nullptr;
+        if (code != nullptr) {
+            std::lock_guard<std::mutex> lock(languageMutex_);
+            if (sessionLanguage_.empty()) { sessionLanguage_ = code; }
+        }
+    }
 
     if (!decoded.empty()) {
         std::lock_guard<std::mutex> lock(segmentMutex_);

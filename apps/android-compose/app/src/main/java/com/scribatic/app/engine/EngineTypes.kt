@@ -78,6 +78,8 @@ data class NoteDetail(
     val segments: List<TranscriptSegment>,
     /** Empty unless an add-on has written one. */
     val summary: String = "",
+    /** ISO 639-1 code of the language it was transcribed in, e.g. "es". */
+    val language: String = "en",
 ) {
     fun speakerName(index: Int): String? = speakers.firstOrNull { it.index == index }?.displayName
 }

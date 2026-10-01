@@ -80,6 +80,10 @@ struct NoteDetailValue: Identifiable, Sendable, Equatable {
     let speakerCount: Int32
     let speakers: [SpeakerLabelValue]
     let segments: [TranscriptSegmentValue]
+    /// Empty unless an add-on has written one.
+    let summary: String
+    /// ISO 639-1 code of the language it was transcribed in, e.g. "es".
+    let language: String
 
     /// nil when the core reports no such note.
     init?(_ cxx: scribatic.core.NoteDetail) {
@@ -93,6 +97,9 @@ struct NoteDetailValue: Identifiable, Sendable, Equatable {
         self.speakerCount = cxx.speakerCount
         self.speakers = cxx.speakers.map(SpeakerLabelValue.init)
         self.segments = cxx.segments.map(TranscriptSegmentValue.init)
+        self.summary = String(cxx.summary)
+        let language = String(cxx.language)
+        self.language = language.isEmpty ? "en" : language
     }
 
     func speakerName(_ index: Int32) -> String? {
@@ -143,7 +150,7 @@ extension ScribaticEngine {
                       let url = installer.fileURL(for: model) else { return fallback }
                 return url.path(percentEncoded: false)
             }
-            configuration.whisperModelPath = path("ggml-base.en.bin", configuration.whisperModelPath)
+            configuration.whisperModelPath = path("ggml-base.bin", configuration.whisperModelPath)
             configuration.llamaModelPath = path("insight-q4_k_m.gguf", configuration.llamaModelPath)
             configuration.embedModelPath = path("embed-minilm-l6-v2.gguf", configuration.embedModelPath)
             configuration.segmentationModelPath = path("speaker-segmentation.onnx", configuration.segmentationModelPath)
@@ -165,7 +172,7 @@ extension ScribaticEngine {
             // ModelNotFound no matter where the weights actually were.
             let store = try Self.privateDirectory(support.appending(path: "store"))
             let recordings = try Self.privateDirectory(support.appending(path: "recordings"))
-            let models = ["ggml-base.en.bin", "insight-q4_k_m.gguf", "embed-minilm-l6-v2.gguf",
+            let models = ["ggml-base.bin", "insight-q4_k_m.gguf", "embed-minilm-l6-v2.gguf",
                           "speaker-segmentation.onnx", "speaker-embedding.onnx"]
                 .map { support.appending(path: $0) }
             // Weights are re-downloadable and over a gigabyte; backing them

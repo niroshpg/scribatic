@@ -171,6 +171,7 @@ struct NoteDetailView: View {
                 .accessibilityAddTraits(.isHeader)
             FlowLayout(spacing: 12) {
                 MetaChip(systemImage: "clock", text: timestamp(note.durationMs))
+                MetaChip(systemImage: "character.bubble", text: languageName(note.language))
                 if note.speakerCount > 0 {
                     MetaChip(systemImage: "person.2", text: note.speakerCount == 1 ? "1 speaker" : "\(note.speakerCount) speakers")
                 }

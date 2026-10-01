@@ -92,6 +92,7 @@ struct NoteDetail {
     std::vector<SpeakerLabel>      speakers;
     std::vector<TranscriptSegment> segments;
     std::string                    summary;     ///< empty until one is written
+    std::string                    language;    ///< ISO 639-1 code it was transcribed in, e.g. "es"
 };
 
 /// A row returned from the SQLite-VSS approximate nearest-neighbour index.

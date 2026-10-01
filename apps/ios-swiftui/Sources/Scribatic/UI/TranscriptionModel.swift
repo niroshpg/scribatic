@@ -52,6 +52,10 @@ final class TranscriptionModel {
     private(set) var phase: Phase = .starting
     /// The live transcript of the recording in progress.
     private(set) var segments: [TranscriptSegmentValue] = []
+    /// "auto" or the ISO 639-1 code recordings are pinned to.
+    private(set) var spokenLanguage = UserDefaults.standard.string(forKey: "language") ?? autoLanguage
+    /// The recording's language once known; empty while it is being detected.
+    private(set) var sessionLanguage = ""
     private(set) var notes: [NoteSummaryValue] = []
     private(set) var canIdentifySpeakers = false
     /// Which note's recording is playing, if any.
@@ -78,7 +82,7 @@ final class TranscriptionModel {
     private(set) var modelsNeeded = false
     /// Setup opened later from the notes list, as a sheet.
     var showingModels = false
-    /// "Checking ggml-base.en.bin — 40%" while an import runs.
+    /// "Checking ggml-base.bin — 40%" while an import runs.
     private(set) var importing: String?
     /// "Downloading models — 40%" while Apple-hosted packs download.
     private(set) var packStatus: String?
@@ -249,6 +253,11 @@ final class TranscriptionModel {
         notes = await engine.listNotes()
     }
 
+    func setSpokenLanguage(_ code: String) {
+        UserDefaults.standard.set(code, forKey: "language")
+        spokenLanguage = code
+    }
+
     // MARK: - Recording
 
     func startRecording() async {
@@ -257,8 +266,10 @@ final class TranscriptionModel {
 
         do {
             try await AudioCapture.requestPermission()
+            await engine.setLanguage(spokenLanguage)
             await engine.beginSession()
             segments = []
+            sessionLanguage = ""
             recordingStartedAt = Date()
             let url = AudioCapture.newRecordingURL(in: URL(filePath: configuration.recordingsDirectory))
             try capture.start(writingTo: url) { buffer, frameCount in
@@ -436,7 +447,11 @@ final class TranscriptionModel {
             guard let self, let engine = await self.engine else { return }
             do {
                 for try await batch in await engine.transcriptionStream() {
-                    await MainActor.run { self.segments.append(contentsOf: batch) }
+                    let language = await engine.sessionLanguage()
+                    await MainActor.run {
+                        self.segments.append(contentsOf: batch)
+                        self.sessionLanguage = language
+                    }
                 }
             } catch is CancellationError {
                 // Expected on stop.

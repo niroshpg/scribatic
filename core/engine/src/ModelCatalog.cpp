@@ -10,9 +10,9 @@ namespace scribatic::core {
 
 std::vector<ModelSpec> modelCatalog() {
     return {
-        {"ggml-base.en.bin", "Speech recognition",
-         "Turns speech into text (whisper base.en).", "",
-         147964211, "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002", true},
+        {"ggml-base.bin", "Speech recognition",
+         "Turns speech into text in about 99 languages, and tells which (whisper base).", "",
+         147951465, "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe", true},
         {"speaker-segmentation.onnx", "Speaker changes",
          "Finds where one voice stops and another starts.", "",
          5992913, "220ad67ca923bef2fa91f2390c786097bf305bceb5e261d4af67b38e938e1079", true},

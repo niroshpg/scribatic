@@ -82,7 +82,7 @@ std::string repoPath(const char* relative) {
 }
 
 void testSpeechBecomesTranscript() {
-    const std::string whisperModel = repoPath("models/ggml-base.en.bin");
+    const std::string whisperModel = repoPath("models/ggml-base.bin");
     const std::string llamaModel   = repoPath("models/insight-q4_k_m.gguf");
     const std::string fixture      = repoPath("core/engine/tests/fixtures/speech-16k-mono.wav");
 
@@ -148,6 +148,7 @@ void testSpeechBecomesTranscript() {
     assert(all.find("quick") != std::string::npos);
     assert(all.find("brown fox") != std::string::npos);
     assert(all.find("lazy dog") != std::string::npos);
+    assert(engine->sessionLanguage() == "en" && "English should be detected as English");
 
     // The global shim is the public way to drop a reference; release() itself
     // lives on the impl, which this test cannot see by design.
@@ -156,7 +157,7 @@ void testSpeechBecomesTranscript() {
 
 /// Whisper invents words for silence ("you"); the engine must not pass them on.
 void testSilenceProducesNothing() {
-    const std::string whisperModel = repoPath("models/ggml-base.en.bin");
+    const std::string whisperModel = repoPath("models/ggml-base.bin");
     const std::string llamaModel   = repoPath("models/insight-q4_k_m.gguf");
     if (!fileExists(whisperModel)) {
         std::printf("  skip: no weights at %s (run `make fetch-models`)\n", whisperModel.c_str());
@@ -198,12 +199,59 @@ void testSilenceProducesNothing() {
     scribaticEngineRelease(engine);
 }
 
+/// Spanish in: detected as Spanish and transcribed as Spanish, not as
+/// English-sounding nonsense — what the English-only model used to do.
+void testDetectsSpanish() {
+    const std::string whisperModel = repoPath("models/ggml-base.bin");
+    const std::string llamaModel   = repoPath("models/insight-q4_k_m.gguf");
+    const std::string fixture      = repoPath("core/engine/tests/fixtures/speech-es-16k-mono.wav");
+    if (!fileExists(whisperModel) || !fileExists(fixture)) {
+        std::printf("  skip: Spanish needs %s and %s\n", whisperModel.c_str(), fixture.c_str());
+        return;
+    }
+    std::vector<float> pcm;
+    assert(readWav16(fixture, pcm) && "fixture should decode");
+
+    EngineConfig config;
+    config.whisperModelPath = whisperModel;
+    config.llamaModelPath   = llamaModel;
+    config.databasePath     = "/tmp/scribatic-test-es.sqlite";
+    config.threadCount      = 4;
+    config.useMemoryMapping = true;
+    EngineStatus status = EngineStatus::Ok;
+    EngineInterface* engine = EngineInterface::create(config, &status);
+    if (engine == nullptr) {
+        std::printf("  skip: engine not created (status %d)\n", static_cast<int>(status));
+        return;
+    }
+    assert(engine->warmUp() == EngineStatus::Ok && "weights should load");
+    engine->setLanguage("auto");
+    engine->beginSession();
+
+    constexpr std::size_t kChunk = 1600;
+    for (std::size_t offset = 0; offset < pcm.size(); offset += kChunk) {
+        engine->pushAudio(pcm.data() + offset, std::min(kChunk, pcm.size() - offset));
+        engine->runTranscriptionPass();
+    }
+    engine->flush();
+
+    std::string all;
+    for (const auto& segment : engine->drainSegments()) { all += " " + segment.text; }
+    all = lowercased(all);
+    std::printf("  [%s]%s\n", engine->sessionLanguage().c_str(), all.c_str());
+    assert(engine->sessionLanguage() == "es" && "Spanish should be detected");
+    assert(all.find("presupuesto") != std::string::npos && "Spanish should be transcribed as Spanish");
+
+    scribaticEngineRelease(engine);
+}
+
 } // namespace
 
 int main() {
     std::printf("TranscriptionTests\n");
     testSpeechBecomesTranscript();
     testSilenceProducesNothing();
+    testDetectsSpanish();
     std::printf("ok\n");
     return 0;
 }

@@ -130,6 +130,18 @@ public:
     /// here, so it is loaded and deleted with the note like the rest of it.
     virtual EngineStatus setNoteSummary(std::int64_t noteId, const std::string& summary) = 0;
 
+    // -- Language ------------------------------------------------------------
+    /// The language recordings are in: an ISO 639-1 code such as "es", or
+    /// "auto" to detect it. Detection listens to the first speech of each
+    /// recording and keeps that language to the end, so a short or quiet
+    /// window cannot switch it mid-recording. Takes effect at the next
+    /// beginSession(). An English-only speech model ignores it.
+    virtual void setLanguage(const std::string& code) = 0;
+
+    /// The current recording's language: the one set, or the one detected,
+    /// or empty while it is still being detected.
+    [[nodiscard]] virtual std::string sessionLanguage() = 0;
+
     // -- Retrieval-augmented history ---------------------------------------
     /// Embeds `text` and upserts it into the SQLite-VSS index.
     virtual EngineStatus indexNote(std::int64_t noteId, const std::string& text) = 0;

@@ -205,6 +205,14 @@ class TranscriptionEngine private constructor(
     /** Thread-safe; observed by the ggml abort callback between graph nodes. */
     fun requestCancel() = nativeRequestCancel(nativeHandle.get())
 
+    // -- Language ------------------------------------------------------------------
+
+    /** "auto" or an ISO 639-1 code; applies from the next [beginSession]. Any thread. */
+    fun setLanguage(code: String) = nativeSetLanguage(nativeHandle.get(), code)
+
+    /** The recording's language, or empty while it is still being detected. Any thread. */
+    fun sessionLanguage(): String = nativeSessionLanguage(nativeHandle.get())
+
     // -- Add-ons -------------------------------------------------------------------
 
     /**
@@ -262,6 +270,7 @@ class TranscriptionEngine private constructor(
             segmentOf(f, at).also { at += SEGMENT_FIELDS }
         }
         val summary = f.getOrNull(at).orEmpty()
+        val language = f.getOrNull(at + 1)?.ifEmpty { null } ?: "en"
         return NoteDetail(
             id = f[0].toLong(),
             title = f[1],
@@ -272,6 +281,7 @@ class TranscriptionEngine private constructor(
             speakers = speakers,
             segments = segments,
             summary = summary,
+            language = language,
         )
     }
 
@@ -299,6 +309,8 @@ class TranscriptionEngine private constructor(
     private external fun nativeIndexNote(handle: Long, noteId: Long, text: String): Int
     private external fun nativeRequestCancel(handle: Long)
     private external fun nativeBeginSession(handle: Long)
+    private external fun nativeSetLanguage(handle: Long, code: String)
+    private external fun nativeSessionLanguage(handle: Long): String
     private external fun nativeSaveSession(handle: Long, title: String, createdAt: Long, audioPath: String): Long
     private external fun nativeListNotes(handle: Long): Array<String>
     private external fun nativeLoadNote(handle: Long, noteId: Long): Array<String>

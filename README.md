@@ -374,7 +374,7 @@ rather than `build/outputs/apk/`, and the same flag marks it test-only, so
 Stage the models into the app's private storage:
 
 ```bash
-for m in ggml-base.en.bin insight-q4_k_m.gguf embed-minilm-l6-v2.gguf \
+for m in ggml-base.bin insight-q4_k_m.gguf embed-minilm-l6-v2.gguf \
          speaker-segmentation.onnx speaker-embedding.onnx; do
     adb -s $DEV push models/$m /data/local/tmp/
     adb -s $DEV shell "run-as com.scribatic.app cp /data/local/tmp/$m files/"
@@ -404,7 +404,7 @@ the container — that is the privacy guarantee working as intended. `devicectl`
 reaches a development build's container without weakening it:
 
 ```bash
-for m in ggml-base.en.bin insight-q4_k_m.gguf embed-minilm-l6-v2.gguf \
+for m in ggml-base.bin insight-q4_k_m.gguf embed-minilm-l6-v2.gguf \
          speaker-segmentation.onnx speaker-embedding.onnx; do
     xcrun devicectl device copy to --device $DEV \
         --domain-type appDataContainer --domain-identifier com.scribatic.app \

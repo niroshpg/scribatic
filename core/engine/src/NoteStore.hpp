@@ -41,7 +41,8 @@ public:
     std::int64_t insertNote(const std::string& title, std::int64_t createdAt,
                             std::int64_t durationMs, const std::string& audioName,
                             const std::vector<TranscriptSegment>& segments,
-                            const std::vector<WordTiming>& words);
+                            const std::vector<WordTiming>& words,
+                            const std::string& language = "en");
 
     [[nodiscard]] std::vector<NoteSummary> list();
 

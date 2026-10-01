@@ -71,6 +71,16 @@ actor ScribaticEngine {
         engine.beginSession()
     }
 
+    /// "auto" or an ISO 639-1 code; applies from the next `beginSession()`.
+    func setLanguage(_ code: String) {
+        engine.setLanguage(std.string(code))
+    }
+
+    /// The recording's language, or empty while it is still being detected.
+    func sessionLanguage() -> String {
+        String(engine.sessionLanguage())
+    }
+
     /// Persists the finished session. Call after `flush()`.
     func saveSession(title: String, createdAt: Date, audioURL: URL?) throws -> Int64 {
         let id = engine.saveSession(

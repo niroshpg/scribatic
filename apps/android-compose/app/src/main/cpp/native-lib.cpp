@@ -257,7 +257,7 @@ Java_com_scribatic_app_engine_TranscriptionEngine_nativeListNotes(
 
 /// [id, title, createdAt, durationMs, audioPath, speakerCount,
 ///  nSpeakers, (index, name, displayName) * nSpeakers,
-///  nSegments, (startMs, endMs, text, conf, speaker) * nSegments, summary].
+///  nSegments, (startMs, endMs, text, conf, speaker) * nSegments, summary, language].
 /// Empty when there is no such note.
 JNIEXPORT jobjectArray JNICALL
 Java_com_scribatic_app_engine_TranscriptionEngine_nativeLoadNote(
@@ -281,6 +281,7 @@ Java_com_scribatic_app_engine_TranscriptionEngine_nativeLoadNote(
             flat.push_back(std::to_string(note.segments.size()));
             for (const auto& segment : note.segments) { appendSegment(flat, segment); }
             flat.push_back(note.summary);
+            flat.push_back(note.language);
         }
     }
     return toStringArray(env, flat);
@@ -333,6 +334,21 @@ Java_com_scribatic_app_engine_TranscriptionEngine_nativeRenameSpeaker(
     return static_cast<jint>(asEngine(handle)->renameSpeaker(
         static_cast<std::int64_t>(noteId), static_cast<std::int32_t>(speaker),
         toStdString(env, name)));
+}
+
+// -- Language -------------------------------------------------------------------
+
+JNIEXPORT void JNICALL
+Java_com_scribatic_app_engine_TranscriptionEngine_nativeSetLanguage(
+        JNIEnv* env, jobject /*thiz*/, jlong handle, jstring code) {
+    if (handle != 0) { asEngine(handle)->setLanguage(toStdString(env, code)); }
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_scribatic_app_engine_TranscriptionEngine_nativeSessionLanguage(
+        JNIEnv* env, jobject /*thiz*/, jlong handle) {
+    const std::string code = handle != 0 ? asEngine(handle)->sessionLanguage() : std::string();
+    return env->NewStringUTF(code.c_str());
 }
 
 } // extern "C"

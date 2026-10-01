@@ -88,13 +88,18 @@ struct RecorderView: View {
     /// Status and controls, in thumb reach. Which controls appear is driven
     /// entirely by the phase, so there is never a button that does nothing in
     /// the current state.
+    private var recordingLanguage: String {
+        if !model.sessionLanguage.isEmpty { return languageName(model.sessionLanguage) }
+        return model.spokenLanguage == autoLanguage ? "Detecting language" : languageName(model.spokenLanguage)
+    }
+
     private var transportBar: some View {
         VStack(spacing: 16) {
             HStack {
                 StatusPill(phase: model.phase)
                 Spacer()
                 if !model.segments.isEmpty {
-                    Text(model.segments.count == 1 ? "1 line" : "\(model.segments.count) lines")
+                    Text("\(recordingLanguage) · \(model.segments.count == 1 ? "1 line" : "\(model.segments.count) lines")")
                         .font(.timestamp)
                         .foregroundStyle(Color.inkMuted)
                 }

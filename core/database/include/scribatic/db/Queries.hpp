@@ -36,7 +36,7 @@ inline constexpr std::string_view kListNotes =
     "FROM notes n ORDER BY n.created_at DESC, n.id DESC;";
 
 inline constexpr std::string_view kLoadNote =
-    "SELECT id, title, created_at, duration_ms, audio_path, speaker_count, summary "
+    "SELECT id, title, created_at, duration_ms, audio_path, speaker_count, summary, locale "
     "FROM notes WHERE id = ?;";
 
 inline constexpr std::string_view kSetSummary =

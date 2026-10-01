@@ -180,7 +180,8 @@ bool NoteStore::isOpen() {
 std::int64_t NoteStore::insertNote(const std::string& title, std::int64_t createdAt,
                                    std::int64_t durationMs, const std::string& audioName,
                                    const std::vector<TranscriptSegment>& segments,
-                                   const std::vector<WordTiming>& words) {
+                                   const std::vector<WordTiming>& words,
+                                   const std::string& language) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (db_ == nullptr) { return 0; }
 
@@ -188,7 +189,7 @@ std::int64_t NoteStore::insertNote(const std::string& title, std::int64_t create
     if (!transaction.began()) { return 0; }
 
     Statement note(db_, q::kInsertNote);
-    note.bind(1, title).bind(2, createdAt).bind(3, durationMs).bind(4, std::string("en"));
+    note.bind(1, title).bind(2, createdAt).bind(3, durationMs).bind(4, language.empty() ? std::string("en") : language);
     if (audioName.empty()) {
         note.bindNull(5);
     } else {
@@ -256,6 +257,7 @@ NoteDetail NoteStore::loadLocked(std::int64_t noteId, const std::string& recordi
         detail.audioPath = recordingsDirectory + "/" + note.text(4);
     }
     detail.speakerCount = note.int32(5);
+    detail.language     = note.text(7);
     if (!note.isNull(6)) { detail.summary = note.text(6); }
 
     Statement speakers(db_, q::kLoadSpeakers);

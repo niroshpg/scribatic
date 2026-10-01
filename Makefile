@@ -147,7 +147,7 @@ ASSET_CORE    := $(ANDROID_DIR)/models-core/src/main/assets
 ASSET_ANSWERS := $(ANDROID_DIR)/models-answers/src/main/assets
 stage-asset-packs:
 	mkdir -p $(ASSET_CORE) $(ASSET_ANSWERS)
-	for m in ggml-base.en.bin speaker-segmentation.onnx speaker-embedding.onnx embed-minilm-l6-v2.gguf; do \
+	for m in ggml-base.bin speaker-segmentation.onnx speaker-embedding.onnx embed-minilm-l6-v2.gguf; do \
 	    test -f $(ASSET_CORE)/$$m || cp -c $(MODELS_DIR)/$$m $(ASSET_CORE)/$$m 2>/dev/null || cp $(MODELS_DIR)/$$m $(ASSET_CORE)/$$m; \
 	done
 	test -f $(ASSET_ANSWERS)/insight-q4_k_m.gguf || cp -c $(MODELS_DIR)/insight-q4_k_m.gguf $(ASSET_ANSWERS)/ 2>/dev/null || \

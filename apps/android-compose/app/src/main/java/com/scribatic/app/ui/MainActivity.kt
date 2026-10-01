@@ -56,6 +56,8 @@ import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.RadioButton
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarColors
 import androidx.compose.material3.TopAppBarDefaults
@@ -387,6 +389,7 @@ private fun ModelsScreen(state: TranscriptUiState, viewModel: TranscriptionViewM
     val c = Scribatic.colors
     val context = LocalContext.current
     var confirmLeaveOut by remember { mutableStateOf<ModelRow?>(null) }
+    var choosingLanguage by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
     val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     // Play's own "download over mobile data?" sheet; the result arrives as pack
@@ -469,6 +472,29 @@ private fun ModelsScreen(state: TranscriptUiState, viewModel: TranscriptionViewM
                     color = c.inkMuted,
                     modifier = Modifier.padding(horizontal = 16.dp),
                 )
+                SectionHeader("Spoken language")
+                Row(
+                    Modifier
+                        .padding(horizontal = 16.dp)
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(c.surfaceRaised)
+                        .clickable(onClickLabel = "Choose the spoken language") { choosingLanguage = true }
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Icon(Icons.language, contentDescription = null, tint = c.inkMuted)
+                    Column(Modifier.weight(1f)) {
+                        Text(languageName(state.spokenLanguage), style = MaterialTheme.typography.bodyLarge, color = c.ink)
+                        Text(
+                            if (state.spokenLanguage == AUTO_LANGUAGE) "Each recording's language is worked out from its first words."
+                            else "Every recording is transcribed as ${languageName(state.spokenLanguage)}.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = c.inkMuted,
+                        )
+                    }
+                }
                 SectionHeader("Models", "${Formatter.formatShortFileSize(context, wantedBytes)} selected")
             }
             item {
@@ -482,6 +508,34 @@ private fun ModelsScreen(state: TranscriptUiState, viewModel: TranscriptionViewM
                 }
             }
         }
+    }
+
+    if (choosingLanguage) {
+        AlertDialog(
+            onDismissRequest = { choosingLanguage = false },
+            title = { Text("Spoken language") },
+            text = {
+                LazyColumn(Modifier.heightIn(max = 420.dp)) {
+                    items(listOf(AUTO_LANGUAGE) + spokenLanguages.sortedBy { languageName(it) }) { code ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    choosingLanguage = false
+                                    viewModel.setSpokenLanguage(code)
+                                }
+                                .padding(vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(selected = code == state.spokenLanguage, onClick = null)
+                            Text(languageName(code), modifier = Modifier.padding(start = 12.dp), color = c.ink)
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { choosingLanguage = false }) { Text("Cancel") } },
+        )
     }
 
     confirmLeaveOut?.let { row ->
@@ -761,8 +815,14 @@ private fun TransportBar(state: TranscriptUiState, viewModel: TranscriptionViewM
             StatusPill(state.phase, state.label)
             Box(Modifier.weight(1f))
             if (state.segments.isNotEmpty()) {
+                val language = when {
+                    state.sessionLanguage.isNotEmpty() -> languageName(state.sessionLanguage)
+                    state.spokenLanguage == AUTO_LANGUAGE -> "Detecting language"
+                    else -> languageName(state.spokenLanguage)
+                }
+                val lines = if (state.segments.size == 1) "1 line" else "${state.segments.size} lines"
                 Text(
-                    if (state.segments.size == 1) "1 line" else "${state.segments.size} lines",
+                    "$language · $lines",
                     style = MaterialTheme.typography.labelMedium,
                     color = c.inkMuted,
                 )
@@ -1011,6 +1071,7 @@ private fun NoteBody(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     MetaChip(Icons.duration, clock(note.durationMs))
+                    MetaChip(Icons.language, languageName(note.language))
                     if (note.speakerCount > 0) MetaChip(Icons.speakers, speakersLabel(note.speakerCount))
                     if (note.audioPath != null) {
                         MetaBadge(Icons.lock, "On this phone")

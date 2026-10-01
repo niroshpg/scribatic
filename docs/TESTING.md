@@ -163,7 +163,7 @@ The two files are not equivalent any more:
 
 - **The Whisper model must be real.** whisper now parses it at `warmUp()`, so a
   placeholder fails to load. Get it with `make fetch-models`, which downloads
-  `ggml-base.en.bin` (141 MB).
+  `ggml-base.bin` (141 MB, multilingual).
 - **The llama model can still be a placeholder.** Nothing reads it yet, but
   `EngineInterface::create()` stats both paths and returns `ModelNotFound` if
   either is missing, so the file has to exist. `LLAMA_URL` is empty in
@@ -180,7 +180,7 @@ Onto a **simulator**, where the container is a normal directory:
 ```bash
 C=$(xcrun simctl get_app_container booted com.scribatic.app data)
 mkdir -p "$C/Library/Application Support"
-cp models/ggml-base.en.bin models/insight-q4_k_m.gguf "$C/Library/Application Support/"
+cp models/ggml-base.bin models/insight-q4_k_m.gguf "$C/Library/Application Support/"
 ```
 
 Onto a **physical device**. `UIFileSharingEnabled` is deliberately false, so
@@ -191,8 +191,8 @@ there is no Files-app route — that is the privacy guarantee working as designe
 D=<device udid>          # xcrun devicectl list devices
 xcrun devicectl device copy to --device $D \
     --domain-type appDataContainer --domain-identifier com.scribatic.app \
-    --source models/ggml-base.en.bin \
-    --destination "Library/Application Support/ggml-base.en.bin"
+    --source models/ggml-base.bin \
+    --destination "Library/Application Support/ggml-base.bin"
 ```
 
 This does NOT work against a TestFlight build, which is the practical argument
@@ -200,7 +200,7 @@ for doing device work over cable until first-launch staging is implemented.
 Inspect what landed with `xcrun devicectl device info files --device $D
 --domain-type appDataContainer --domain-identifier com.scribatic.app`.
 
-Filenames are fixed by `Configuration.default()` on iOS: `ggml-base.en.bin` and
+Filenames are fixed by `Configuration.default()` on iOS: `ggml-base.bin` and
 `insight-q4_k_m.gguf`, both directly inside `Library/Application Support`.
 
 ---
@@ -266,7 +266,7 @@ UDID=<simulator>; APP=/tmp/scribatic-dd/Build/Products/Debug-iphonesimulator/Scr
 xcrun simctl install $UDID $APP
 C=$(xcrun simctl get_app_container $UDID com.scribatic.app data)
 mkdir -p "$C/Library/Application Support" "$C/Library/Caches"
-for m in ggml-base.en.bin insight-q4_k_m.gguf embed-minilm-l6-v2.gguf \
+for m in ggml-base.bin insight-q4_k_m.gguf embed-minilm-l6-v2.gguf \
          speaker-segmentation.onnx speaker-embedding.onnx; do
     cp -c "models/$m" "$C/Library/Application Support/"     # APFS clone: instant
 done
@@ -291,7 +291,7 @@ AVD has too little free space for two copies of the 1.2 GB instruct model.
 adb install -r -t apps/android-compose/app/build/intermediates/apk/debug/app-debug.apk
 adb shell pm grant com.scribatic.app android.permission.RECORD_AUDIO
 adb shell run-as com.scribatic.app mkdir -p files/inject
-for m in ggml-base.en.bin insight-q4_k_m.gguf embed-minilm-l6-v2.gguf \
+for m in ggml-base.bin insight-q4_k_m.gguf embed-minilm-l6-v2.gguf \
          speaker-segmentation.onnx speaker-embedding.onnx; do
     adb exec-in run-as com.scribatic.app sh -c "cat > files/$m" < models/$m
 done

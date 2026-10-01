@@ -28,6 +28,32 @@ struct ModelSetupView: View {
             }
 
             Section {
+                Picker(selection: Binding(get: { model.spokenLanguage }, set: { model.setSpokenLanguage($0) })) {
+                    Text(languageName(autoLanguage)).tag(autoLanguage)
+                    ForEach(spokenLanguages.sorted { languageName($0) < languageName($1) }, id: \.self) { code in
+                        Text(languageName(code)).tag(code)
+                    }
+                } label: {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Spoken language").font(.uiBody).foregroundStyle(Color.ink)
+                            Text(model.spokenLanguage == autoLanguage
+                                 ? "Each recording's language is worked out from its first words."
+                                 : "Every recording is transcribed as \(languageName(model.spokenLanguage)).")
+                                .font(.uiBodySmall)
+                                .foregroundStyle(Color.inkMuted)
+                        }
+                    } icon: {
+                        Image(systemName: "character.bubble").foregroundStyle(Color.inkMuted)
+                    }
+                }
+                .pickerStyle(.navigationLink)
+                .listRowBackground(Color.surfaceRaised)
+            } header: {
+                SectionHeader(title: "Spoken language")
+            }
+
+            Section {
                 ForEach(model.models) { row in
                     ModelRowView(row: row) { wanted in
                         if wanted {

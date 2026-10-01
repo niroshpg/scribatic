@@ -49,6 +49,8 @@ public:
     EngineStatus renameSpeaker(std::int64_t noteId, std::int32_t speaker,
                                const std::string& name) override;
     EngineStatus setNoteSummary(std::int64_t noteId, const std::string& summary) override;
+    void         setLanguage(const std::string& code) override;
+    std::string  sessionLanguage() override;
 
     std::vector<NoteSummary> listNotes() override;
     NoteDetail               loadNote(std::int64_t noteId) override;
@@ -118,6 +120,12 @@ private:
     std::vector<TranscriptSegment> sessionSegments_;
     std::vector<WordTiming>        sessionWords_;
     std::int32_t                   sessionSegmentCount_ = 0;
+
+    /// "auto" or a code; and the current session's, empty until detected.
+    /// Set from the UI thread, read on the engine's.
+    std::mutex  languageMutex_;
+    std::string languagePreference_ = "auto";
+    std::string sessionLanguage_;
 
     NoteStore       store_;
     SpeakerDiarizer diarizer_;

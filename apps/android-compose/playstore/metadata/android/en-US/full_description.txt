@@ -2,6 +2,7 @@ Scribatic records a conversation and turns it into a transcript on your phone, m
 
 What you can do
 • Record a meeting, lecture, interview or call, and watch the words appear as people speak
+• Transcribe in about 99 languages: Scribatic recognises the language from the first words, or you can choose one
 • Pause and resume, then stop to save the note
 • See each speaker's words marked in their own colour, identified automatically when you stop
 • Give speakers names, only on this device and only for that note
@@ -17,8 +18,7 @@ Private by design
 • When you share a transcript, it goes only to the app you pick, and that app sends it
 
 Good to know
-• Transcription is in English
-• The speech models download once through Google Play when you first open the app: about 205 MB is required, plus an optional 1.3 GB model you can leave out on the setup screen
+• The speech models download once through Google Play when you first open the app, about 205 MB
 • Accuracy depends on the recording: clear speech close to the phone works best
 • Needs a 64-bit (ARM64) Android phone running Android 9 or later
 

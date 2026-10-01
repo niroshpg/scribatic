@@ -13,7 +13,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODELS_DIR="${ROOT}/models"
 mkdir -p "${MODELS_DIR}"
 
-WHISPER_MODEL="${WHISPER_MODEL:-ggml-base.en.bin}"
+WHISPER_MODEL="${WHISPER_MODEL:-ggml-base.bin}"
 WHISPER_URL="${WHISPER_URL:-https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${WHISPER_MODEL}}"
 
 # Instruct model for summarise + answer. Qwen3 1.7B at Q4_K_M: Apache 2.0,

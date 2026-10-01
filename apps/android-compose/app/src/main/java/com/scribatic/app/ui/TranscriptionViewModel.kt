@@ -1,6 +1,7 @@
 package com.scribatic.app.ui
 
 import android.app.Application
+import android.content.Context
 import android.text.format.DateFormat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -67,7 +68,7 @@ data class TranscriptUiState(
     val message: String? = null,
     val share: ShareRequest? = null,
     val models: List<ModelRow> = emptyList(),
-    /** "Checking ggml-base.en.bin — 40%" while an import runs. */
+    /** "Checking ggml-base.bin — 40%" while an import runs. */
     val importing: String? = null,
     /** This install came from Play, so the models arrive as asset packs. */
     val playDelivery: Boolean = false,
@@ -79,6 +80,10 @@ data class TranscriptUiState(
     val playChecked: Boolean = false,
     /** Play reported the required pack as failed or cancelled. */
     val playFailed: Boolean = false,
+    /** "auto" or the ISO 639-1 code recordings are pinned to. */
+    val spokenLanguage: String = AUTO_LANGUAGE,
+    /** The recording's language once known; empty while it is being detected. */
+    val sessionLanguage: String = "",
 ) {
     /** The store can't provide the models: offer installing from files. */
     val storeUnavailable: Boolean get() = playChecked && (!playDelivery || playFailed)
@@ -118,6 +123,16 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
     private val playback = AudioPlayback()
     private val packs = PlayModelPacks(application)
     private val installer = ModelInstaller(application, packs)
+    private val settings = application.getSharedPreferences("settings", Context.MODE_PRIVATE)
+
+    init {
+        _uiState.update { it.copy(spokenLanguage = settings.getString("language", AUTO_LANGUAGE) ?: AUTO_LANGUAGE) }
+    }
+
+    fun setSpokenLanguage(code: String) {
+        settings.edit().putString("language", code).apply()
+        _uiState.update { it.copy(spokenLanguage = code) }
+    }
     private var packUpdates: Job? = null
     private var preparing = false
 
@@ -168,7 +183,7 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
                 return (installer.fileFor(model) ?: File(filesDir, name)).absolutePath
             }
             val config = EngineConfig(
-                whisperModelPath = path("ggml-base.en.bin"),
+                whisperModelPath = path("ggml-base.bin"),
                 llamaModelPath = path("insight-q4_k_m.gguf"),
                 embedModelPath = path("embed-minilm-l6-v2.gguf"),
                 databasePath = File(File(filesDir, "store").apply { mkdirs() }, "scribatic.sqlite").absolutePath,
@@ -364,7 +379,9 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
         val engine = engine ?: return
         if (_uiState.value.phase != Phase.READY) return
 
+        _uiState.update { it.copy(sessionLanguage = "") }
         viewModelScope.launch(Dispatchers.Default) {
+            engine.setLanguage(_uiState.value.spokenLanguage)
             engine.beginSession()
             val file = File(recordingsDir, "recording-${System.currentTimeMillis()}.wav")
             val audio = AudioCapture(file)
@@ -394,7 +411,8 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
             streamJob?.cancel()
             streamJob = viewModelScope.launch(Dispatchers.Default) {
                 engine.transcriptionStream().collect { batch ->
-                    _uiState.update { it.copy(segments = it.segments + batch) }
+                    val language = engine.sessionLanguage()
+                    _uiState.update { it.copy(segments = it.segments + batch, sessionLanguage = language) }
                 }
             }
         }
