@@ -26,8 +26,10 @@ import kotlinx.coroutines.flow.SharedFlow
  * background from a foreground service of the microphone type, and that
  * service must show a notification — which is also how the user can see,
  * from anywhere, that the microphone is open. It runs exactly as long as a
- * recording does: started by Record, updated by Pause and Resume, stopped by
- * Stop or a failure.
+ * recording does, plus the save that follows: started by Record, updated by
+ * Pause and Resume, switched to "Saving…" by Stop, and stopped once the note
+ * is saved or saving fails. Staying in the foreground through the save keeps
+ * Android from killing the process while it finishes the transcript.
  */
 class TranscriptionService : Service() {
 
@@ -44,46 +46,18 @@ class TranscriptionService : Service() {
         ServiceCompat.startForeground(
             this,
             NOTIFICATION_ID,
-            notification(paused),
+            notification(this, if (paused) "Recording paused" else "Recording", step = null),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
         )
+        running = true
         // Not sticky: after the process dies there is no recording to resume,
         // and a restarted service would show a notification for nothing.
         return START_NOT_STICKY
     }
 
-    private fun notification(paused: Boolean): Notification {
-        val manager = getSystemService(NotificationManager::class.java)
-        if (manager.getNotificationChannel(CHANNEL_ID) == null) {
-            manager.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "Recording", NotificationManager.IMPORTANCE_LOW).apply {
-                    description = "Shown while Scribatic is recording"
-                    setShowBadge(false)
-                },
-            )
-        }
-        val open = PendingIntent.getActivity(
-            this, 0,
-            Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-        val stop = PendingIntent.getService(
-            this, 1,
-            Intent(this, TranscriptionService::class.java).setAction(ACTION_STOP),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-        return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_stat_recording)
-            .setContentTitle(if (paused) "Recording paused" else "Recording")
-            .setContentText("Transcribed on this phone. Nothing is uploaded.")
-            .setColor(0xFFEB6C36.toInt())
-            .setContentIntent(open)
-            .addAction(0, "Stop and save", stop)
-            .setOngoing(true)
-            .setSilent(true)
-            .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-            .build()
+    override fun onDestroy() {
+        running = false
+        super.onDestroy()
     }
 
     companion object {
@@ -91,6 +65,9 @@ class TranscriptionService : Service() {
         private const val NOTIFICATION_ID = 1
         private const val ACTION_STOP = "com.scribatic.app.STOP_RECORDING"
         private const val EXTRA_PAUSED = "paused"
+
+        /** Whether the service is in the foreground, so its notification may be updated. */
+        @Volatile private var running = false
 
         private val stopRequests = MutableSharedFlow<Unit>(
             extraBufferCapacity = 1,
@@ -110,8 +87,59 @@ class TranscriptionService : Service() {
             ContextCompat.startForegroundService(context, intent)
         }
 
+        /**
+         * Switches the notification to "Saving…" once the microphone has
+         * closed. Posts it directly rather than restarting the service, which
+         * Android may refuse while the app is in the background.
+         */
+        fun saving(context: Context, step: String) {
+            if (!running) return
+            context.getSystemService(NotificationManager::class.java)
+                .notify(NOTIFICATION_ID, notification(context, "Saving…", step))
+        }
+
         fun hide(context: Context) {
             context.stopService(Intent(context, TranscriptionService::class.java))
+        }
+
+        /** [step] is null while recording; while saving it names what is happening. */
+        private fun notification(context: Context, title: String, step: String?): Notification {
+            val manager = context.getSystemService(NotificationManager::class.java)
+            if (manager.getNotificationChannel(CHANNEL_ID) == null) {
+                manager.createNotificationChannel(
+                    NotificationChannel(CHANNEL_ID, "Recording", NotificationManager.IMPORTANCE_LOW).apply {
+                        description = "Shown while Scribatic is recording or saving a recording"
+                        setShowBadge(false)
+                    },
+                )
+            }
+            val open = PendingIntent.getActivity(
+                context, 0,
+                Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+            val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_stat_recording)
+                .setContentTitle(title)
+                .setColor(0xFFEB6C36.toInt())
+                .setContentIntent(open)
+                .setOngoing(true)
+                .setSilent(true)
+                .setOnlyAlertOnce(true)
+                .setCategory(NotificationCompat.CATEGORY_SERVICE)
+                .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            if (step == null) {
+                val stop = PendingIntent.getService(
+                    context, 1,
+                    Intent(context, TranscriptionService::class.java).setAction(ACTION_STOP),
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                )
+                builder.setContentText("Transcribed on this phone. Nothing is uploaded.")
+                    .addAction(0, "Stop and save", stop)
+            } else {
+                builder.setContentText(step).setProgress(0, 0, true)
+            }
+            return builder.build()
         }
     }
 }

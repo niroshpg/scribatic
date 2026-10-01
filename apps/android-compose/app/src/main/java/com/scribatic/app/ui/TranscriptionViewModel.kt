@@ -415,9 +415,9 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
 
         val stream = streamJob
         streamJob = null
+        // The microphone closes now, but the service stays until the note is
+        // saved, so Android does not kill a backgrounded app mid-save.
         processing("Finishing transcript")
-        // The microphone closes now; saving needs no foreground service.
-        TranscriptionService.hide(getApplication())
 
         viewModelScope.launch(Dispatchers.Default) {
             capture?.stop()
@@ -457,6 +457,7 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
                     message = message,
                 )
             }
+            TranscriptionService.hide(getApplication())
             reloadNote(id)
         }
     }
@@ -545,7 +546,10 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
         _uiState.update { it.copy(playingNoteId = null) }
     }
 
-    private fun processing(step: String) = _uiState.update { it.copy(phase = Phase.PROCESSING, step = step) }
+    private fun processing(step: String) {
+        _uiState.update { it.copy(phase = Phase.PROCESSING, step = step) }
+        TranscriptionService.saving(getApplication(), step)
+    }
 
     private fun fail(message: String) {
         TranscriptionService.hide(getApplication())

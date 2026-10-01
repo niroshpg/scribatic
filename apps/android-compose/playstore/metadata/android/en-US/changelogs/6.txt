@@ -1,0 +1,3 @@
+Recording keeps going when you lock the screen or switch apps.
+• A notification shows while Scribatic is recording, with Stop and save
+• The notification shows "Saving…" until your note is ready
