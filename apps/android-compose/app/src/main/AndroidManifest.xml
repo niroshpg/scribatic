@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!--
       The complete permission set. There is no INTERNET permission, by design:
@@ -12,6 +13,15 @@
     <!-- Android 13+: lets the "Recording" notification of the microphone
          foreground service show in the notification shade. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!--
+      Removed even if a library asks for it. Some do: Google Play Billing, for
+      the paid edition, brings a telemetry library that requests INTERNET. The
+      merge drops it, so the promise above holds for every build, whatever its
+      dependencies. Billing still works: it talks to the Play Store app, which
+      does the network part.
+    -->
+    <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
 
     <uses-feature android:name="android.hardware.microphone" android:required="true" />
 

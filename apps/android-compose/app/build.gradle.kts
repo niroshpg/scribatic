@@ -167,3 +167,7 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
 }
+
+// The pro tree's own dependencies (billing, for instance) come from it, so a
+// free build has none of them — not even in its merged manifest.
+if (withPro) apply(from = rootProject.file("../../pro/android/pro.gradle.kts"))
