@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.text.format.DateFormat
 import android.text.format.DateUtils
@@ -654,12 +655,28 @@ private fun RecorderScreen(state: TranscriptUiState, viewModel: TranscriptionVie
     val c = Scribatic.colors
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
+    // The microphone, and on Android 13+ notifications too, so the "Recording"
+    // notification that keeps capture going in the background is visible.
+    // Only the microphone is needed to start: a declined notification leaves
+    // the service running with its notification in the task manager instead.
     val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { granted -> if (granted) viewModel.startRecording() }
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { results -> if (results[Manifest.permission.RECORD_AUDIO] == true) viewModel.startRecording() }
     val start = {
-        val granted = context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-        if (granted) viewModel.startRecording() else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        fun missing(permission: String) =
+            context.checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED
+        val needed = buildList {
+            if (missing(Manifest.permission.RECORD_AUDIO)) add(Manifest.permission.RECORD_AUDIO)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && missing(Manifest.permission.POST_NOTIFICATIONS)) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+        if (Manifest.permission.RECORD_AUDIO in needed) {
+            permissionLauncher.launch(needed.toTypedArray())
+        } else {
+            viewModel.startRecording()
+            if (needed.isNotEmpty()) permissionLauncher.launch(needed.toTypedArray())
+        }
     }
     val listState = rememberLazyListState()
     val capturing = state.phase == Phase.RECORDING || state.phase == Phase.PAUSED || state.phase == Phase.PROCESSING

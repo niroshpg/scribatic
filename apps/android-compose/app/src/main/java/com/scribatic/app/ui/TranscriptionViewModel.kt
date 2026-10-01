@@ -18,6 +18,7 @@ import com.scribatic.app.engine.NoteDetail
 import com.scribatic.app.engine.NoteSummary
 import com.scribatic.app.engine.TranscriptSegment
 import com.scribatic.app.engine.TranscriptionEngine
+import com.scribatic.app.engine.TranscriptionService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
@@ -119,6 +120,11 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
     private var preparing = false
 
     private val filesDir: File get() = getApplication<Application>().filesDir
+
+    init {
+        // "Stop and save" on the recording notification.
+        viewModelScope.launch { TranscriptionService.stops.collect { stopRecording() } }
+    }
 
     /** Inside filesDir, so covered by allowBackup=false and the extraction rules. */
     private val recordingsDir: File get() = File(filesDir, "recordings").apply { mkdirs() }
@@ -368,6 +374,10 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
             recordingFile = file
             recordingStartedAt = System.currentTimeMillis()
             _uiState.update { it.copy(phase = Phase.RECORDING, failure = null, segments = emptyList()) }
+            // Keeps the microphone available with the screen locked or another
+            // app in front. Started now, while Record has just been tapped:
+            // Android won't start a microphone service from the background.
+            TranscriptionService.show(getApplication(), paused = false)
 
             streamJob?.cancel()
             streamJob = viewModelScope.launch(Dispatchers.Default) {
@@ -382,12 +392,14 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
         if (_uiState.value.phase != Phase.RECORDING) return
         capture?.pause()
         _uiState.update { it.copy(phase = Phase.PAUSED) }
+        TranscriptionService.show(getApplication(), paused = true)
     }
 
     fun resumeRecording() {
         if (_uiState.value.phase != Phase.PAUSED) return
         capture?.resume()
         _uiState.update { it.copy(phase = Phase.RECORDING) }
+        TranscriptionService.show(getApplication(), paused = false)
     }
 
     /**
@@ -404,6 +416,8 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
         val stream = streamJob
         streamJob = null
         processing("Finishing transcript")
+        // The microphone closes now; saving needs no foreground service.
+        TranscriptionService.hide(getApplication())
 
         viewModelScope.launch(Dispatchers.Default) {
             capture?.stop()
@@ -534,11 +548,13 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
     private fun processing(step: String) = _uiState.update { it.copy(phase = Phase.PROCESSING, step = step) }
 
     private fun fail(message: String) {
+        TranscriptionService.hide(getApplication())
         _uiState.update { it.copy(phase = Phase.FAILED, failure = message) }
     }
 
     override fun onCleared() {
         super.onCleared()
+        TranscriptionService.hide(getApplication())
         capture?.stop()
         playback.stop()
         streamJob?.cancel()
