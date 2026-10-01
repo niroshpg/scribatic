@@ -91,11 +91,13 @@ platform :android do
 
   desc "Push the store listing: text, icon, feature graphic and screenshots"
   desc "Never uploads a bundle and never changes a release. See docs/play-store-listing.md."
-  lane :listing do
+  lane :listing do |options|
     name, code = app_version
+    # supply attaches listing edits to a release, so it needs one that exists:
+    # pass version_code:N when the build in build.gradle.kts isn't uploaded yet.
+    code = options[:version_code] if options[:version_code]
     upload_to_play_store(
       metadata_path: "playstore/metadata/android",
-      # supply attaches listing edits to a release, so it needs one that exists.
       track: "internal",
       version_code: code.to_i,
       skip_upload_aab: true,

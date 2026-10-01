@@ -42,7 +42,11 @@ android {
                 arguments += listOf(
                     "-DANDROID_STL=c++_static",
                     "-DANDROID_ARM_NEON=ON",
-                    "-DCMAKE_BUILD_TYPE=Release"
+                    "-DCMAKE_BUILD_TYPE=Release",
+                    // 16 KB ELF alignment for every shared library, the vendored
+                    // whisper/ggml/llama ones included — Play requires it for
+                    // Android 15+ targets. NDK r28+ does this by default.
+                    "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON"
                 )
                 cppFlags += "-std=c++17"
             }
