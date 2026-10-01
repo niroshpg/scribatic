@@ -151,10 +151,15 @@ final class TranscriptionModel {
 
     // MARK: - Models
 
+    /// Optional models an installed add-on uses, by file name; the others are
+    /// not offered, since nothing would use them. iOS has no add-ons yet, so
+    /// none: the summaries model would be a 1.2 GB download that does nothing.
+    static var optionalModelsInUse: Set<String> = []
+
     func refreshModels() {
-        models = installer.catalog.map {
-            ModelRow(spec: $0, installed: installer.isInstalled($0), wanted: installer.isWanted($0))
-        }
+        models = installer.catalog
+            .filter { $0.required || Self.optionalModelsInUse.contains($0.fileName) }
+            .map { ModelRow(spec: $0, installed: installer.isInstalled($0), wanted: installer.isWanted($0)) }
     }
 
     /// Leaving out an optional model also deletes it if installed: the only
