@@ -145,9 +145,16 @@ fetch-models:
 ## clones where possible, so 1.4 GB costs no copy time and no disk.
 ASSET_CORE    := $(ANDROID_DIR)/models-core/src/main/assets
 ASSET_ANSWERS := $(ANDROID_DIR)/models-answers/src/main/assets
+CORE_MODELS := ggml-base.bin speaker-segmentation.onnx speaker-embedding.onnx embed-minilm-l6-v2.gguf
+
 stage-asset-packs:
 	mkdir -p $(ASSET_CORE) $(ASSET_ANSWERS)
-	for m in ggml-base.bin speaker-segmentation.onnx speaker-embedding.onnx embed-minilm-l6-v2.gguf; do \
+	@# Exactly the listed files: staging only ever added, so a replaced model
+	@# (ggml-base.en.bin, before languages) stayed in the pack and doubled it.
+	for f in $(ASSET_CORE)/*; do \
+	    case " $(CORE_MODELS) " in *" $$(basename $$f) "*) ;; *) rm -f "$$f"; echo "removed stale $$(basename $$f)";; esac; \
+	done
+	for m in $(CORE_MODELS); do \
 	    test -f $(ASSET_CORE)/$$m || cp -c $(MODELS_DIR)/$$m $(ASSET_CORE)/$$m 2>/dev/null || cp $(MODELS_DIR)/$$m $(ASSET_CORE)/$$m; \
 	done
 	test -f $(ASSET_ANSWERS)/insight-q4_k_m.gguf || cp -c $(MODELS_DIR)/insight-q4_k_m.gguf $(ASSET_ANSWERS)/ 2>/dev/null || \

@@ -46,7 +46,11 @@ platform :android do
     sh("make -C ../../.. stage-asset-packs")
 
     gradle(task: "clean")
-    gradle(task: "bundle", build_type: "Release", properties: { "scribatic.edition" => edition })
+    # The free edition never offers the 1.2 GB summaries model, so its pack
+    # stays out of the bundle: ~350 MB to upload instead of ~1.5 GB.
+    properties = { "scribatic.edition" => edition }
+    properties["scribatic.skipAnswersPack"] = "true" if edition == "free"
+    gradle(task: "bundle", build_type: "Release", properties: properties)
 
     # Archive the mapping immediately. It lives under build/, so the next
     # `clean` destroys it — and without the mapping for this exact build its
