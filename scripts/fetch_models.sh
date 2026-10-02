@@ -16,6 +16,11 @@ mkdir -p "${MODELS_DIR}"
 WHISPER_MODEL="${WHISPER_MODEL:-ggml-base.bin}"
 WHISPER_URL="${WHISPER_URL:-https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${WHISPER_MODEL}}"
 
+# The accurate model: the whole recording is transcribed again with it after
+# Stop. whisper small at q8_0; q5_0 lost too much once timestamps are on.
+ACCURATE_MODEL="${ACCURATE_MODEL:-ggml-small-q8_0.bin}"
+ACCURATE_URL="${ACCURATE_URL:-https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${ACCURATE_MODEL}}"
+
 # Instruct model for summarise + answer. Qwen3 1.7B at Q4_K_M: Apache 2.0,
 # ungated, ~1.2 GB. See ADR-007 for why this one.
 LLAMA_MODEL="${LLAMA_MODEL:-insight-q4_k_m.gguf}"
@@ -42,6 +47,7 @@ fetch() {
 }
 
 fetch "${WHISPER_URL}" "${MODELS_DIR}/${WHISPER_MODEL}"
+fetch "${ACCURATE_URL}" "${MODELS_DIR}/${ACCURATE_MODEL}"
 fetch "${LLAMA_URL}"   "${MODELS_DIR}/${LLAMA_MODEL}"
 fetch "${EMBED_URL}"   "${MODELS_DIR}/${EMBED_MODEL}"
 

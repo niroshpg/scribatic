@@ -274,6 +274,70 @@ void testSpeakerNamesAreIndexedAndRenamable() {
     assert(scalar(db, "SELECT count(*) FROM chunks_fts WHERE chunks_fts MATCH 'priya';") == 0);
 }
 
+/// The user corrects speakers: one block to another speaker or a new one,
+/// several speakers merged. Numbers stay 0..n-1 and names stay with people.
+void testSpeakersCanBeCorrected() {
+    const std::string dir = tempDirectory();
+    NoteStore store;
+    assert(store.open(dir + "/notes.sqlite") == EngineStatus::Ok);
+    const std::int64_t id = store.insertNote("Chat", 1700000000, 6000, "",
+                                             {segment(0, 1000, "a"), segment(1000, 2000, "b"),
+                                              segment(2000, 3000, "c"), segment(3000, 4000, "d")}, {});
+    // Four blocks over three speakers, as an over-eager estimate might give.
+    auto s = [](std::int64_t start, const char* text, std::int32_t speaker) {
+        auto out = segment(start, start + 1000, text); out.speaker = speaker; return out;
+    };
+    assert(store.replaceTranscript(id, {s(0, "a", 0), s(1000, "b", 1), s(2000, "c", 0), s(3000, "d", 2)}, 3) == EngineStatus::Ok);
+    assert(store.renameSpeaker(id, 0, "Ana") == EngineStatus::Ok);
+    NoteDetail note = store.load(id, dir);
+    assert(note.speakerCount == 3 && note.segments[1].id > 0 && "segments carry their ids");
+
+    // Speaker 3's only block goes to Speaker 2: speaker 3 is gone, 2 remain.
+    std::int32_t landed = -1;
+    assert(store.setSegmentSpeaker(id, note.segments[3].id, 1, &landed) == EngineStatus::Ok);
+    note = store.load(id, dir);
+    assert(note.speakerCount == 2 && landed == 1);
+    assert(note.segments[3].speaker == 1 && note.speakers[0].displayName == "Ana");
+
+    // One of Ana's blocks becomes someone new: a third speaker again.
+    assert(store.setSegmentSpeaker(id, note.segments[2].id, -1, &landed) == EngineStatus::Ok);
+    note = store.load(id, dir);
+    assert(note.speakerCount == 3 && landed == 2 && note.segments[2].speaker == 2);
+    assert(note.speakers[2].displayName == "Speaker 3");
+
+    // Merge the new one and speaker 2 into Ana: one speaker, still Ana.
+    assert(store.mergeSpeakers(id, {1, 2}, 0) == EngineStatus::Ok);
+    note = store.load(id, dir);
+    assert(note.speakerCount == 1 && note.speakers.size() == 1 && note.speakers[0].displayName == "Ana");
+    for (const auto& segment : note.segments) { assert(segment.speaker == 0); }
+
+    // Merging into a later speaker renumbers it to 0.
+    assert(store.setSegmentSpeaker(id, note.segments[0].id, -1, &landed) == EngineStatus::Ok);
+    assert(store.mergeSpeakers(id, {0}, 1) == EngineStatus::Ok);
+    note = store.load(id, dir);
+    assert(note.speakerCount == 1 && note.segments[0].speaker == 0 && note.segments[3].speaker == 0);
+}
+
+void testLayoutAndRefinedPreview() {
+    const std::string dir = tempDirectory();
+    NoteStore store;
+    assert(store.open(dir + "/notes.sqlite") == EngineStatus::Ok);
+    const std::int64_t id = store.insertNote("Talk", 1700000000, 4000, "", {segment(0, 2000, "preview")},
+                                             {word(0, 0, 2000, " preview")});
+    NoteDetail note = store.load(id, dir);
+    assert(note.layout == "auto" && !note.refined);
+    assert(store.setLayout(id, "lecture") == EngineStatus::Ok);
+    assert(store.load(id, dir).layout == "lecture");
+
+    assert(store.replaceWithRefined(id, {segment(0, 1500, "final one"), segment(1500, 3000, "final two")},
+                                    {word(0, 0, 1500, " final"), word(1, 1500, 3000, " two")}) == EngineStatus::Ok);
+    note = store.load(id, dir);
+    assert(note.refined && note.segments.size() == 2 && note.segments[0].text == "final one");
+    assert(note.speakerCount == 0 && "speakers are identified again from the new words");
+    assert(store.words(id).size() == 2 && store.words(id)[1].text == " two");
+    assert(note.layout == "lecture" && "the user's layout survives refinement");
+}
+
 // -- Engine: recordings on disk -----------------------------------------------------
 
 /// Drives the engine's file lifecycle without any weights. create() only checks
@@ -349,7 +413,7 @@ void testRecordingLifecycle() {
 
 void testCatalogPinsEveryModel() {
     const auto catalog = modelCatalog();
-    assert(catalog.size() == 5);
+    assert(catalog.size() == 6);
     int optional = 0;
     for (const auto& model : catalog) {
         assert(!model.fileName.empty() && !model.title.empty() && !model.purpose.empty());
@@ -397,6 +461,8 @@ int main() {
     testSchemaMigratesToCurrentVersion();
     testDeletingANoteLeavesNothingSearchable();
     testSpeakerNamesAreIndexedAndRenamable();
+    testSpeakersCanBeCorrected();
+    testLayoutAndRefinedPreview();
     testRecordingLifecycle();
     testCatalogPinsEveryModel();
     testEngineStartsWithoutTheInstructModel();

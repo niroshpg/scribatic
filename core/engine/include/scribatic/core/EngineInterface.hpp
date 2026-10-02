@@ -130,6 +130,39 @@ public:
     /// here, so it is loaded and deleted with the note like the rest of it.
     virtual EngineStatus setNoteSummary(std::int64_t noteId, const std::string& summary) = 0;
 
+    // -- Final transcript (background threads only) ---------------------------
+    /// True when the accurate model is present: after Stop, the whole
+    /// recording can be transcribed again with it.
+    [[nodiscard]] virtual bool canRefine() const noexcept = 0;
+
+    /// Transcribes the note's whole recording again with the accurate model,
+    /// in whisper's own 30 s windows with context carried across, and
+    /// replaces the live preview with it — segments and word timings both,
+    /// so speakers are then identified from the better words. Speakers are
+    /// cleared. Blocking: about a third of the recording's length on a
+    /// current phone. Own thread: it does not touch the live model, so a new
+    /// recording may run meanwhile. Cancellable with `cancelRefine()`.
+    virtual EngineStatus refineTranscript(std::int64_t noteId) = 0;
+
+    /// 0..1 through the refinement in progress, for the UI to poll.
+    [[nodiscard]] virtual float refineProgress() const noexcept = 0;
+
+    virtual void cancelRefine() noexcept = 0;
+
+    // -- Correcting speakers -------------------------------------------------
+    /// Gives one segment to `speaker`, or to a new speaker when it is
+    /// negative. Speakers left with no segments are removed and the rest
+    /// renumbered from 0.
+    virtual EngineStatus setSegmentSpeaker(std::int64_t noteId, std::int64_t segmentId,
+                                           std::int32_t speaker) = 0;
+
+    /// All of `speakers`' segments go to `into`, which keeps its name.
+    virtual EngineStatus mergeSpeakers(std::int64_t noteId, const std::vector<std::int32_t>& speakers,
+                                       std::int32_t into) = 0;
+
+    /// "auto", "discussion" or "lecture".
+    virtual EngineStatus setNoteLayout(std::int64_t noteId, const std::string& layout) = 0;
+
     // -- Language ------------------------------------------------------------
     /// The language recordings are in: an ISO 639-1 code such as "es", or
     /// "auto" to detect it. Detection listens to the first speech of each

@@ -12,6 +12,13 @@ namespace {
 /// someone getting a word in edgeways. Anything longer than this is left alone.
 constexpr std::int64_t kMaxIslandMs = 800;
 
+/// Within one whisper segment, a run this short that disagrees with the
+/// segment's majority speaker is jitter too: a sentence came back cut into
+/// "At least" / "one thing?" across two people. A longer run is someone
+/// really cutting in, and keeps its own speaker.
+constexpr std::size_t  kMaxStrayWords = 2;
+constexpr std::int64_t kMaxStrayMs    = 1500;
+
 /// How much of a word's stored span counts when matching it to a turn. Word
 /// timings run from one onset to the next, so the last word before a pause
 /// stretches across the whole pause — and a turn-final word would be handed
@@ -60,6 +67,11 @@ std::int32_t speakerFor(std::int64_t start, std::int64_t end,
     return best >= 0 ? best : nearest;
 }
 
+bool endsSentence(const std::string& word) {
+    const auto last = word.find_last_not_of(" \t\n\"')”’");
+    return last != std::string::npos && (word[last] == '.' || word[last] == '?' || word[last] == '!');
+}
+
 std::string trimmed(const std::string& text) {
     const auto first = text.find_first_not_of(" \t\n");
     if (first == std::string::npos) { return {}; }
@@ -85,6 +97,36 @@ Attribution attributeSpeakers(const std::vector<WordTiming>& words,
             if (island && words[i].endMs - words[i].startMs <= kMaxIslandMs) {
                 labels[i] = labels[i - 1];
             }
+        }
+        // Stray runs inside a segment go to the segment's majority speaker.
+        for (std::size_t from = 0; from < words.size();) {
+            std::size_t to = from;
+            while (to < words.size() && words[to].segment == words[from].segment) { ++to; }
+            std::unordered_map<std::int32_t, std::size_t> votes;
+            for (std::size_t i = from; i < to; ++i) { ++votes[labels[i]]; }
+            std::int32_t majority = labels[from];
+            std::size_t most = 0;
+            for (const auto& [label, n] : votes) {
+                if (n > most || (n == most && label == labels[from])) { majority = label; most = n; }
+            }
+            // A clear majority only: a segment split evenly between two people
+            // is two people talking, and is cut as before.
+            if (most * 2 > to - from) {
+                for (std::size_t i = from; i < to;) {
+                    std::size_t end = i;
+                    while (end < to && labels[end] == labels[i]) { ++end; }
+                    // Right after a sentence ends ("What is it? | Well, it") is
+                    // where a reply starts: that run is someone answering.
+                    const bool afterSentence = i > from && endsSentence(words[i - 1].text);
+                    const std::int64_t spoken = std::min(words[end - 1].endMs, words[end - 1].startMs + kMaxWordSpanMs) -
+                                                words[i].startMs;
+                    const bool stray = labels[i] != majority && !afterSentence &&
+                                       end - i <= kMaxStrayWords && spoken <= kMaxStrayMs;
+                    if (stray) { for (std::size_t k = i; k < end; ++k) { labels[k] = majority; } }
+                    i = end;
+                }
+            }
+            from = to;
         }
     }
 

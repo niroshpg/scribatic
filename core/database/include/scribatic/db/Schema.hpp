@@ -18,7 +18,7 @@
 namespace scribatic::db {
 
 /// Bumped on every migration; compared against `PRAGMA user_version`.
-inline constexpr std::int32_t kSchemaVersion   = 2;
+inline constexpr std::int32_t kSchemaVersion   = 3;
 inline constexpr std::int32_t kEmbeddingDims   = 384;
 inline constexpr std::int32_t kChunkTokenSize  = 256;
 inline constexpr std::int32_t kChunkTokenStride= 64;   ///< overlap for recall
@@ -157,5 +157,17 @@ CREATE TRIGGER IF NOT EXISTS chunks_fts_after_update AFTER UPDATE ON chunks BEGI
     INSERT INTO chunks_fts(rowid, text) VALUES (new.id, new.text);
 END;
 )SQL";
+
+// -- Version 3 ---------------------------------------------------------------
+
+/// How a note is laid out: "auto" (one speaker reads as a lecture, more as a
+/// discussion), or "discussion" / "lecture" when the user has chosen.
+inline constexpr std::string_view kAddNoteLayout =
+    "ALTER TABLE notes ADD COLUMN layout TEXT NOT NULL DEFAULT 'auto';";
+
+/// 1 once the whole recording has been transcribed again with the accurate
+/// model after Stop; until then the note holds the live preview.
+inline constexpr std::string_view kAddNoteRefined =
+    "ALTER TABLE notes ADD COLUMN refined INTEGER NOT NULL DEFAULT 0;";
 
 } // namespace scribatic::db

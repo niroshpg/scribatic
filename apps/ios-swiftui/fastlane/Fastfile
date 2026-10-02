@@ -139,7 +139,7 @@ platform :ios do
     models = File.expand_path("../../../models", __dir__)
     staging = File.expand_path("../../../build/asset-pack-staging", __dir__)
     files = {
-      "models-core" => %w[ggml-base.bin speaker-segmentation.onnx speaker-embedding.onnx embed-minilm-l6-v2.gguf],
+      "models-core" => %w[ggml-base.bin ggml-small-q8_0.bin speaker-segmentation.onnx speaker-embedding.onnx embed-minilm-l6-v2.gguf],
       "models-answers" => %w[insight-q4_k_m.gguf]
     }
     FileUtils.mkdir_p(out)

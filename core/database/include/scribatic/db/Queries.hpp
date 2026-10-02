@@ -36,14 +36,30 @@ inline constexpr std::string_view kListNotes =
     "FROM notes n ORDER BY n.created_at DESC, n.id DESC;";
 
 inline constexpr std::string_view kLoadNote =
-    "SELECT id, title, created_at, duration_ms, audio_path, speaker_count, summary, locale "
+    "SELECT id, title, created_at, duration_ms, audio_path, speaker_count, summary, locale, "
+    "       layout, refined "
     "FROM notes WHERE id = ?;";
+
+inline constexpr std::string_view kSetLayout = "UPDATE notes SET layout = ? WHERE id = ?;";
+inline constexpr std::string_view kSetRefined = "UPDATE notes SET refined = ? WHERE id = ?;";
+inline constexpr std::string_view kDeleteWords = "DELETE FROM words WHERE note_id = ?;";
+
+inline constexpr std::string_view kSetSegmentSpeaker =
+    "UPDATE segments SET speaker = ? WHERE id = ? AND note_id = ?;";
+inline constexpr std::string_view kMoveSpeaker =
+    "UPDATE segments SET speaker = ? WHERE note_id = ? AND speaker = ?;";
+inline constexpr std::string_view kDeleteSpeaker =
+    "DELETE FROM speakers WHERE note_id = ? AND idx = ?;";
+inline constexpr std::string_view kMaxSpeaker =
+    "SELECT COALESCE(MAX(idx), -1) FROM speakers WHERE note_id = ?;";
+inline constexpr std::string_view kCountSpeakers =
+    "SELECT COUNT(*) FROM speakers WHERE note_id = ?;";
 
 inline constexpr std::string_view kSetSummary =
     "UPDATE notes SET summary = ? WHERE id = ?;";
 
 inline constexpr std::string_view kLoadSegments =
-    "SELECT start_ms, end_ms, text, confidence, speaker FROM segments "
+    "SELECT start_ms, end_ms, text, confidence, speaker, id FROM segments "
     "WHERE note_id = ? ORDER BY start_ms, id;";
 
 inline constexpr std::string_view kLoadSpeakers =

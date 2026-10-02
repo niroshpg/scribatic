@@ -145,7 +145,7 @@ fetch-models:
 ## clones where possible, so 1.4 GB costs no copy time and no disk.
 ASSET_CORE    := $(ANDROID_DIR)/models-core/src/main/assets
 ASSET_ANSWERS := $(ANDROID_DIR)/models-answers/src/main/assets
-CORE_MODELS := ggml-base.bin speaker-segmentation.onnx speaker-embedding.onnx embed-minilm-l6-v2.gguf
+CORE_MODELS := ggml-base.bin ggml-small-q8_0.bin speaker-segmentation.onnx speaker-embedding.onnx embed-minilm-l6-v2.gguf
 
 stage-asset-packs:
 	mkdir -p $(ASSET_CORE) $(ASSET_ANSWERS)

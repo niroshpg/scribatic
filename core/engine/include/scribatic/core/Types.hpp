@@ -59,6 +59,8 @@ struct TranscriptSegment {
     /// Zero-based speaker within its note, or -1 before speakers have been
     /// identified (and for any stretch diarization could not attribute).
     std::int32_t speaker    = -1;
+    /// The stored segment's id; 0 for one not saved yet (the live stream).
+    std::int64_t id         = 0;
 };
 
 /// One voice in a note. Speakers are per note: "Speaker 1" in one recording
@@ -93,6 +95,10 @@ struct NoteDetail {
     std::vector<TranscriptSegment> segments;
     std::string                    summary;     ///< empty until one is written
     std::string                    language;    ///< ISO 639-1 code it was transcribed in, e.g. "es"
+    /// "auto", "discussion" or "lecture". Auto reads one speaker as a lecture.
+    std::string                    layout = "auto";
+    /// The accurate pass after Stop has replaced the live preview.
+    bool                           refined = false;
 };
 
 /// A row returned from the SQLite-VSS approximate nearest-neighbour index.
@@ -139,6 +145,9 @@ struct EngineConfig {
     /// engine still transcribes, and `canIdentifySpeakers()` reports false.
     std::string  segmentationModelPath;
     std::string  speakerEmbeddingModelPath;
+    /// The larger whisper model the whole recording is transcribed with again
+    /// after Stop. Optional: without it the live transcript is final.
+    std::string  accurateModelPath;
     std::int32_t threadCount    = 4;  ///< pinned to performance cores only
     std::int32_t contextWindow  = 4096;
     bool         useMemoryMapping = true;  ///< mmap GGUF instead of read()

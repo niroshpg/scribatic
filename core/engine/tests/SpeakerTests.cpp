@@ -54,6 +54,7 @@ struct Models {
     std::string llama = repoPath("models/insight-q4_k_m.gguf");
     std::string segmentation = repoPath("models/speaker-segmentation.onnx");
     std::string embedding = repoPath("models/speaker-embedding.onnx");
+    std::string accurate = repoPath("models/ggml-small-q8_0.bin");
 
     bool present() const {
         for (const auto* path : {&whisper, &llama, &segmentation, &embedding}) {
@@ -223,6 +224,61 @@ void testFourVoicesStayApart(const Models& models) {
     scribaticEngineRelease(engine);
 }
 
+/// After Stop: the whole recording again with the accurate model, then
+/// speakers from its words. The note ends up refined, with speakers.
+void testRefineThenIdentify(const Models& models) {
+    const std::string fixture = repoPath("models/fixtures/two-speakers-en-2.wav");
+    if (!exists(fixture) || !exists(models.accurate)) {
+        std::printf("  skip: refine needs the fixture and %s\n", models.accurate.c_str());
+        return;
+    }
+    std::printf("  refine two-speakers-en-2.wav\n");
+    char pattern[] = "/tmp/scribatic-refine-XXXXXX";
+    const std::string dir = ::mkdtemp(pattern);
+    const std::string recordings = dir + "/recordings";
+    assert(::mkdir(recordings.c_str(), 0700) == 0);
+    const std::string recording = recordings + "/recording-1.wav";
+    EngineConfig config;
+    config.whisperModelPath = models.whisper;
+    config.llamaModelPath = models.llama;
+    config.segmentationModelPath = models.segmentation;
+    config.speakerEmbeddingModelPath = models.embedding;
+    config.accurateModelPath = models.accurate;
+    config.databasePath = dir + "/notes.sqlite";
+    config.recordingsDirectory = recordings;
+    config.threadCount = 4;
+    EngineStatus status = EngineStatus::Ok;
+    EngineInterface* engine = EngineInterface::create(config, &status);
+    assert(engine != nullptr && engine->warmUp() == EngineStatus::Ok);
+    assert(engine->canRefine());
+    copyFile(fixture, recording);
+    RecordingAudio audio;
+    assert(audio.open(recording));
+    engine->beginSession();
+    for (std::size_t offset = 0; offset < audio.count(); offset += 1600) {
+        engine->pushAudio(audio.samples() + offset, std::min<std::size_t>(1600, audio.count() - offset));
+        engine->runTranscriptionPass();
+    }
+    engine->flush();
+    (void)engine->drainSegments();
+    const std::int64_t id = engine->saveSession("Refine", 1700000000, recording);
+    assert(!engine->loadNote(id).refined);
+
+    assert(engine->refineTranscript(id) == EngineStatus::Ok);
+    assert(engine->refineProgress() == 1.0F);
+    NoteDetail note = engine->loadNote(id);
+    assert(note.refined && !note.segments.empty());
+    for (const auto& s : note.segments) { std::printf("    refined: %s\n", s.text.c_str()); }
+
+    if (engine->canIdentifySpeakers()) {
+        assert(engine->identifySpeakers(id, 0) == EngineStatus::Ok);
+        note = engine->loadNote(id);
+        std::printf("    %d speakers after refining\n", note.speakerCount);
+        assert(note.speakerCount >= 2 && note.refined);
+    }
+    scribaticEngineRelease(engine);
+}
+
 /// Prints what speaker identification makes of any recording: estimated and
 /// told-two. For investigating a tester's note; asserts nothing.
 void diagnoseRecording(const Models& models, const std::string& wav) {
@@ -237,6 +293,7 @@ void diagnoseRecording(const Models& models, const std::string& wav) {
     config.llamaModelPath = models.llama;
     config.segmentationModelPath = models.segmentation;
     config.speakerEmbeddingModelPath = models.embedding;
+    config.accurateModelPath = models.accurate;
     config.databasePath = dir + "/notes.sqlite";
     config.recordingsDirectory = recordings;
     config.threadCount = 4;
@@ -254,6 +311,17 @@ void diagnoseRecording(const Models& models, const std::string& wav) {
     engine->flush();
     (void)engine->drainSegments();
     const std::int64_t id = engine->saveSession("Diagnose", 1700000000, recording);
+    std::printf("    preview:");
+    for (const auto& s : engine->loadNote(id).segments) { std::printf(" %s", s.text.c_str()); }
+    std::printf("\n");
+    if (engine->canRefine()) {
+        const auto started = std::chrono::steady_clock::now();
+        const EngineStatus refined = engine->refineTranscript(id);
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
+        std::printf("    refined (%d) in %lld ms:", static_cast<int>(refined), static_cast<long long>(ms));
+        for (const auto& s : engine->loadNote(id).segments) { std::printf(" %s", s.text.c_str()); }
+        std::printf("\n");
+    }
     for (const std::int32_t expected : {0, 2}) {
         engine->identifySpeakers(id, expected);
         const NoteDetail note = engine->loadNote(id);
@@ -336,6 +404,7 @@ int main() {
         testConversationIsSplitBetweenTwoSpeakers(models, "models/fixtures/two-speakers-en-3.wav");
         testEachSpeakerInTheirLanguage(models);
         testFourVoicesStayApart(models);
+        testRefineThenIdentify(models);
         // A recording to look at, not to assert on: SCRIBATIC_SPEAKERS_WAV=/path.wav
         if (const char* extra = std::getenv("SCRIBATIC_SPEAKERS_WAV"); extra != nullptr) {
             diagnoseRecording(models, extra);

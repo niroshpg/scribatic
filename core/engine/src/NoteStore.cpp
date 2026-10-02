@@ -259,6 +259,8 @@ NoteDetail NoteStore::loadLocked(std::int64_t noteId, const std::string& recordi
     detail.speakerCount = note.int32(5);
     detail.language     = note.text(7);
     if (!note.isNull(6)) { detail.summary = note.text(6); }
+    detail.layout       = note.text(8);
+    detail.refined      = note.int32(9) != 0;
 
     Statement speakers(db_, q::kLoadSpeakers);
     speakers.bind(1, noteId);
@@ -279,6 +281,7 @@ NoteDetail NoteStore::loadLocked(std::int64_t noteId, const std::string& recordi
         segment.text       = segments.text(2);
         segment.confidence = static_cast<float>(segments.real(3));
         segment.speaker    = segments.int32(4);
+        segment.id         = segments.int64(5);
         segment.isFinal    = true;
         detail.segments.push_back(std::move(segment));
     }
@@ -369,6 +372,132 @@ EngineStatus NoteStore::setSummary(std::int64_t noteId, const std::string& summa
         update.bind(1, summary);
     }
     if (!update.bind(2, noteId).run() || sqlite3_changes(db_) != 1) {
+        return EngineStatus::DatabaseFailed;
+    }
+    return EngineStatus::Ok;
+}
+
+EngineStatus NoteStore::replaceWithRefined(std::int64_t noteId,
+                                          const std::vector<TranscriptSegment>& segments,
+                                          const std::vector<WordTiming>& words) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (db_ == nullptr) { return EngineStatus::DatabaseFailed; }
+    Transaction transaction(db_);
+    if (!transaction.began()) { return EngineStatus::DatabaseFailed; }
+    for (const auto sql : {q::kDeleteSegments, q::kDeleteSpeakers, q::kDeleteWords}) {
+        Statement clear(db_, sql);
+        if (!clear.bind(1, noteId).run()) { return EngineStatus::DatabaseFailed; }
+    }
+    Statement segment(db_, q::kInsertSegment);
+    for (const auto& s : segments) {
+        segment.bind(1, noteId).bind(2, s.startMs).bind(3, s.endMs).bind(4, s.text)
+            .bind(5, static_cast<double>(s.confidence)).bind(6, std::int32_t{-1});
+        if (!segment.run()) { return EngineStatus::DatabaseFailed; }
+    }
+    Statement word(db_, q::kInsertWord);
+    std::int64_t ordinal = 0;
+    for (const auto& w : words) {
+        word.bind(1, noteId).bind(2, ordinal++).bind(3, w.segment).bind(4, w.startMs)
+            .bind(5, w.endMs).bind(6, w.text).bind(7, static_cast<double>(w.probability));
+        if (!word.run()) { return EngineStatus::DatabaseFailed; }
+    }
+    Statement count(db_, q::kUpdateSpeakerCount);
+    Statement refined(db_, q::kSetRefined);
+    if (!count.bind(1, std::int32_t{0}).bind(2, noteId).run() ||
+        !refined.bind(1, std::int32_t{1}).bind(2, noteId).run()) {
+        return EngineStatus::DatabaseFailed;
+    }
+    if (rebuildChunks(noteId) != EngineStatus::Ok) { return EngineStatus::DatabaseFailed; }
+    return transaction.commit() ? EngineStatus::Ok : EngineStatus::DatabaseFailed;
+}
+
+EngineStatus NoteStore::compactSpeakers(std::int64_t noteId) {
+    // Speakers nobody's segments point at any more go; the rest are numbered
+    // 0..n-1 again, so default labels never skip ("Speaker 1", "Speaker 3").
+    {
+        Statement unused(db_, "DELETE FROM speakers WHERE note_id = ? AND idx NOT IN "
+                              "(SELECT DISTINCT speaker FROM segments WHERE note_id = ? AND speaker >= 0);");
+        if (!unused.bind(1, noteId).bind(2, noteId).run()) { return EngineStatus::DatabaseFailed; }
+    }
+    std::vector<std::int32_t> indices;
+    {
+        Statement list(db_, "SELECT idx FROM speakers WHERE note_id = ? ORDER BY idx;");
+        list.bind(1, noteId);
+        while (list.step() == SQLITE_ROW) { indices.push_back(list.int32(0)); }
+    }
+    // Ascending, so each new index is free: it is below every old one left.
+    for (std::int32_t k = 0; k < static_cast<std::int32_t>(indices.size()); ++k) {
+        const std::int32_t old = indices[static_cast<std::size_t>(k)];
+        if (old == k) { continue; }
+        Statement moveSegments(db_, q::kMoveSpeaker);
+        Statement renumber(db_, "UPDATE speakers SET idx = ? WHERE note_id = ? AND idx = ?;");
+        if (!moveSegments.bind(1, k).bind(2, noteId).bind(3, old).run() ||
+            !renumber.bind(1, k).bind(2, noteId).bind(3, old).run()) {
+            return EngineStatus::DatabaseFailed;
+        }
+    }
+    Statement count(db_, q::kUpdateSpeakerCount);
+    if (!count.bind(1, static_cast<std::int32_t>(indices.size())).bind(2, noteId).run()) {
+        return EngineStatus::DatabaseFailed;
+    }
+    return rebuildChunks(noteId);
+}
+
+EngineStatus NoteStore::setSegmentSpeaker(std::int64_t noteId, std::int64_t segmentId,
+                                          std::int32_t speaker, std::int32_t* outSpeaker) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (db_ == nullptr) { return EngineStatus::DatabaseFailed; }
+    Transaction transaction(db_);
+    if (!transaction.began()) { return EngineStatus::DatabaseFailed; }
+    if (speaker < 0) {
+        Statement max(db_, q::kMaxSpeaker);
+        max.bind(1, noteId);
+        speaker = max.step() == SQLITE_ROW ? max.int32(0) + 1 : 0;
+        Statement add(db_, q::kInsertSpeaker);
+        if (!add.bind(1, noteId).bind(2, speaker).run()) { return EngineStatus::DatabaseFailed; }
+    }
+    Statement update(db_, q::kSetSegmentSpeaker);
+    if (!update.bind(1, speaker).bind(2, segmentId).bind(3, noteId).run() || sqlite3_changes(db_) != 1) {
+        return EngineStatus::DatabaseFailed;
+    }
+    // Where the segment's speaker lands once the rest are renumbered: after
+    // every speaker below it that still has segments.
+    std::int32_t landed = 0;
+    {
+        Statement below(db_, "SELECT COUNT(DISTINCT speaker) FROM segments "
+                             "WHERE note_id = ? AND speaker >= 0 AND speaker < ?;");
+        below.bind(1, noteId).bind(2, speaker);
+        if (below.step() == SQLITE_ROW) { landed = below.int32(0); }
+    }
+    if (compactSpeakers(noteId) != EngineStatus::Ok) { return EngineStatus::DatabaseFailed; }
+    if (outSpeaker != nullptr) { *outSpeaker = landed; }
+    return transaction.commit() ? EngineStatus::Ok : EngineStatus::DatabaseFailed;
+}
+
+EngineStatus NoteStore::mergeSpeakers(std::int64_t noteId, const std::vector<std::int32_t>& speakers,
+                                      std::int32_t into) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (db_ == nullptr) { return EngineStatus::DatabaseFailed; }
+    Transaction transaction(db_);
+    if (!transaction.began()) { return EngineStatus::DatabaseFailed; }
+    for (const std::int32_t from : speakers) {
+        if (from == into) { continue; }
+        Statement move(db_, q::kMoveSpeaker);
+        Statement remove(db_, q::kDeleteSpeaker);
+        if (!move.bind(1, into).bind(2, noteId).bind(3, from).run() ||
+            !remove.bind(1, noteId).bind(2, from).run()) {
+            return EngineStatus::DatabaseFailed;
+        }
+    }
+    if (compactSpeakers(noteId) != EngineStatus::Ok) { return EngineStatus::DatabaseFailed; }
+    return transaction.commit() ? EngineStatus::Ok : EngineStatus::DatabaseFailed;
+}
+
+EngineStatus NoteStore::setLayout(std::int64_t noteId, const std::string& layout) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (db_ == nullptr) { return EngineStatus::DatabaseFailed; }
+    Statement update(db_, q::kSetLayout);
+    if (!update.bind(1, layout).bind(2, noteId).run() || sqlite3_changes(db_) != 1) {
         return EngineStatus::DatabaseFailed;
     }
     return EngineStatus::Ok;

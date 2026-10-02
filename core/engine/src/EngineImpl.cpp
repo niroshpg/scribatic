@@ -75,6 +75,102 @@ bool removeFile(const std::string& path) noexcept {
     return ::unlink(path.c_str()) == 0 || errno == ENOENT;
 }
 
+/// Turns what whisper decoded into segments and their words, `offsetMs` being
+/// where the decoded audio starts in the recording. Shared by the live
+/// windows and the accurate pass after Stop.
+void collectSegments(whisper_context* ctx, std::int64_t offsetMs,
+                     std::vector<TranscriptSegment>& decoded,
+                     std::vector<std::vector<WordTiming>>& decodedWords) {
+    const int count = whisper_full_n_segments(ctx);
+    const whisper_token endOfText = whisper_token_eot(ctx);
+    decoded.reserve(static_cast<std::size_t>(count));
+    decodedWords.reserve(static_cast<std::size_t>(count));
+
+    for (int i = 0; i < count; ++i) {
+        const char* text = whisper_full_get_segment_text(ctx, i);
+        if (text == nullptr) { continue; }
+
+        std::string trimmed(text);
+        const auto first = trimmed.find_first_not_of(" \t\n");
+        if (first == std::string::npos) { continue; }   // silence decodes to blanks
+        trimmed.erase(0, first);
+        const auto last = trimmed.find_last_not_of(" \t\n");
+        if (last != std::string::npos) { trimmed.erase(last + 1); }
+
+        // whisper annotates non-speech rather than emitting nothing:
+        // "[BLANK_AUDIO]", "[SOUND]", "(upbeat music)". Those are the model
+        // describing the audio, not a transcript of it, and a pause in dictation
+        // should leave the transcript untouched rather than push a marker into
+        // it. The bracket convention is how they are distinguished.
+        const bool isAnnotation =
+            (trimmed.front() == '[' && trimmed.back() == ']') ||
+            (trimmed.front() == '(' && trimmed.back() == ')');
+        if (isAnnotation) { continue; }
+
+        TranscriptSegment segment;
+        segment.startMs = offsetMs + whisper_full_get_segment_t0(ctx, i) * 10;
+        segment.endMs   = offsetMs + whisper_full_get_segment_t1(ctx, i) * 10;
+        segment.text    = std::move(trimmed);
+        segment.isFinal = true;
+
+        // Mean token probability, which is what the UI dims a provisional
+        // segment on. Averaged rather than multiplied: a long segment would
+        // otherwise round to zero regardless of how confident it was.
+        const int tokens = whisper_full_n_tokens(ctx, i);
+        float sum = 0.0F;
+        for (int t = 0; t < tokens; ++t) {
+            sum += whisper_full_get_token_p(ctx, i, t);
+        }
+        segment.confidence = tokens > 0 ? sum / static_cast<float>(tokens) : 0.0F;
+
+        // Words, from BPE pieces: a piece with a leading space starts a new
+        // word, anything else continues the current one. Special tokens
+        // (timestamps, start/end markers) sit at or above end-of-text.
+        std::vector<WordTiming> words;
+        std::vector<int> piecesPerWord;
+        for (int t = 0; t < tokens; ++t) {
+            const whisper_token_data data = whisper_full_get_token_data(ctx, i, t);
+            if (data.id >= endOfText) { continue; }
+            const char* piece = whisper_full_get_token_text(ctx, i, t);
+            if (piece == nullptr || *piece == '\0') { continue; }
+
+            // DTW gives the moment each token was spoken; the heuristic t0/t1
+            // pair is the fallback when alignment did not run. Either way,
+            // keep times inside the segment and never running backwards.
+            const std::int64_t spoken = data.t_dtw >= 0 ? data.t_dtw : data.t0;
+            const std::int64_t t0 = std::clamp<std::int64_t>(offsetMs + spoken * 10,
+                                                             segment.startMs, segment.endMs);
+            const std::int64_t t1 = std::clamp<std::int64_t>(offsetMs + data.t1 * 10,
+                                                             t0, segment.endMs);
+
+            if (piece[0] == ' ' || words.empty()) {
+                WordTiming word;
+                word.startMs = words.empty() ? t0 : std::max(t0, words.back().endMs);
+                word.endMs = std::max(t1, word.startMs);
+                word.text = piece;
+                word.probability = data.p;
+                words.push_back(std::move(word));
+                piecesPerWord.push_back(1);
+            } else {
+                words.back().text += piece;
+                words.back().endMs = std::max(words.back().endMs, t1);
+                words.back().probability += data.p;
+                ++piecesPerWord.back();
+            }
+        }
+        for (std::size_t w = 0; w < words.size(); ++w) {
+            words[w].probability /= static_cast<float>(piecesPerWord[w]);
+            // A word lasts until the next one starts. DTW marks onsets only,
+            // and an onset-to-onset span is what overlap with a turn needs.
+            words[w].endMs = w + 1 < words.size() ? std::max(words[w + 1].startMs, words[w].startMs)
+                                                  : segment.endMs;
+        }
+
+        decoded.push_back(std::move(segment));
+        decodedWords.push_back(std::move(words));
+    }
+}
+
 } // namespace
 
 // -- Factory & lifetime -------------------------------------------------------
@@ -387,96 +483,9 @@ EngineStatus EngineImpl::decodeWindow(bool flushing) noexcept {
     // so the offset is what places them in the recording as a whole.
     const std::int64_t offsetMs = (decodedSamples_ * 1000) / static_cast<std::int64_t>(kSampleRate);
 
-    const int count = whisper_full_n_segments(whisper_);
-    const whisper_token endOfText = whisper_token_eot(whisper_);
     std::vector<TranscriptSegment> decoded;
     std::vector<std::vector<WordTiming>> decodedWords;
-    decoded.reserve(static_cast<std::size_t>(count));
-    decodedWords.reserve(static_cast<std::size_t>(count));
-
-    for (int i = 0; i < count; ++i) {
-        const char* text = whisper_full_get_segment_text(whisper_, i);
-        if (text == nullptr) { continue; }
-
-        std::string trimmed(text);
-        const auto first = trimmed.find_first_not_of(" \t\n");
-        if (first == std::string::npos) { continue; }   // silence decodes to blanks
-        trimmed.erase(0, first);
-        const auto last = trimmed.find_last_not_of(" \t\n");
-        if (last != std::string::npos) { trimmed.erase(last + 1); }
-
-        // whisper annotates non-speech rather than emitting nothing:
-        // "[BLANK_AUDIO]", "[SOUND]", "(upbeat music)". Those are the model
-        // describing the audio, not a transcript of it, and a pause in dictation
-        // should leave the transcript untouched rather than push a marker into
-        // it. The bracket convention is how they are distinguished.
-        const bool isAnnotation =
-            (trimmed.front() == '[' && trimmed.back() == ']') ||
-            (trimmed.front() == '(' && trimmed.back() == ')');
-        if (isAnnotation) { continue; }
-
-        TranscriptSegment segment;
-        segment.startMs = offsetMs + whisper_full_get_segment_t0(whisper_, i) * 10;
-        segment.endMs   = offsetMs + whisper_full_get_segment_t1(whisper_, i) * 10;
-        segment.text    = std::move(trimmed);
-        segment.isFinal = true;
-
-        // Mean token probability, which is what the UI dims a provisional
-        // segment on. Averaged rather than multiplied: a long segment would
-        // otherwise round to zero regardless of how confident it was.
-        const int tokens = whisper_full_n_tokens(whisper_, i);
-        float sum = 0.0F;
-        for (int t = 0; t < tokens; ++t) {
-            sum += whisper_full_get_token_p(whisper_, i, t);
-        }
-        segment.confidence = tokens > 0 ? sum / static_cast<float>(tokens) : 0.0F;
-
-        // Words, from BPE pieces: a piece with a leading space starts a new
-        // word, anything else continues the current one. Special tokens
-        // (timestamps, start/end markers) sit at or above end-of-text.
-        std::vector<WordTiming> words;
-        std::vector<int> piecesPerWord;
-        for (int t = 0; t < tokens; ++t) {
-            const whisper_token_data data = whisper_full_get_token_data(whisper_, i, t);
-            if (data.id >= endOfText) { continue; }
-            const char* piece = whisper_full_get_token_text(whisper_, i, t);
-            if (piece == nullptr || *piece == '\0') { continue; }
-
-            // DTW gives the moment each token was spoken; the heuristic t0/t1
-            // pair is the fallback when alignment did not run. Either way,
-            // keep times inside the segment and never running backwards.
-            const std::int64_t spoken = data.t_dtw >= 0 ? data.t_dtw : data.t0;
-            const std::int64_t t0 = std::clamp<std::int64_t>(offsetMs + spoken * 10,
-                                                             segment.startMs, segment.endMs);
-            const std::int64_t t1 = std::clamp<std::int64_t>(offsetMs + data.t1 * 10,
-                                                             t0, segment.endMs);
-
-            if (piece[0] == ' ' || words.empty()) {
-                WordTiming word;
-                word.startMs = words.empty() ? t0 : std::max(t0, words.back().endMs);
-                word.endMs = std::max(t1, word.startMs);
-                word.text = piece;
-                word.probability = data.p;
-                words.push_back(std::move(word));
-                piecesPerWord.push_back(1);
-            } else {
-                words.back().text += piece;
-                words.back().endMs = std::max(words.back().endMs, t1);
-                words.back().probability += data.p;
-                ++piecesPerWord.back();
-            }
-        }
-        for (std::size_t w = 0; w < words.size(); ++w) {
-            words[w].probability /= static_cast<float>(piecesPerWord[w]);
-            // A word lasts until the next one starts. DTW marks onsets only,
-            // and an onset-to-onset span is what overlap with a turn needs.
-            words[w].endMs = w + 1 < words.size() ? std::max(words[w + 1].startMs, words[w].startMs)
-                                                  : segment.endMs;
-        }
-
-        decoded.push_back(std::move(segment));
-        decodedWords.push_back(std::move(words));
-    }
+    collectSegments(whisper_, offsetMs, decoded, decodedWords);
 
     decodedSamples_ += static_cast<std::int64_t>(window_.size());
     window_.clear();
@@ -574,12 +583,19 @@ void EngineImpl::transcribeSpeakersInTheirLanguage(Attribution& attribution,
                                                    const std::vector<SpeakerTurn>& turns,
                                                    const float* samples, std::size_t count,
                                                    const std::string& recordingLanguage) {
-    if (whisper_ == nullptr || whisper_is_multilingual(whisper_) == 0 || count == 0) { return; }
+    if (count == 0) { return; }
     // A pinned language means the user said what everyone speaks.
     {
         std::lock_guard<std::mutex> lock(languageMutex_);
         if (languagePreference_ != "auto") { return; }
     }
+    // A context of its own, never the live one: a new recording may be
+    // transcribing while this note is finished in the background. The
+    // accurate model when there is one: it detects and transcribes better.
+    whisper_context* ctx = loadWhisper(canRefine() ? config_.accurateModelPath : config_.whisperModelPath);
+    if (ctx == nullptr) { return; }
+    struct Free { whisper_context* c; ~Free() { whisper_free(c); } } freeAtEnd{ctx};
+    if (whisper_is_multilingual(ctx) == 0) { return; }
     const int threads = config_.threadCount > 0 ? config_.threadCount : 4;
     const auto sampleAt = [&](std::int64_t ms) {
         return std::min(count, static_cast<std::size_t>(std::max<std::int64_t>(0, ms)) * kSampleRate / 1000);
@@ -610,9 +626,9 @@ void EngineImpl::transcribeSpeakersInTheirLanguage(Attribution& attribution,
         }
         // Under 3 s says too little about a language to overrule the recording's.
         if (sample.size() < kSampleRate * 3) { continue; }
-        if (whisper_pcm_to_mel(whisper_, sample.data(), static_cast<int>(sample.size()), threads) != 0) { continue; }
+        if (whisper_pcm_to_mel(ctx, sample.data(), static_cast<int>(sample.size()), threads) != 0) { continue; }
         std::vector<float> probs(static_cast<std::size_t>(whisper_lang_max_id() + 1), 0.0F);
-        const int id = whisper_lang_auto_detect(whisper_, 0, threads, probs.data());
+        const int id = whisper_lang_auto_detect(ctx, 0, threads, probs.data());
         if (id < 0) { continue; }
         const std::string language = whisper_lang_str(id);
         // Confident, and not the recording's language: worth a second pass.
@@ -628,7 +644,7 @@ void EngineImpl::transcribeSpeakersInTheirLanguage(Attribution& attribution,
         for (const auto& turn : list) {
             const std::size_t from = sampleAt(turn.startMs), to = sampleAt(turn.endMs);
             if (to - from < kSampleRate / 2) { continue; }
-            std::string text = transcribeSpan(samples + from, to - from, language);
+            std::string text = transcribeSpan(ctx, samples + from, to - from, language);
             if (text.empty()) { continue; }
             TranscriptSegment segment;
             segment.startMs    = turn.startMs;
@@ -656,7 +672,115 @@ void EngineImpl::transcribeSpeakersInTheirLanguage(Attribution& attribution,
                      [](const TranscriptSegment& a, const TranscriptSegment& b) { return a.startMs < b.startMs; });
 }
 
-std::string EngineImpl::transcribeSpan(const float* samples, std::size_t count, const std::string& language) {
+whisper_context* EngineImpl::loadWhisper(const std::string& path) const {
+    if (!fileExists(path)) { return nullptr; }
+    whisper_context_params cparams = whisper_context_default_params();
+    cparams.use_gpu              = false;
+    cparams.dtw_token_timestamps = true;   // word timings, for speakers
+    cparams.flash_attn           = false;  // DTW needs the attention weights
+    cparams.dtw_aheads_preset    = alignmentPreset(path);
+    cparams.dtw_n_top            = 2;
+    cparams.dtw_mem_size         = std::size_t{64} * 1024 * 1024;   // 30 s windows, not 5 s
+    return whisper_init_from_file_with_params(path.c_str(), cparams);
+}
+
+bool EngineImpl::canRefine() const noexcept {
+    try {
+        return fileExists(config_.accurateModelPath);
+    } catch (...) {
+        return false;
+    }
+}
+
+float EngineImpl::refineProgress() const noexcept {
+    return refineProgress_.load(std::memory_order_relaxed);
+}
+
+void EngineImpl::cancelRefine() noexcept {
+    refineCancel_.store(true, std::memory_order_release);
+}
+
+EngineStatus EngineImpl::refineTranscript(std::int64_t noteId) {
+    if (!canRefine()) { return EngineStatus::ModelNotFound; }
+    std::lock_guard<std::mutex> lock(refineMutex_);
+    const NoteDetail note = loadNote(noteId);
+    if (note.id == 0) { return EngineStatus::DatabaseFailed; }
+    const std::string name = store_.audioName(noteId);
+    RecordingAudio audio;
+    if (name.empty() || !audio.open(recordingPath(name))) { return EngineStatus::RecordingNotFound; }
+
+    refineCancel_.store(false, std::memory_order_release);
+    refineProgress_.store(0.0F, std::memory_order_relaxed);
+    whisper_context* ctx = loadWhisper(config_.accurateModelPath);
+    if (ctx == nullptr) { return EngineStatus::ModelLoadFailed; }
+    struct Free { whisper_context* c; ~Free() { whisper_free(c); } } freeAtEnd{ctx};
+
+    whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
+    params.n_threads        = config_.threadCount > 0 ? config_.threadCount : 4;
+    params.translate        = false;
+    // The language the preview settled on; per-speaker languages are put
+    // right afterwards, when speakers are identified.
+    const std::string language = whisper_is_multilingual(ctx) != 0 && !note.language.empty() ? note.language : "en";
+    params.language         = language.c_str();
+    params.no_timestamps    = false;
+    params.token_timestamps = true;
+    // Context across whisper's 30 s windows: what the live 5 s slices lack,
+    // and most of why this pass is better (a sentence is no longer cut in two).
+    params.no_context       = false;
+    params.print_progress   = false;
+    params.print_realtime   = false;
+    params.print_timestamps = false;
+    params.print_special    = false;
+    params.progress_callback = [](whisper_context*, whisper_state*, int progress, void* user) {
+        static_cast<std::atomic<float>*>(user)->store(static_cast<float>(progress) / 100.0F, std::memory_order_relaxed);
+    };
+    params.progress_callback_user_data = &refineProgress_;
+    params.abort_callback = [](void* user) -> bool {
+        return static_cast<std::atomic<bool>*>(user)->load(std::memory_order_acquire);
+    };
+    params.abort_callback_user_data = &refineCancel_;
+
+    if (whisper_full(ctx, params, audio.samples(), static_cast<int>(audio.count())) != 0) {
+        return refineCancel_.load(std::memory_order_acquire) ? EngineStatus::Cancelled : EngineStatus::InferenceFailed;
+    }
+    std::vector<TranscriptSegment> decoded;
+    std::vector<std::vector<WordTiming>> decodedWords;
+    collectSegments(ctx, 0, decoded, decodedWords);
+
+    // whisper invents a phrase for a window of silence ("you"), as the live
+    // path found; anything said over near-silence is dropped here as well.
+    std::vector<TranscriptSegment> segments;
+    std::vector<WordTiming> words;
+    for (std::size_t k = 0; k < decoded.size(); ++k) {
+        const auto from = std::min(audio.count(), static_cast<std::size_t>(std::max<std::int64_t>(0, decoded[k].startMs)) * kSampleRate / 1000);
+        const auto to = std::min(audio.count(), static_cast<std::size_t>(std::max<std::int64_t>(0, decoded[k].endMs)) * kSampleRate / 1000);
+        double energy = 0.0;
+        for (std::size_t i = from; i < to; ++i) { energy += static_cast<double>(audio.samples()[i]) * audio.samples()[i]; }
+        if (to <= from || std::sqrt(energy / static_cast<double>(to - from)) < kSilenceRms) { continue; }
+        const auto ordinal = static_cast<std::int32_t>(segments.size());
+        for (auto& word : decodedWords[k]) { word.segment = ordinal; words.push_back(std::move(word)); }
+        segments.push_back(std::move(decoded[k]));
+    }
+    refineProgress_.store(1.0F, std::memory_order_relaxed);
+    return store_.replaceWithRefined(noteId, segments, words);
+}
+
+EngineStatus EngineImpl::setSegmentSpeaker(std::int64_t noteId, std::int64_t segmentId, std::int32_t speaker) {
+    return store_.setSegmentSpeaker(noteId, segmentId, speaker, nullptr);
+}
+
+EngineStatus EngineImpl::mergeSpeakers(std::int64_t noteId, const std::vector<std::int32_t>& speakers,
+                                       std::int32_t into) {
+    return store_.mergeSpeakers(noteId, speakers, into);
+}
+
+EngineStatus EngineImpl::setNoteLayout(std::int64_t noteId, const std::string& layout) {
+    if (layout != "auto" && layout != "discussion" && layout != "lecture") { return EngineStatus::InferenceFailed; }
+    return store_.setLayout(noteId, layout);
+}
+
+std::string EngineImpl::transcribeSpan(whisper_context* ctx, const float* samples, std::size_t count,
+                                       const std::string& language) {
     whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
     params.n_threads        = config_.threadCount > 0 ? config_.threadCount : 4;
     params.language         = language.c_str();
@@ -670,10 +794,10 @@ std::string EngineImpl::transcribeSpan(const float* samples, std::size_t count, 
     // whisper wants at least a second; a shorter turn is padded with silence.
     std::vector<float> padded(samples, samples + count);
     if (padded.size() < kSampleRate + kSampleRate / 10) { padded.resize(kSampleRate + kSampleRate / 10, 0.0F); }
-    if (whisper_full(whisper_, params, padded.data(), static_cast<int>(padded.size())) != 0) { return {}; }
+    if (whisper_full(ctx, params, padded.data(), static_cast<int>(padded.size())) != 0) { return {}; }
     std::string text;
-    for (int i = 0; i < whisper_full_n_segments(whisper_); ++i) {
-        const char* piece = whisper_full_get_segment_text(whisper_, i);
+    for (int i = 0; i < whisper_full_n_segments(ctx); ++i) {
+        const char* piece = whisper_full_get_segment_text(ctx, i);
         if (piece != nullptr) { text += piece; }
     }
     const auto first = text.find_first_not_of(" \t\n");

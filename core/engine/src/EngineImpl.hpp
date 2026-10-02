@@ -50,6 +50,15 @@ public:
                                const std::string& name) override;
     EngineStatus setNoteSummary(std::int64_t noteId, const std::string& summary) override;
     void         setLanguage(const std::string& code) override;
+    bool         canRefine() const noexcept override;
+    EngineStatus refineTranscript(std::int64_t noteId) override;
+    float        refineProgress() const noexcept override;
+    void         cancelRefine() noexcept override;
+    EngineStatus setSegmentSpeaker(std::int64_t noteId, std::int64_t segmentId,
+                                   std::int32_t speaker) override;
+    EngineStatus mergeSpeakers(std::int64_t noteId, const std::vector<std::int32_t>& speakers,
+                               std::int32_t into) override;
+    EngineStatus setNoteLayout(std::int64_t noteId, const std::string& layout) override;
     std::string  sessionLanguage() override;
 
     std::vector<NoteSummary> listNotes() override;
@@ -108,7 +117,16 @@ private:
                                            const std::string& recordingLanguage);
 
     /// whisper over a stretch of the recording in a given language, as text.
-    std::string transcribeSpan(const float* samples, std::size_t count, const std::string& language);
+    std::string transcribeSpan(whisper_context* ctx, const float* samples, std::size_t count,
+                               const std::string& language);
+
+    /// A whisper context of its own, configured as the live one is, for work
+    /// that must not share the live model (it may be transcribing meanwhile).
+    [[nodiscard]] whisper_context* loadWhisper(const std::string& path) const;
+
+    std::mutex         refineMutex_;   // one refinement at a time: ~0.5 GB each
+    std::atomic<bool>  refineCancel_{false};
+    std::atomic<float> refineProgress_{0.0F};
 
     [[nodiscard]] std::string recordingPath(const std::string& name) const;
 
