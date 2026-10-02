@@ -177,6 +177,94 @@ void testConversationIsSplitBetweenTwoSpeakers(const Models& models, const char*
 
 } // namespace
 
+/// Four people, one of whom says little: estimating must keep all four. A
+/// rule that folded speakers with under 2.5 s of speech into others fixed a
+/// two-person chat that came back as six, and merged this quiet speaker away;
+/// merged people cannot be told apart again afterwards.
+void testFourVoicesStayApart(const Models& models) {
+    const std::string fixture = repoPath("models/fixtures/four-speakers-en.wav");
+    if (!exists(fixture)) {
+        std::printf("  skip: no fixture at %s\n", fixture.c_str());
+        return;
+    }
+    std::printf("  four-speakers-en.wav\n");
+    char pattern[] = "/tmp/scribatic-four-XXXXXX";
+    const std::string dir = ::mkdtemp(pattern);
+    const std::string recordings = dir + "/recordings";
+    assert(::mkdir(recordings.c_str(), 0700) == 0);
+    const std::string recording = recordings + "/recording-1.wav";
+    EngineConfig config;
+    config.whisperModelPath = models.whisper;
+    config.llamaModelPath = models.llama;
+    config.segmentationModelPath = models.segmentation;
+    config.speakerEmbeddingModelPath = models.embedding;
+    config.databasePath = dir + "/notes.sqlite";
+    config.recordingsDirectory = recordings;
+    config.threadCount = 4;
+    EngineStatus status = EngineStatus::Ok;
+    EngineInterface* engine = EngineInterface::create(config, &status);
+    assert(engine != nullptr && engine->warmUp() == EngineStatus::Ok);
+    if (!engine->canIdentifySpeakers()) { scribaticEngineRelease(engine); return; }
+    copyFile(fixture, recording);
+    RecordingAudio audio;
+    assert(audio.open(recording));
+    engine->beginSession();
+    for (std::size_t offset = 0; offset < audio.count(); offset += 1600) {
+        engine->pushAudio(audio.samples() + offset, std::min<std::size_t>(1600, audio.count() - offset));
+        engine->runTranscriptionPass();
+    }
+    engine->flush();
+    (void)engine->drainSegments();
+    const std::int64_t id = engine->saveSession("Four", 1700000000, recording);
+    assert(engine->identifySpeakers(id, 0) == EngineStatus::Ok);
+    const std::int32_t count = engine->loadNote(id).speakerCount;
+    std::printf("    estimated %d speakers\n", count);
+    assert(count >= 4 && "four voices must not be merged into fewer");
+    scribaticEngineRelease(engine);
+}
+
+/// Prints what speaker identification makes of any recording: estimated and
+/// told-two. For investigating a tester's note; asserts nothing.
+void diagnoseRecording(const Models& models, const std::string& wav) {
+    std::printf("  diagnose %s\n", wav.c_str());
+    char pattern[] = "/tmp/scribatic-diagnose-XXXXXX";
+    const std::string dir = ::mkdtemp(pattern);
+    const std::string recordings = dir + "/recordings";
+    ::mkdir(recordings.c_str(), 0700);
+    const std::string recording = recordings + "/recording-1.wav";
+    EngineConfig config;
+    config.whisperModelPath = models.whisper;
+    config.llamaModelPath = models.llama;
+    config.segmentationModelPath = models.segmentation;
+    config.speakerEmbeddingModelPath = models.embedding;
+    config.databasePath = dir + "/notes.sqlite";
+    config.recordingsDirectory = recordings;
+    config.threadCount = 4;
+    EngineStatus status = EngineStatus::Ok;
+    EngineInterface* engine = EngineInterface::create(config, &status);
+    if (engine == nullptr || engine->warmUp() != EngineStatus::Ok) { std::printf("    no engine\n"); return; }
+    copyFile(wav, recording);
+    RecordingAudio audio;
+    if (!audio.open(recording)) { std::printf("    cannot read %s\n", wav.c_str()); scribaticEngineRelease(engine); return; }
+    engine->beginSession();
+    for (std::size_t offset = 0; offset < audio.count(); offset += 1600) {
+        engine->pushAudio(audio.samples() + offset, std::min<std::size_t>(1600, audio.count() - offset));
+        engine->runTranscriptionPass();
+    }
+    engine->flush();
+    (void)engine->drainSegments();
+    const std::int64_t id = engine->saveSession("Diagnose", 1700000000, recording);
+    for (const std::int32_t expected : {0, 2}) {
+        engine->identifySpeakers(id, expected);
+        const NoteDetail note = engine->loadNote(id);
+        std::printf("    %s: %d speakers\n", expected == 0 ? "estimated" : "told 2", note.speakerCount);
+        for (const auto& s : note.segments) {
+            std::printf("      [%5.1fs] Speaker %d: %s\n", s.startMs / 1000.0, s.speaker + 1, s.text.c_str());
+        }
+    }
+    scribaticEngineRelease(engine);
+}
+
 /// Two people, two languages: once speakers are known, each one's lines are
 /// in their own language — not the recording's first, which whisper would
 /// have translated the other speaker into, or garbled.
@@ -247,6 +335,11 @@ int main() {
         testConversationIsSplitBetweenTwoSpeakers(models, "models/fixtures/two-speakers-en-2.wav");
         testConversationIsSplitBetweenTwoSpeakers(models, "models/fixtures/two-speakers-en-3.wav");
         testEachSpeakerInTheirLanguage(models);
+        testFourVoicesStayApart(models);
+        // A recording to look at, not to assert on: SCRIBATIC_SPEAKERS_WAV=/path.wav
+        if (const char* extra = std::getenv("SCRIBATIC_SPEAKERS_WAV"); extra != nullptr) {
+            diagnoseRecording(models, extra);
+        }
     }
     std::printf("ok\n");
     return 0;

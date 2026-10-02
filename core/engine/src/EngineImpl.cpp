@@ -558,6 +558,7 @@ EngineStatus EngineImpl::identifySpeakers(std::int64_t noteId, std::int32_t expe
                                      audio.samples(), audio.count(), expectedSpeakers, &status);
     if (status != EngineStatus::Ok) { return status; }
 
+
     const auto words = store_.words(noteId);
     if (words.empty()) { return EngineStatus::Ok; }   // nothing was said to attribute
 
