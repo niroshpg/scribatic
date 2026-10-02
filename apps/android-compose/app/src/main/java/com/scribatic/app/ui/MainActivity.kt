@@ -56,6 +56,8 @@ import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.RadioButton
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.TopAppBar
@@ -99,7 +101,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Date
 
-private fun clock(ms: Long): String = DateUtils.formatElapsedTime(ms / 1000)
+internal fun clock(ms: Long): String = DateUtils.formatElapsedTime(ms / 1000)
 
 private fun speakersLabel(count: Int) = if (count == 1) "1 speaker" else "$count speakers"
 
@@ -866,6 +868,8 @@ private fun NoteScreen(id: Long, state: TranscriptUiState, viewModel: Transcript
     var confirmDeleteRecording by remember { mutableStateOf(false) }
     var confirmDeleteNote by remember { mutableStateOf(false) }
     var identifyMenu by remember { mutableStateOf(false) }
+    var blockMenu by remember { mutableStateOf<TranscriptBlock?>(null) }
+    var merging by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = c.paper,
@@ -931,6 +935,17 @@ private fun NoteScreen(id: Long, state: TranscriptUiState, viewModel: Transcript
                                         },
                                     )
                                 }
+                                if (note.segments.isNotEmpty()) {
+                                    DropdownMenuItem(
+                                        text = { Text(if (note.isLecture) "Show as a discussion" else "Show as a lecture") },
+                                        leadingIcon = { Icon(if (note.isLecture) Icons.speakers else Icons.lecture, contentDescription = null) },
+                                        onClick = {
+                                            menu = false
+                                            viewModel.setLayout(id, if (note.isLecture) "discussion" else "lecture")
+                                        },
+                                    )
+                                    HorizontalDivider(color = c.line)
+                                }
                                 DropdownMenuItem(
                                     text = { Text("Delete note…") },
                                     leadingIcon = { Icon(Icons.delete, contentDescription = null) },
@@ -960,6 +975,12 @@ private fun NoteScreen(id: Long, state: TranscriptUiState, viewModel: Transcript
                     onPlay = { if (state.playingNoteId == id) viewModel.stopPlayback() else viewModel.play(note) },
                     onRename = { renaming = it },
                     extras = { Extensions.noteSections.forEach { section -> section.Content(note, viewModel) } },
+                    finishing = if (state.finishingNoteId == id) state.finishingStep to state.finishingProgress else null,
+                    canImprove = state.canRefine && !note.refined && note.audioPath != null && state.finishingNoteId != id,
+                    onImprove = { viewModel.finishNote(id) },
+                    onSetCount = { identifyMenu = true },
+                    onMerge = { merging = true },
+                    onBlockSpeaker = { blockMenu = it },
                 )
             }
         }
@@ -1014,6 +1035,78 @@ private fun NoteScreen(id: Long, state: TranscriptUiState, viewModel: Transcript
         )
     }
 
+    blockMenu?.let { block ->
+        val current = note?.speakers?.firstOrNull { it.index == block.speaker }
+        AlertDialog(
+            onDismissRequest = { blockMenu = null },
+            title = { Text(current?.displayName ?: "Speaker") },
+            text = {
+                Column {
+                    Text("Who said this part?", style = MaterialTheme.typography.bodyMedium, color = c.inkMuted)
+                    note?.speakers?.filter { it.index != block.speaker }?.forEach { other ->
+                        TextButton(onClick = {
+                            blockMenu = null
+                            viewModel.setBlockSpeaker(id, block.segmentIds, other.index)
+                        }) {
+                            SpeakerAvatar(speakerInitials(other, other.index), other.index, Modifier.size(28.dp))
+                            Text(other.displayName, modifier = Modifier.padding(start = 10.dp))
+                        }
+                    }
+                    TextButton(onClick = {
+                        blockMenu = null
+                        viewModel.setBlockSpeaker(id, block.segmentIds, -1)
+                    }) { Text("Someone new") }
+                    if (current != null) {
+                        HorizontalDivider(color = c.line)
+                        TextButton(onClick = {
+                            blockMenu = null
+                            renaming = current
+                        }) { Text("Rename ${current.displayName}…") }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { blockMenu = null }) { Text("Cancel") } },
+        )
+    }
+
+    if (merging && note != null) {
+        var selected by remember { mutableStateOf(setOf<Int>()) }
+        AlertDialog(
+            onDismissRequest = { merging = false },
+            title = { Text("Merge speakers") },
+            text = {
+                Column {
+                    Text(
+                        "Pick the speakers who are really one person. They take the first one's name.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = c.inkMuted,
+                    )
+                    note.speakers.forEach { speaker ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { selected = if (speaker.index in selected) selected - speaker.index else selected + speaker.index }
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Checkbox(checked = speaker.index in selected, onCheckedChange = null)
+                            SpeakerAvatar(speakerInitials(speaker, speaker.index), speaker.index, Modifier.padding(start = 8.dp).size(28.dp))
+                            Text(speaker.displayName, modifier = Modifier.padding(start = 10.dp), color = c.ink)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = selected.size >= 2, onClick = {
+                    merging = false
+                    viewModel.mergeSpeakers(id, selected.toList(), selected.min())
+                }) { Text("Merge") }
+            },
+            dismissButton = { TextButton(onClick = { merging = false }) { Text("Cancel") } },
+        )
+    }
+
     if (confirmDeleteRecording) {
         AlertDialog(
             onDismissRequest = { confirmDeleteRecording = false },
@@ -1055,6 +1148,14 @@ private fun NoteBody(
     onRename: (SpeakerLabel) -> Unit,
     /** Add-on sections (ext/Extensions.kt), under the player. */
     extras: @Composable () -> Unit,
+    /** The step and progress (-1: unknown) while the note is finished after Stop. */
+    finishing: Pair<String, Float>?,
+    /** Only the live preview is here, and it can be improved. */
+    canImprove: Boolean,
+    onImprove: () -> Unit,
+    onSetCount: () -> Unit,
+    onMerge: () -> Unit,
+    onBlockSpeaker: (TranscriptBlock) -> Unit,
 ) {
     val c = Scribatic.colors
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
@@ -1083,6 +1184,31 @@ private fun NoteBody(
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = c.accent, trackColor = c.lineStrong)
                         Text("Working…", style = MaterialTheme.typography.labelLarge, color = c.inkMuted)
+                    }
+                }
+                if (finishing != null) {
+                    val (step, progress) = finishing
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            if (progress >= 0f) "$step — ${(progress * 100).toInt()}%" else "$step…",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = c.inkMuted,
+                        )
+                        if (progress >= 0f) {
+                            LinearProgressIndicator(progress = { progress.coerceIn(0.02f, 1f) }, modifier = Modifier.fillMaxWidth(), color = c.accent, trackColor = c.fillSecondary)
+                        } else {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = c.accent, trackColor = c.fillSecondary)
+                        }
+                        Text(
+                            "You're reading the live preview; the final transcript replaces it when this is done.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = c.inkSoft,
+                        )
+                    }
+                } else if (canImprove) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Live preview", style = MaterialTheme.typography.labelLarge, color = c.inkMuted, modifier = Modifier.weight(1f))
+                        TextButton(onClick = onImprove) { Text("Improve transcript") }
                     }
                 }
             }
@@ -1121,7 +1247,7 @@ private fun NoteBody(
             item { extras() }
         }
 
-        if (note.speakers.isNotEmpty()) {
+        if (note.speakers.isNotEmpty() && !note.isLecture) {
             item {
                 SectionHeader("Speakers")
                 FlowRow(
@@ -1133,11 +1259,24 @@ private fun NoteBody(
                         SpeakerChip(speaker.displayName, c.speaker(speaker.index)) { onRename(speaker) }
                     }
                 }
+                Row(
+                    modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        speakersLabel(note.speakerCount) + " · not right?",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = c.inkMuted,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = onSetCount, enabled = note.audioPath != null) { Text("Set how many") }
+                    if (note.speakerCount >= 2) TextButton(onClick = onMerge) { Text("Merge") }
+                }
                 Text(
-                    "Tap to name. If one person was split into two, give both the same name.",
+                    "Tap a name to rename. Tap a speaker's icon in the transcript to move that part to someone else.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = c.inkMuted,
-                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),
+                    color = c.inkSoft,
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp),
                 )
             }
         }
@@ -1153,40 +1292,16 @@ private fun NoteBody(
                 )
             }
         }
-        itemsIndexed(note.segments) { index, segment ->
-            // A name only where the speaker changes: a run of one person's
-            // sentences reads as a paragraph.
-            val showsSpeaker = index == 0 || note.segments[index - 1].speaker != segment.speaker
-            SegmentRow(segment, note.speakerName(segment.speaker), showsSpeaker)
+        // A discussion is a card per turn, with whose turn it is; a lecture,
+        // one voice throughout, is a card per paragraph with no one named.
+        val blocks = if (note.isLecture) lectureBlocks(note.segments) else discussionBlocks(note.segments)
+        items(blocks, key = { it.key }) { block ->
+            if (note.isLecture) {
+                LectureCard(block)
+            } else {
+                DiscussionCard(block, note.speakers.firstOrNull { it.index == block.speaker }) { onBlockSpeaker(block) }
+            }
         }
     }
 }
 
-@Composable
-private fun SegmentRow(segment: TranscriptSegment, speakerName: String?, showsSpeaker: Boolean) {
-    val c = Scribatic.colors
-    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
-        if (showsSpeaker) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(top = 8.dp, bottom = 2.dp),
-            ) {
-                if (speakerName != null) {
-                    Box(Modifier.size(8.dp).clip(CircleShape).background(c.speaker(segment.speaker)))
-                    Text(
-                        speakerName,
-                        color = c.speaker(segment.speaker),
-                        fontWeight = FontWeight.SemiBold,
-                        style = MaterialTheme.typography.labelLarge,
-                        modifier = Modifier.weight(1f),
-                    )
-                } else {
-                    Box(Modifier.weight(1f))
-                }
-                Text(clock(segment.startMs), style = MaterialTheme.typography.labelMedium, color = c.inkSoft)
-            }
-        }
-        Text(segment.text, style = MaterialTheme.typography.bodyLarge, color = c.ink)
-    }
-}

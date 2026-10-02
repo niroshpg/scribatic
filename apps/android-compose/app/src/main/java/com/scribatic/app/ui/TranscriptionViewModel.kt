@@ -25,6 +25,7 @@ import com.scribatic.app.ext.Extensions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -80,6 +81,12 @@ data class TranscriptUiState(
     val playChecked: Boolean = false,
     /** Play reported the required pack as failed or cancelled. */
     val playFailed: Boolean = false,
+    /** The accurate model is on the device: notes are finished after Stop. */
+    val canRefine: Boolean = false,
+    /** The note being finished after Stop, what is happening and how far (-1: unknown). */
+    val finishingNoteId: Long? = null,
+    val finishingStep: String = "",
+    val finishingProgress: Float = -1f,
     /** "auto" or the ISO 639-1 code recordings are pinned to. */
     val spokenLanguage: String = AUTO_LANGUAGE,
     /** The recording's language once known; empty while it is being detected. */
@@ -190,6 +197,7 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
                 recordingsDirectory = recordingsDir.absolutePath,
                 segmentationModelPath = path("speaker-segmentation.onnx"),
                 speakerEmbeddingModelPath = path("speaker-embedding.onnx"),
+                accurateModelPath = path("ggml-small-q8_0.bin"),
             )
 
             val created = TranscriptionEngine.create(config)
@@ -211,6 +219,7 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
                     phase = Phase.READY,
                     failure = null,
                     canIdentifySpeakers = created.canIdentifySpeakers(),
+                    canRefine = created.canRefine(),
                     notes = created.listNotes(),
                 )
             }
@@ -471,25 +480,104 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
                 return@launch
             }
 
-            var message: String? = null
-            if (_uiState.value.canIdentifySpeakers) {
-                processing("Identifying speakers")
-                val status = engine.identifySpeakers(id)
-                if (status != EngineStatus.OK) message = "Speakers could not be identified: $status"
-            }
-
+            // The preview is saved: show the note now, and finish it — the
+            // accurate pass, then speakers — in the background.
             _uiState.update {
                 it.copy(
                     phase = Phase.READY,
                     segments = emptyList(),
                     notes = engine.listNotes(),
                     screen = Screen.Note(id),
-                    message = message,
                 )
             }
-            TranscriptionService.hide(getApplication())
             reloadNote(id)
+            finishNote(id)
         }
+    }
+
+    private var finishJob: Job? = null
+
+    /**
+     * The final transcript: the whole recording again with the accurate model,
+     * then speakers from its words. Queued behind any note still finishing.
+     * The "Saving…" notification stays up throughout, unless a new recording
+     * has taken it over.
+     */
+    fun finishNote(id: Long) {
+        val engine = engine ?: return
+        val previous = finishJob
+        lateinit var self: Job
+        self = viewModelScope.launch(Dispatchers.Default) {
+            previous?.join()
+            val note = engine.loadNote(id) ?: return@launch
+            var message: String? = null
+            if (engine.canRefine() && note.audioPath != null) {
+                finishing(id, "Improving transcript", 0f)
+                val poll = launch {
+                    while (true) {
+                        delay(400)
+                        val progress = engine.refineProgress()
+                        _uiState.update { if (it.finishingNoteId == id) it.copy(finishingProgress = progress) else it }
+                        if (!recordingNow()) TranscriptionService.saving(getApplication(), "Improving transcript — ${(progress * 100).toInt()}%")
+                    }
+                }
+                val status = engine.refineTranscript(id)
+                poll.cancel()
+                if (status != EngineStatus.OK && status != EngineStatus.CANCELLED) message = "The transcript could not be improved: $status"
+                reloadNote(id)
+            }
+            if (_uiState.value.canIdentifySpeakers && note.audioPath != null) {
+                finishing(id, "Identifying speakers", -1f)
+                val status = engine.identifySpeakers(id)
+                if (status != EngineStatus.OK) message = "Speakers could not be identified: $status"
+            }
+            _uiState.update {
+                it.copy(
+                    finishingNoteId = null,
+                    finishingStep = "",
+                    notes = engine.listNotes(),
+                    message = message ?: it.message,
+                )
+            }
+            reloadNote(id)
+            if (finishJob === self && !recordingNow()) TranscriptionService.hide(getApplication())
+        }
+        finishJob = self
+    }
+
+    private fun finishing(id: Long, step: String, progress: Float) {
+        _uiState.update { it.copy(finishingNoteId = id, finishingStep = step, finishingProgress = progress) }
+        if (!recordingNow()) TranscriptionService.saving(getApplication(), step)
+    }
+
+    private fun recordingNow() = _uiState.value.phase.let { it == Phase.RECORDING || it == Phase.PAUSED }
+
+    // -- Correcting speakers ------------------------------------------------------
+
+    /** Every segment of a block to [speaker]; a negative one makes a new speaker. */
+    fun setBlockSpeaker(noteId: Long, segmentIds: List<Long>, speaker: Int) = noteOperation(noteId) { engine ->
+        var target = speaker
+        for ((index, segment) in segmentIds.withIndex()) {
+            if (index == 0 && target < 0) {
+                val status = engine.setSegmentSpeaker(noteId, segment, -1)
+                if (status != EngineStatus.OK) return@noteOperation "Could not change the speaker: $status"
+                target = engine.loadNote(noteId)?.segments?.firstOrNull { it.id == segment }?.speaker ?: return@noteOperation null
+            } else {
+                val status = engine.setSegmentSpeaker(noteId, segment, target)
+                if (status != EngineStatus.OK) return@noteOperation "Could not change the speaker: $status"
+            }
+        }
+        null
+    }
+
+    fun mergeSpeakers(noteId: Long, speakers: List<Int>, into: Int) = noteOperation(noteId) { engine ->
+        val status = engine.mergeSpeakers(noteId, speakers, into)
+        if (status != EngineStatus.OK) "Could not merge speakers: $status" else null
+    }
+
+    fun setLayout(noteId: Long, layout: String) = noteOperation(noteId) { engine ->
+        val status = engine.setNoteLayout(noteId, layout)
+        if (status != EngineStatus.OK) "Could not change the layout: $status" else null
     }
 
     // -- Notes ----------------------------------------------------------------------

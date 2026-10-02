@@ -21,6 +21,7 @@ import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Stop
+import androidx.compose.material.icons.rounded.School
 import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.Warning
 
@@ -54,4 +55,5 @@ object Icons {
     val retry = MaterialIcons.Rounded.Refresh
     val back = MaterialIcons.AutoMirrored.Rounded.ArrowBack
     val language = MaterialIcons.Rounded.Translate
+    val lecture = MaterialIcons.Rounded.School
 }

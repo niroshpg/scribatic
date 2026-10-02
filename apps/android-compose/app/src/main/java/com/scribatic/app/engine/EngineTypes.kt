@@ -47,6 +47,8 @@ data class TranscriptSegment(
     val confidence: Float,
     /** Zero-based speaker within the note; -1 until speakers are identified. */
     val speaker: Int = -1,
+    /** The stored segment's id, for correcting its speaker; 0 while recording. */
+    val id: Long = 0,
 )
 
 /** One voice in one note. `displayName` is the name, or "Speaker N". */
@@ -80,7 +82,19 @@ data class NoteDetail(
     val summary: String = "",
     /** ISO 639-1 code of the language it was transcribed in, e.g. "es". */
     val language: String = "en",
+    /** "auto", "discussion" or "lecture"; auto reads one speaker as a lecture. */
+    val layout: String = "auto",
+    /** The accurate pass after Stop has replaced the live preview. */
+    val refined: Boolean = false,
 ) {
+    /** What the note is shown as: a lecture has one voice, so no speaker cards. */
+    val isLecture: Boolean
+        get() = when (layout) {
+            "lecture" -> true
+            "discussion" -> false
+            else -> speakerCount <= 1
+        }
+
     fun speakerName(index: Int): String? = speakers.firstOrNull { it.index == index }?.displayName
 }
 
@@ -97,6 +111,8 @@ data class EngineConfig(
     val recordingsDirectory: String,
     val segmentationModelPath: String,
     val speakerEmbeddingModelPath: String,
+    /** The larger model the whole recording is transcribed with again after Stop. */
+    val accurateModelPath: String = "",
     val threadCount: Int = Runtime.getRuntime().availableProcessors().coerceAtMost(4),
     val useMemoryMapping: Boolean = true,
 )

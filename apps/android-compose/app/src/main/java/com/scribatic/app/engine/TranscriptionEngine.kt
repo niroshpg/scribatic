@@ -49,6 +49,15 @@ class TranscriptionEngine private constructor(
 
     private val nativeHandle = AtomicLong(handle)
 
+    /**
+     * The final pass after Stop and speaker identification: seconds to
+     * minutes each, so apart from [dispatcher], which the live recording's
+     * transcription passes use — a new recording can start meanwhile. The C++
+     * side gives each its own model; the handle lock keeps the engine alive.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val background: CoroutineDispatcher = Dispatchers.Default.limitedParallelism(1)
+
     /** Held for reading by [withHandle], for writing by [close]. */
     private val handleLock = ReentrantReadWriteLock()
     private val closeListeners = CopyOnWriteArrayList<(Long) -> Unit>()
@@ -74,6 +83,7 @@ class TranscriptionEngine private constructor(
                 recordingsDirectory = config.recordingsDirectory,
                 segmentationModelPath = config.segmentationModelPath,
                 speakerEmbeddingModelPath = config.speakerEmbeddingModelPath,
+                accurateModelPath = config.accurateModelPath,
                 threadCount = config.threadCount,
                 useMemoryMapping = config.useMemoryMapping,
             )
@@ -189,8 +199,36 @@ class TranscriptionEngine private constructor(
     fun canIdentifySpeakers(): Boolean = nativeCanIdentifySpeakers(nativeHandle.get())
 
     /** Diarizes the note's recording. [expected] 0 estimates the count. */
-    suspend fun identifySpeakers(noteId: Long, expected: Int = 0): EngineStatus = withContext(dispatcher) {
-        EngineStatus.from(nativeIdentifySpeakers(nativeHandle.get(), noteId, expected))
+    suspend fun identifySpeakers(noteId: Long, expected: Int = 0): EngineStatus = withContext(background) {
+        withHandle { EngineStatus.from(nativeIdentifySpeakers(it, noteId, expected)) }
+    }
+
+    // -- Final transcript --------------------------------------------------------
+
+    /** Whether the accurate model is on the device. */
+    fun canRefine(): Boolean = nativeCanRefine(nativeHandle.get())
+
+    /** The whole recording again with the accurate model; replaces the preview. */
+    suspend fun refineTranscript(noteId: Long): EngineStatus = withContext(background) {
+        withHandle { EngineStatus.from(nativeRefineTranscript(it, noteId)) }
+    }
+
+    fun refineProgress(): Float = nativeRefineProgress(nativeHandle.get())
+
+    fun cancelRefine() = nativeCancelRefine(nativeHandle.get())
+
+    // -- Correcting speakers -------------------------------------------------------
+
+    /** [speaker] < 0 makes a new speaker for the segment. */
+    suspend fun setSegmentSpeaker(noteId: Long, segmentId: Long, speaker: Int): EngineStatus =
+        withContext(dispatcher) { EngineStatus.from(nativeSetSegmentSpeaker(nativeHandle.get(), noteId, segmentId, speaker)) }
+
+    suspend fun mergeSpeakers(noteId: Long, speakers: List<Int>, into: Int): EngineStatus = withContext(dispatcher) {
+        EngineStatus.from(nativeMergeSpeakers(nativeHandle.get(), noteId, speakers.toIntArray(), into))
+    }
+
+    suspend fun setNoteLayout(noteId: Long, layout: String): EngineStatus = withContext(dispatcher) {
+        EngineStatus.from(nativeSetNoteLayout(nativeHandle.get(), noteId, layout))
     }
 
     suspend fun renameSpeaker(noteId: Long, speaker: Int, name: String): EngineStatus =
@@ -233,6 +271,7 @@ class TranscriptionEngine private constructor(
     override fun close() {
         val handle = nativeHandle.getAndSet(0L)
         if (handle == 0L) return
+        nativeCancelRefine(handle)   // a final pass would hold the handle for minutes
         closeListeners.forEach { runCatching { it(handle) } }
         handleLock.write { nativeDestroy(handle) }
     }
@@ -250,6 +289,7 @@ class TranscriptionEngine private constructor(
         text = f[at + 2],
         confidence = f[at + 3].toFloatOrNull() ?: 0f,
         speaker = f[at + 4].toIntOrNull() ?: -1,
+        id = f[at + 5].toLongOrNull() ?: 0L,
     )
 
     /**
@@ -271,6 +311,8 @@ class TranscriptionEngine private constructor(
         }
         val summary = f.getOrNull(at).orEmpty()
         val language = f.getOrNull(at + 1)?.ifEmpty { null } ?: "en"
+        val layout = f.getOrNull(at + 2)?.ifEmpty { null } ?: "auto"
+        val refined = f.getOrNull(at + 3) == "1"
         return NoteDetail(
             id = f[0].toLong(),
             title = f[1],
@@ -282,6 +324,8 @@ class TranscriptionEngine private constructor(
             segments = segments,
             summary = summary,
             language = language,
+            layout = layout,
+            refined = refined,
         )
     }
 
@@ -294,6 +338,7 @@ class TranscriptionEngine private constructor(
         recordingsDirectory: String,
         segmentationModelPath: String,
         speakerEmbeddingModelPath: String,
+        accurateModelPath: String,
         threadCount: Int,
         useMemoryMapping: Boolean,
     ): Long
@@ -309,6 +354,13 @@ class TranscriptionEngine private constructor(
     private external fun nativeIndexNote(handle: Long, noteId: Long, text: String): Int
     private external fun nativeRequestCancel(handle: Long)
     private external fun nativeBeginSession(handle: Long)
+    private external fun nativeCanRefine(handle: Long): Boolean
+    private external fun nativeRefineTranscript(handle: Long, noteId: Long): Int
+    private external fun nativeRefineProgress(handle: Long): Float
+    private external fun nativeCancelRefine(handle: Long)
+    private external fun nativeSetSegmentSpeaker(handle: Long, noteId: Long, segmentId: Long, speaker: Int): Int
+    private external fun nativeMergeSpeakers(handle: Long, noteId: Long, speakers: IntArray, into: Int): Int
+    private external fun nativeSetNoteLayout(handle: Long, noteId: Long, layout: String): Int
     private external fun nativeSetLanguage(handle: Long, code: String)
     private external fun nativeSessionLanguage(handle: Long): String
     private external fun nativeSaveSession(handle: Long, title: String, createdAt: Long, audioPath: String): Long
@@ -327,5 +379,5 @@ class TranscriptionEngine private constructor(
     private external fun nativeRenameSpeaker(handle: Long, noteId: Long, speaker: Int, name: String): Int
 }
 
-private const val SEGMENT_FIELDS = 5
+private const val SEGMENT_FIELDS = 6
 private const val NOTE_FIELDS = 7
