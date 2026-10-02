@@ -97,6 +97,19 @@ private:
     /// of a crash between a file operation and the database write after it.
     void sweepRecordings();
 
+    /// After speakers are known: a speaker whose own speech is confidently in
+    /// another language than the recording's — a bilingual meeting, say — has
+    /// their lines transcribed again, from the audio, in that language. The
+    /// live transcript had them in the recording's first language, which
+    /// whisper translates at best and garbles at worst.
+    void transcribeSpeakersInTheirLanguage(Attribution& attribution,
+                                           const std::vector<SpeakerTurn>& turns,
+                                           const float* samples, std::size_t count,
+                                           const std::string& recordingLanguage);
+
+    /// whisper over a stretch of the recording in a given language, as text.
+    std::string transcribeSpan(const float* samples, std::size_t count, const std::string& language);
+
     [[nodiscard]] std::string recordingPath(const std::string& name) const;
 
     EngineConfig    config_;

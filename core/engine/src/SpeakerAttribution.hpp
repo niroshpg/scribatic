@@ -16,6 +16,7 @@
 #include "scribatic/core/Types.hpp"
 
 #include <cstdint>
+#include <unordered_map>
 #include <string>
 #include <vector>
 
@@ -41,6 +42,8 @@ struct SpeakerTurn {
 struct Attribution {
     std::vector<TranscriptSegment> segments;
     std::int32_t                   speakerCount = 0;
+    /// Diarizer cluster id -> the speaker number segments carry.
+    std::unordered_map<std::int32_t, std::int32_t> speakerOfCluster;
 };
 
 /// Re-cuts `words` into segments that each belong to one speaker.

@@ -177,12 +177,76 @@ void testConversationIsSplitBetweenTwoSpeakers(const Models& models, const char*
 
 } // namespace
 
+/// Two people, two languages: once speakers are known, each one's lines are
+/// in their own language — not the recording's first, which whisper would
+/// have translated the other speaker into, or garbled.
+void testEachSpeakerInTheirLanguage(const Models& models) {
+    const std::string fixture = repoPath("models/fixtures/two-speakers-en-es.wav");
+    if (!exists(fixture)) {
+        std::printf("  skip: no fixture at %s\n", fixture.c_str());
+        return;
+    }
+    std::printf("  two-speakers-en-es.wav\n");
+    char pattern[] = "/tmp/scribatic-bilingual-XXXXXX";
+    const std::string dir = ::mkdtemp(pattern);
+    const std::string recordings = dir + "/recordings";
+    assert(::mkdir(recordings.c_str(), 0700) == 0);
+    const std::string recording = recordings + "/recording-1.wav";
+
+    EngineConfig config;
+    config.whisperModelPath = models.whisper;
+    config.llamaModelPath = models.llama;
+    config.segmentationModelPath = models.segmentation;
+    config.speakerEmbeddingModelPath = models.embedding;
+    config.databasePath = dir + "/notes.sqlite";
+    config.recordingsDirectory = recordings;
+    config.threadCount = 4;
+    EngineStatus status = EngineStatus::Ok;
+    EngineInterface* engine = EngineInterface::create(config, &status);
+    assert(engine != nullptr && engine->warmUp() == EngineStatus::Ok);
+    if (!engine->canIdentifySpeakers()) {
+        std::printf("  skip: built without sherpa-onnx\n");
+        scribaticEngineRelease(engine);
+        return;
+    }
+    copyFile(fixture, recording);
+    RecordingAudio audio;
+    assert(audio.open(recording));
+
+    engine->setLanguage("auto");
+    engine->beginSession();
+    constexpr std::size_t kChunk = 1600;
+    for (std::size_t offset = 0; offset < audio.count(); offset += kChunk) {
+        engine->pushAudio(audio.samples() + offset, std::min(kChunk, audio.count() - offset));
+        engine->runTranscriptionPass();
+    }
+    engine->flush();
+    (void)engine->drainSegments();
+    const std::int64_t id = engine->saveSession("Bilingual", 1700000000, recording);
+    assert(id > 0);
+    std::printf("    recording language: %s\n", engine->loadNote(id).language.c_str());
+
+    assert(engine->identifySpeakers(id, 2) == EngineStatus::Ok);
+    const NoteDetail after = engine->loadNote(id);
+    std::string spanish, english;
+    for (const auto& s : after.segments) {
+        std::printf("    Speaker %d: %s\n", s.speaker + 1, s.text.c_str());
+        (s.speaker == after.segments.front().speaker ? english : spanish) += " " + s.text;
+    }
+    auto has = [](const std::string& text, const char* word) { return text.find(word) != std::string::npos; };
+    assert(after.speakerCount == 2);
+    assert(has(english, "budget") && "the English speaker stays in English");
+    assert((has(spanish, "presupuesto") || has(spanish, "marzo")) && "the Spanish speaker is transcribed in Spanish");
+    scribaticEngineRelease(engine);
+}
+
 int main() {
     std::printf("SpeakerTests\n");
     const Models models;
     if (models.present()) {
         testConversationIsSplitBetweenTwoSpeakers(models, "models/fixtures/two-speakers-en-2.wav");
         testConversationIsSplitBetweenTwoSpeakers(models, "models/fixtures/two-speakers-en-3.wav");
+        testEachSpeakerInTheirLanguage(models);
     }
     std::printf("ok\n");
     return 0;

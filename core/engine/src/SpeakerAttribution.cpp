@@ -97,6 +97,7 @@ Attribution attributeSpeakers(const std::vector<WordTiming>& words,
         label = it->second;
     }
     result.speakerCount = static_cast<std::int32_t>(dense.size());
+    result.speakerOfCluster = dense;
 
     std::string  text;
     float        probabilitySum = 0.0F;

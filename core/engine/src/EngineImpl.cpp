@@ -561,8 +561,124 @@ EngineStatus EngineImpl::identifySpeakers(std::int64_t noteId, std::int32_t expe
     const auto words = store_.words(noteId);
     if (words.empty()) { return EngineStatus::Ok; }   // nothing was said to attribute
 
-    const Attribution attribution = attributeSpeakers(words, turns);
+    Attribution attribution = attributeSpeakers(words, turns);
+    if (attribution.speakerCount > 1) {
+        transcribeSpeakersInTheirLanguage(attribution, turns, audio.samples(), audio.count(),
+                                          loadNote(noteId).language);
+    }
     return store_.replaceTranscript(noteId, attribution.segments, attribution.speakerCount);
+}
+
+void EngineImpl::transcribeSpeakersInTheirLanguage(Attribution& attribution,
+                                                   const std::vector<SpeakerTurn>& turns,
+                                                   const float* samples, std::size_t count,
+                                                   const std::string& recordingLanguage) {
+    if (whisper_ == nullptr || whisper_is_multilingual(whisper_) == 0 || count == 0) { return; }
+    // A pinned language means the user said what everyone speaks.
+    {
+        std::lock_guard<std::mutex> lock(languageMutex_);
+        if (languagePreference_ != "auto") { return; }
+    }
+    const int threads = config_.threadCount > 0 ? config_.threadCount : 4;
+    const auto sampleAt = [&](std::int64_t ms) {
+        return std::min(count, static_cast<std::size_t>(std::max<std::int64_t>(0, ms)) * kSampleRate / 1000);
+    };
+
+    // Each cluster's turns, in order, with gaps under a second closed: the
+    // diarizer cuts a turn at every breath, and whisper does badly on slivers.
+    std::unordered_map<std::int32_t, std::vector<SpeakerTurn>> byCluster;
+    for (const auto& turn : turns) {
+        auto& list = byCluster[turn.speaker];
+        if (!list.empty() && turn.startMs - list.back().endMs < 1000) {
+            list.back().endMs = std::max(list.back().endMs, turn.endMs);
+        } else {
+            list.push_back(turn);
+        }
+    }
+
+    std::vector<TranscriptSegment> replaced;
+    std::vector<std::pair<std::int64_t, std::int64_t>> covered;
+    for (auto& [cluster, list] : byCluster) {
+        // The words were attributed from the live transcript, whose timing
+        // for a translated stretch is off, so this works from the diarizer's
+        // turns — the audio — instead. Up to 20 s of the speaker decides.
+        std::vector<float> sample;
+        for (const auto& turn : list) {
+            sample.insert(sample.end(), samples + sampleAt(turn.startMs), samples + sampleAt(turn.endMs));
+            if (sample.size() >= kSampleRate * 20) { break; }
+        }
+        // Under 3 s says too little about a language to overrule the recording's.
+        if (sample.size() < kSampleRate * 3) { continue; }
+        if (whisper_pcm_to_mel(whisper_, sample.data(), static_cast<int>(sample.size()), threads) != 0) { continue; }
+        std::vector<float> probs(static_cast<std::size_t>(whisper_lang_max_id() + 1), 0.0F);
+        const int id = whisper_lang_auto_detect(whisper_, 0, threads, probs.data());
+        if (id < 0) { continue; }
+        const std::string language = whisper_lang_str(id);
+        // Confident, and not the recording's language: worth a second pass.
+        if (language == recordingLanguage || probs[static_cast<std::size_t>(id)] < 0.6F) { continue; }
+
+        std::int32_t speaker = 0;
+        if (const auto known = attribution.speakerOfCluster.find(cluster); known != attribution.speakerOfCluster.end()) {
+            speaker = known->second;
+        } else {   // every word of theirs had gone to someone else
+            speaker = attribution.speakerCount++;
+            attribution.speakerOfCluster[cluster] = speaker;
+        }
+        for (const auto& turn : list) {
+            const std::size_t from = sampleAt(turn.startMs), to = sampleAt(turn.endMs);
+            if (to - from < kSampleRate / 2) { continue; }
+            std::string text = transcribeSpan(samples + from, to - from, language);
+            if (text.empty()) { continue; }
+            TranscriptSegment segment;
+            segment.startMs    = turn.startMs;
+            segment.endMs      = turn.endMs;
+            segment.text       = std::move(text);
+            segment.speaker    = speaker;
+            segment.isFinal    = true;
+            segment.confidence = 1.0F;
+            replaced.push_back(std::move(segment));
+            covered.emplace_back(turn.startMs, turn.endMs);
+        }
+    }
+    if (replaced.empty()) { return; }
+
+    // Lines of the live transcript inside those turns are what was replaced,
+    // whoever they had been attributed to.
+    auto& segments = attribution.segments;
+    segments.erase(std::remove_if(segments.begin(), segments.end(), [&](const TranscriptSegment& s) {
+        const std::int64_t middle = (s.startMs + s.endMs) / 2;
+        return std::any_of(covered.begin(), covered.end(),
+                           [&](const auto& range) { return middle >= range.first && middle <= range.second; });
+    }), segments.end());
+    segments.insert(segments.end(), replaced.begin(), replaced.end());
+    std::stable_sort(segments.begin(), segments.end(),
+                     [](const TranscriptSegment& a, const TranscriptSegment& b) { return a.startMs < b.startMs; });
+}
+
+std::string EngineImpl::transcribeSpan(const float* samples, std::size_t count, const std::string& language) {
+    whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
+    params.n_threads        = config_.threadCount > 0 ? config_.threadCount : 4;
+    params.language         = language.c_str();
+    params.translate        = false;
+    params.no_timestamps    = true;
+    params.single_segment   = true;
+    params.print_progress   = false;
+    params.print_realtime   = false;
+    params.print_timestamps = false;
+    params.print_special    = false;
+    // whisper wants at least a second; a shorter turn is padded with silence.
+    std::vector<float> padded(samples, samples + count);
+    if (padded.size() < kSampleRate + kSampleRate / 10) { padded.resize(kSampleRate + kSampleRate / 10, 0.0F); }
+    if (whisper_full(whisper_, params, padded.data(), static_cast<int>(padded.size())) != 0) { return {}; }
+    std::string text;
+    for (int i = 0; i < whisper_full_n_segments(whisper_); ++i) {
+        const char* piece = whisper_full_get_segment_text(whisper_, i);
+        if (piece != nullptr) { text += piece; }
+    }
+    const auto first = text.find_first_not_of(" \t\n");
+    if (first == std::string::npos) { return {}; }
+    const auto last = text.find_last_not_of(" \t\n");
+    return text.substr(first, last - first + 1);
 }
 
 EngineStatus EngineImpl::renameSpeaker(std::int64_t noteId, std::int32_t speaker,
