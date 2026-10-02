@@ -157,7 +157,7 @@ public:
                                            std::int32_t speaker) = 0;
 
     /// All of `speakers`' segments go to `into`, which keeps its name.
-    virtual EngineStatus mergeSpeakers(std::int64_t noteId, const std::vector<std::int32_t>& speakers,
+    virtual EngineStatus mergeSpeakers(std::int64_t noteId, const SpeakerList& speakers,
                                        std::int32_t into) = 0;
 
     /// "auto", "discussion" or "lecture".

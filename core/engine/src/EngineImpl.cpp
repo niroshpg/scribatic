@@ -769,7 +769,7 @@ EngineStatus EngineImpl::setSegmentSpeaker(std::int64_t noteId, std::int64_t seg
     return store_.setSegmentSpeaker(noteId, segmentId, speaker, nullptr);
 }
 
-EngineStatus EngineImpl::mergeSpeakers(std::int64_t noteId, const std::vector<std::int32_t>& speakers,
+EngineStatus EngineImpl::mergeSpeakers(std::int64_t noteId, const SpeakerList& speakers,
                                        std::int32_t into) {
     return store_.mergeSpeakers(noteId, speakers, into);
 }

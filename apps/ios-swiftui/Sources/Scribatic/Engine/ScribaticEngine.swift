@@ -179,10 +179,49 @@ actor ScribaticEngine {
         engine.canIdentifySpeakers()
     }
 
-    /// Diarizes the note's recording. Seconds of work per minute of audio, on
-    /// this actor's executor. `expected` 0 estimates the count.
-    func identifySpeakers(_ id: Int64, expected: Int32 = 0) throws {
-        try check(engine.identifySpeakers(id, expected))
+    /// Diarizes the note's recording. Seconds of work per minute of audio, off
+    /// this actor: a new recording's transcription passes must not wait for
+    /// it. The C++ side uses a model of its own for this. `expected` 0
+    /// estimates the count.
+    nonisolated func identifySpeakers(_ id: Int64, expected: Int32 = 0) async throws {
+        nonisolated(unsafe) let engine = self.engine
+        let status = await Task.detached(priority: .utility) { engine.identifySpeakers(id, expected) }.value
+        guard status == .Ok else { throw ScribaticEngineError(status: status) }
+    }
+
+    // MARK: - Final transcript
+
+    /// Whether the accurate model is on the device; stats a file.
+    nonisolated var canRefine: Bool { engine.canRefine() }
+
+    /// The whole recording again with the accurate model, replacing the live
+    /// preview. Minutes for a long recording, so off this actor, like
+    /// `identifySpeakers`; the engine loads its own model for it.
+    nonisolated func refineTranscript(_ id: Int64) async throws {
+        nonisolated(unsafe) let engine = self.engine
+        let status = await Task.detached(priority: .utility) { engine.refineTranscript(id) }.value
+        guard status == .Ok else { throw ScribaticEngineError(status: status) }
+    }
+
+    nonisolated var refineProgress: Float { engine.refineProgress() }
+
+    nonisolated func cancelRefine() { engine.cancelRefine() }
+
+    // MARK: - Correcting speakers
+
+    /// `speaker` < 0 makes a new speaker for the segment.
+    func setSegmentSpeaker(_ id: Int64, segment: Int64, speaker: Int32) throws {
+        try check(engine.setSegmentSpeaker(id, segment, speaker))
+    }
+
+    func mergeSpeakers(_ id: Int64, speakers: [Int32], into: Int32) throws {
+        var list = scribatic.core.SpeakerList()
+        for speaker in speakers { list.push_back(speaker) }
+        try check(engine.mergeSpeakers(id, list, into))
+    }
+
+    func setNoteLayout(_ id: Int64, layout: String) throws {
+        try check(engine.setNoteLayout(id, std.string(layout)))
     }
 
     func renameSpeaker(_ id: Int64, speaker: Int32, name: String) throws {

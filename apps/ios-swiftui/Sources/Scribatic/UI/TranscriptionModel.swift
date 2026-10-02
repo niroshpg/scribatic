@@ -2,6 +2,7 @@ import AVFoundation
 import BackgroundAssets
 import Foundation
 import Observation
+import UIKit
 
 /// `@MainActor` view model. It never performs work itself — it awaits the
 /// `ScribaticEngine` actor and publishes immutable snapshots, so the main actor
@@ -62,6 +63,13 @@ final class TranscriptionModel {
     private(set) var playingNoteID: Int64?
     /// A note-level operation in flight ("Identifying speakers…").
     private(set) var busyNoteID: Int64?
+    /// The accurate model is on the device: notes are finished after Stop.
+    private(set) var canRefine = false
+    /// The note being finished after Stop, what is happening and how far (-1: unknown).
+    private(set) var finishingNoteID: Int64?
+    private(set) var finishingStep = ""
+    private(set) var finishingProgress: Float = -1
+    @ObservationIgnored private var finishChain: Task<Void, Never>?
     /// Bumped whenever a note changes, so an open note screen reloads.
     private(set) var noteRevision = 0
     /// Transient failure from a note operation, for an alert.
@@ -138,6 +146,7 @@ final class TranscriptionModel {
             self.engine = engine
             try await engine.warmUp()
             canIdentifySpeakers = engine.canIdentifySpeakers
+            canRefine = engine.canRefine
             await refreshNotes()
             phase = .ready
         } catch {
@@ -334,8 +343,50 @@ final class TranscriptionModel {
                 return
             }
 
+            await self.refreshNotes()
+            self.segments = []
+            self.phase = .ready
+            // Replace the recorder with the note it produced: the live
+            // preview now, the final transcript once it is finished.
+            self.path = [.note(id)]
+            self.finishNote(id)
+        }
+    }
+
+    /// The final transcript: the whole recording again with the accurate
+    /// model, then speakers from its words. Queued behind any note still
+    /// finishing, so a new recording can start meanwhile.
+    func finishNote(_ id: Int64) {
+        let previous = finishChain
+        finishChain = Task { [weak self] in
+            await previous?.value
+            guard let self, let engine = self.engine else { return }
+            guard let note = await engine.loadNote(id), note.audioURL != nil else { return }
+            // Time to finish if the user leaves the app; iOS may still stop
+            // it, and the note keeps its preview with "Improve transcript".
+            let background = UIApplication.shared.beginBackgroundTask(withName: "Finish transcript")
+            defer {
+                if background != .invalid { UIApplication.shared.endBackgroundTask(background) }
+            }
+            if self.canRefine {
+                self.finishing(id, "Improving transcript", 0)
+                let poll = Task { [weak self] in
+                    while !Task.isCancelled {
+                        try? await Task.sleep(for: .milliseconds(400))
+                        guard let self, self.finishingNoteID == id else { continue }
+                        self.finishingProgress = engine.refineProgress
+                    }
+                }
+                do {
+                    try await engine.refineTranscript(id)
+                } catch {
+                    self.noteError = "The transcript could not be improved: \(error)"
+                }
+                poll.cancel()
+                await self.noteChanged()
+            }
             if self.canIdentifySpeakers {
-                self.phase = .processing("Identifying speakers")
+                self.finishing(id, "Identifying speakers", -1)
                 do {
                     try await engine.identifySpeakers(id)
                 } catch {
@@ -344,13 +395,58 @@ final class TranscriptionModel {
                     self.noteError = "Speakers could not be identified: \(error)"
                 }
             }
-
+            self.finishingNoteID = nil
+            self.finishingStep = ""
             await self.refreshNotes()
-            self.segments = []
-            self.phase = .ready
-            // Replace the recorder with the note it produced.
-            self.path = [.note(id)]
+            await self.noteChanged()
         }
+    }
+
+    private func finishing(_ id: Int64, _ step: String, _ progress: Float) {
+        finishingNoteID = id
+        finishingStep = step
+        finishingProgress = progress
+    }
+
+    // MARK: - Correcting speakers
+
+    /// Every segment of a block to `speaker`; a negative one makes a new speaker.
+    func setBlockSpeaker(_ id: Int64, segments: [Int64], speaker: Int32) async {
+        guard let engine, let first = segments.first else { return }
+        do {
+            var target = speaker
+            if target < 0 {
+                try await engine.setSegmentSpeaker(id, segment: first, speaker: -1)
+                guard let landed = await engine.loadNote(id)?.segments.first(where: { $0.segmentId == first })?.speaker else { return }
+                target = landed
+            }
+            for segment in segments where !(speaker < 0 && segment == first) {
+                try await engine.setSegmentSpeaker(id, segment: segment, speaker: target)
+            }
+        } catch {
+            noteError = "Could not change the speaker: \(error)"
+        }
+        await noteChanged()
+    }
+
+    func mergeSpeakers(_ id: Int64, speakers: [Int32], into: Int32) async {
+        guard let engine else { return }
+        do {
+            try await engine.mergeSpeakers(id, speakers: speakers, into: into)
+        } catch {
+            noteError = "Could not merge speakers: \(error)"
+        }
+        await noteChanged()
+    }
+
+    func setLayout(_ id: Int64, layout: String) async {
+        guard let engine else { return }
+        do {
+            try await engine.setNoteLayout(id, layout: layout)
+        } catch {
+            noteError = "Could not change the layout: \(error)"
+        }
+        await noteChanged()
     }
 
     // MARK: - Notes

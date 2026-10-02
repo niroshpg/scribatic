@@ -50,6 +50,9 @@ enum class EngineState : std::int32_t {
 };
 
 /// Immutable unit of recognised speech emitted by the whisper backend.
+/// Speaker numbers within a note. Named so Swift can build one.
+using SpeakerList = std::vector<std::int32_t>;
+
 struct TranscriptSegment {
     std::int64_t startMs   = 0;
     std::int64_t endMs     = 0;

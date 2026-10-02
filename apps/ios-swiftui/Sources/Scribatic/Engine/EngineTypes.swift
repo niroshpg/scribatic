@@ -24,6 +24,8 @@ struct TranscriptSegmentValue: Identifiable, Sendable, Equatable {
     let isFinal: Bool
     /// Zero-based speaker within the note; -1 until speakers are identified.
     let speaker: Int32
+    /// The stored segment's id, for correcting its speaker; 0 while recording.
+    let segmentId: Int64
 
     init(_ cxx: scribatic.core.TranscriptSegment) {
         self.startMs = cxx.startMs
@@ -32,6 +34,7 @@ struct TranscriptSegmentValue: Identifiable, Sendable, Equatable {
         self.confidence = cxx.confidence
         self.isFinal = cxx.isFinal
         self.speaker = cxx.speaker
+        self.segmentId = cxx.id
     }
 }
 
@@ -84,6 +87,19 @@ struct NoteDetailValue: Identifiable, Sendable, Equatable {
     let summary: String
     /// ISO 639-1 code of the language it was transcribed in, e.g. "es".
     let language: String
+    /// "auto", "discussion" or "lecture"; auto reads one speaker as a lecture.
+    let layout: String
+    /// The accurate pass after Stop has replaced the live preview.
+    let refined: Bool
+
+    /// What the note is shown as: a lecture has one voice, so no speaker cards.
+    var isLecture: Bool {
+        switch layout {
+        case "lecture": true
+        case "discussion": false
+        default: speakerCount <= 1
+        }
+    }
 
     /// nil when the core reports no such note.
     init?(_ cxx: scribatic.core.NoteDetail) {
@@ -100,6 +116,9 @@ struct NoteDetailValue: Identifiable, Sendable, Equatable {
         self.summary = String(cxx.summary)
         let language = String(cxx.language)
         self.language = language.isEmpty ? "en" : language
+        let layout = String(cxx.layout)
+        self.layout = layout.isEmpty ? "auto" : layout
+        self.refined = cxx.refined
     }
 
     func speakerName(_ index: Int32) -> String? {
@@ -138,6 +157,8 @@ extension ScribaticEngine {
         var recordingsDirectory: String = ""
         var segmentationModelPath: String = ""
         var speakerEmbeddingModelPath: String = ""
+        /// The larger model the whole recording is transcribed with again after Stop.
+        var accurateModelPath: String = ""
         var threadCount: Int32 = 4
         var useMemoryMapping = true
 
@@ -155,6 +176,7 @@ extension ScribaticEngine {
             configuration.embedModelPath = path("embed-minilm-l6-v2.gguf", configuration.embedModelPath)
             configuration.segmentationModelPath = path("speaker-segmentation.onnx", configuration.segmentationModelPath)
             configuration.speakerEmbeddingModelPath = path("speaker-embedding.onnx", configuration.speakerEmbeddingModelPath)
+            configuration.accurateModelPath = path("ggml-small-q8_0.bin", configuration.accurateModelPath)
             return configuration
         }
 
@@ -173,7 +195,7 @@ extension ScribaticEngine {
             let store = try Self.privateDirectory(support.appending(path: "store"))
             let recordings = try Self.privateDirectory(support.appending(path: "recordings"))
             let models = ["ggml-base.bin", "insight-q4_k_m.gguf", "embed-minilm-l6-v2.gguf",
-                          "speaker-segmentation.onnx", "speaker-embedding.onnx"]
+                          "speaker-segmentation.onnx", "speaker-embedding.onnx", "ggml-small-q8_0.bin"]
                 .map { support.appending(path: $0) }
             // Weights are re-downloadable and over a gigabyte; backing them
             // up is exactly what Apple's storage guidelines rule out.
@@ -187,7 +209,8 @@ extension ScribaticEngine {
                 databasePath: store.appending(path: "scribatic.sqlite").path(percentEncoded: false),
                 recordingsDirectory: recordings.path(percentEncoded: false),
                 segmentationModelPath: models[3].path(percentEncoded: false),
-                speakerEmbeddingModelPath: models[4].path(percentEncoded: false)
+                speakerEmbeddingModelPath: models[4].path(percentEncoded: false),
+                accurateModelPath: models[5].path(percentEncoded: false)
             )
         }
 
@@ -220,6 +243,7 @@ extension ScribaticEngine {
             config.recordingsDirectory = std.string(recordingsDirectory)
             config.segmentationModelPath = std.string(segmentationModelPath)
             config.speakerEmbeddingModelPath = std.string(speakerEmbeddingModelPath)
+            config.accurateModelPath = std.string(accurateModelPath)
             config.threadCount = threadCount
             config.useMemoryMapping = useMemoryMapping
             return config

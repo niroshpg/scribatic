@@ -56,7 +56,7 @@ public:
     void         cancelRefine() noexcept override;
     EngineStatus setSegmentSpeaker(std::int64_t noteId, std::int64_t segmentId,
                                    std::int32_t speaker) override;
-    EngineStatus mergeSpeakers(std::int64_t noteId, const std::vector<std::int32_t>& speakers,
+    EngineStatus mergeSpeakers(std::int64_t noteId, const SpeakerList& speakers,
                                std::int32_t into) override;
     EngineStatus setNoteLayout(std::int64_t noteId, const std::string& layout) override;
     std::string  sessionLanguage() override;

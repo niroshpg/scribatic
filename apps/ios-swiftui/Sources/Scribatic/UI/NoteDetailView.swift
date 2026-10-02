@@ -17,6 +17,10 @@ struct NoteDetailView: View {
     @State private var confirmDeleteRecording = false
     @State private var confirmDeleteNote = false
     @State private var sharing: SharePayload?
+    @State private var blockMenu: TranscriptBlock?
+    @State private var settingCount = false
+    @State private var merging = false
+    @State private var mergeSelection: Set<Int32> = []
 
     private var isBusy: Bool { model.busyNoteID == noteID }
 
@@ -63,6 +67,34 @@ struct NoteDetailView: View {
         } message: { _ in
             Text("Only on this device, and only for this note. Leave it empty to go back to the numbered label.")
         }
+        .confirmationDialog(blockMenuTitle, isPresented: blockMenuBinding, titleVisibility: .visible,
+                            presenting: blockMenu) { block in
+            if let note {
+                ForEach(note.speakers.filter { $0.index != block.speaker }) { other in
+                    Button("\(other.displayName)") {
+                        Task { await model.setBlockSpeaker(noteID, segments: block.segmentIds, speaker: other.index) }
+                    }
+                }
+                Button("Someone new") {
+                    Task { await model.setBlockSpeaker(noteID, segments: block.segmentIds, speaker: -1) }
+                }
+                if let current = note.speakers.first(where: { $0.index == block.speaker }) {
+                    Button("Rename \(current.displayName)…") {
+                        newName = current.name
+                        renaming = current
+                    }
+                }
+            }
+        } message: { _ in
+            Text("Who said this part?")
+        }
+        .confirmationDialog("How many people were talking?", isPresented: $settingCount, titleVisibility: .visible) {
+            Button("Work it out") { reidentify(0) }
+            ForEach(2...6, id: \.self) { count in
+                Button("\(count) people") { reidentify(Int32(count)) }
+            }
+        }
+        .sheet(isPresented: $merging) { mergeSheet }
         .confirmationDialog("Delete the recording?", isPresented: $confirmDeleteRecording,
                             titleVisibility: .visible) {
             Button("Delete recording", role: .destructive) {
@@ -79,6 +111,55 @@ struct NoteDetailView: View {
         } message: {
             Text("The transcript, the speaker names and the recording are all removed from this device.")
         }
+    }
+
+    private var blockMenuBinding: Binding<Bool> {
+        Binding(get: { blockMenu != nil }, set: { if !$0 { blockMenu = nil } })
+    }
+
+    private var blockMenuTitle: String {
+        guard let block = blockMenu, let note else { return "Speaker" }
+        return note.speakers.first(where: { $0.index == block.speaker })?.displayName ?? "Speaker"
+    }
+
+    private var mergeSheet: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(note?.speakers ?? []) { speaker in
+                        Button {
+                            if mergeSelection.contains(speaker.index) { mergeSelection.remove(speaker.index) }
+                            else { mergeSelection.insert(speaker.index) }
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: mergeSelection.contains(speaker.index) ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(mergeSelection.contains(speaker.index) ? Color.accentColor : Color.inkSoft)
+                                SpeakerAvatar(initials: speakerInitials(speaker, index: speaker.index), index: speaker.index, size: 28)
+                                Text(speaker.displayName).foregroundStyle(Color.ink)
+                            }
+                        }
+                    }
+                } footer: {
+                    Text("Pick the speakers who are really one person. They take the first one's name.")
+                }
+            }
+            .navigationTitle("Merge speakers")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { merging = false } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Merge") {
+                        let chosen = mergeSelection.sorted()
+                        merging = false
+                        if let into = chosen.first {
+                            Task { await model.mergeSpeakers(noteID, speakers: chosen, into: into) }
+                        }
+                    }
+                    .disabled(mergeSelection.count < 2)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 
     private var renamingBinding: Binding<Bool> {
@@ -109,7 +190,7 @@ struct NoteDetailView: View {
             // Headers here are ordinary rows, not pinned section headers: a
             // pinned "Speakers" stays on screen after its chips have scrolled
             // away, and sits over them under the toolbar.
-            if !note.speakers.isEmpty {
+            if !note.speakers.isEmpty && !note.isLecture {
                 headerRow("Speakers")
                 VStack(alignment: .leading, spacing: 8) {
                     FlowLayout(spacing: 8) {
@@ -120,9 +201,26 @@ struct NoteDetailView: View {
                             }
                         }
                     }
-                    Text("Tap to name. If one person was split into two, give both the same name.")
+                    HStack(spacing: 14) {
+                        Text("\(note.speakerCount == 1 ? "1 speaker" : "\(note.speakerCount) speakers") · not right?")
+                            .font(.uiCaption)
+                            .foregroundStyle(Color.inkMuted)
+                        Spacer()
+                        Button("Set how many") { settingCount = true }
+                            .font(.uiLabel)
+                            .disabled(note.audioURL == nil)
+                        if note.speakerCount >= 2 {
+                            Button("Merge") {
+                                mergeSelection = []
+                                merging = true
+                            }
+                            .font(.uiLabel)
+                        }
+                    }
+                    .buttonStyle(.borderless)
+                    Text("Tap a name to rename. Tap a speaker's icon in the transcript to move that part to someone else.")
                         .font(.uiCaption)
-                        .foregroundStyle(Color.inkMuted)
+                        .foregroundStyle(Color.inkSoft)
                 }
                 .listRowBackground(Color.paper)
                 .listRowSeparator(.hidden)
@@ -136,17 +234,20 @@ struct NoteDetailView: View {
                     .listRowBackground(Color.paper)
                     .listRowSeparator(.hidden)
             }
-            ForEach(Array(note.segments.enumerated()), id: \.offset) { index, segment in
-                SegmentRow(
-                    segment: segment,
-                    speakerName: note.speakerName(segment.speaker),
-                    // A name only where the speaker changes: a run of
-                    // one person's sentences reads as a paragraph.
-                    showsSpeaker: index == 0 || note.segments[index - 1].speaker != segment.speaker
-                )
-                // Tight rows: one person's run of sentences should read as a
-                // paragraph, not as a list of separate items.
-                .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 16))
+            // A discussion is a card per turn, with whose turn it is; a
+            // lecture, one voice throughout, is a card per paragraph.
+            ForEach(note.isLecture ? lectureBlocks(note.segments) : discussionBlocks(note.segments)) { block in
+                Group {
+                    if note.isLecture {
+                        LectureCard(block: block)
+                    } else {
+                        DiscussionCard(block: block,
+                                       label: note.speakers.first(where: { $0.index == block.speaker })) {
+                            blockMenu = block
+                        }
+                    }
+                }
+                .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
                 .listRowBackground(Color.paper)
                 .listRowSeparator(.hidden)
             }
@@ -179,6 +280,30 @@ struct NoteDetailView: View {
                     MetaBadge(systemImage: "lock.shield", text: "On this device")
                 } else {
                     MetaChip(systemImage: "waveform.slash", text: "Audio deleted")
+                }
+            }
+            if model.finishingNoteID == note.id {
+                VStack(alignment: .leading, spacing: 6) {
+                    let progress = model.finishingProgress
+                    Text(progress >= 0 ? "\(model.finishingStep) — \(Int(progress * 100))%" : "\(model.finishingStep)…")
+                        .font(.uiLabel)
+                        .foregroundStyle(Color.inkMuted)
+                    if progress >= 0 {
+                        ProgressView(value: Double(max(progress, 0.02)))
+                    } else {
+                        ProgressView().frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    Text("You're reading the live preview; the final transcript replaces it when this is done.")
+                        .font(.uiCaption)
+                        .foregroundStyle(Color.inkSoft)
+                }
+            } else if model.canRefine && !note.refined && note.audioURL != nil {
+                HStack {
+                    Text("Live preview").font(.uiLabel).foregroundStyle(Color.inkMuted)
+                    Spacer()
+                    Button("Improve transcript") { model.finishNote(note.id) }
+                        .font(.uiLabel)
+                        .buttonStyle(.borderless)
                 }
             }
         }
@@ -248,6 +373,13 @@ struct NoteDetailView: View {
                         confirmDeleteRecording = true
                     }
                 }
+                if !note.segments.isEmpty {
+                    Button(note.isLecture ? "Show as a discussion" : "Show as a lecture",
+                           systemImage: note.isLecture ? "person.2" : "graduationcap") {
+                        Task { await model.setLayout(noteID, layout: note.isLecture ? "discussion" : "lecture") }
+                    }
+                    Divider()
+                }
                 Button("Delete note…", systemImage: "trash", role: .destructive) {
                     confirmDeleteNote = true
                 }
@@ -260,37 +392,6 @@ struct NoteDetailView: View {
 
     private func reidentify(_ expected: Int32) {
         Task { await model.identifySpeakers(noteID, expected: expected) }
-    }
-}
-
-private struct SegmentRow: View {
-    let segment: TranscriptSegmentValue
-    let speakerName: String?
-    let showsSpeaker: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            if showsSpeaker {
-                HStack(spacing: 8) {
-                    if let speakerName {
-                        SpeakerDot(index: segment.speaker)
-                        Text(speakerName)
-                            .font(.uiLabel.weight(.semibold))
-                            .foregroundStyle(Color.speaker(segment.speaker))
-                    }
-                    Spacer()
-                    Text(timestamp(segment.startMs))
-                        .font(.timestamp)
-                        .foregroundStyle(Color.inkSoft)
-                }
-                .padding(.top, 12)
-            }
-            Text(segment.text)
-                .font(.uiBody)
-                .foregroundStyle(Color.ink)
-                .textSelection(.enabled)
-        }
-        .accessibilityElement(children: .combine)
     }
 }
 
