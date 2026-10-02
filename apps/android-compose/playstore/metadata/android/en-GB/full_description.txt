@@ -18,7 +18,7 @@ Private by design
 • When you share a transcript, it goes only to the app you pick, and that app sends it
 
 Good to know
-• The speech models download once through Google Play when you first open the app, about 205 MB
+• The speech models download once through Google Play when you first open the app, about 470 MB
 • Accuracy depends on the recording: clear speech close to the phone works best
 • Needs a 64-bit (ARM64) Android phone running Android 9 or later
 

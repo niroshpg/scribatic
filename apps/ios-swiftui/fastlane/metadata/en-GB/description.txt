@@ -18,7 +18,7 @@ Private by design
 • When you share a transcript, it goes only to the app you pick, and that app sends it
 
 Good to know
-• The speech models download once through the App Store when you first open the app, about 205 MB
+• The speech models download once through the App Store when you first open the app, about 470 MB
 • Accuracy depends on the recording: clear speech close to the device works best
 
 Scribatic is built on the open-source whisper.cpp and sherpa-onnx projects. Its source code is public at github.com/niroshpg/scribatic.

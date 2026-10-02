@@ -1,0 +1,6 @@
+Better transcripts, and speakers you can fix.
+• After you stop, Scribatic transcribes the whole recording again for the final text; you read the live version meanwhile
+• Each person's turn is a card with their initials or name
+• Tap a speaker's icon to move that part to someone else, or merge two speakers into one
+• A recording with one voice reads as a lecture; switch layout from the More menu
+• Transcribe in about 99 languages, detected from the first words, each speaker in their own

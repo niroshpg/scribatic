@@ -1,6 +1,6 @@
 Scribatic transcribes speech entirely on the device. There is no account, no login and no server; the app makes no network requests of its own.
 
-On first launch the Models screen appears while the speech models download as Apple-hosted Background Assets (about 205 MB). Tap Continue once they show Installed.
+On first launch the Models screen appears while the speech models download as Apple-hosted Background Assets (about 470 MB). Tap Continue once they show Installed.
 
 To try it: tap the orange microphone button on the Notes screen, which starts recording at once. Speak for a few seconds (or play a conversation near the device), then tap Stop. The note opens with the transcript; speakers are identified when the recording stops. Tap a speaker's name to rename them. Share is in the toolbar; delete options are under More.
 
