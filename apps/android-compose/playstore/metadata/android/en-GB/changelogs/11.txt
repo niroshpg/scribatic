@@ -1,0 +1,4 @@
+More ways to share a note.
+• Share as PDF: the title and transcript as a document
+• Share recording: a small M4A that plays anywhere, or the original WAV
+• Shared files are named after the note
