@@ -21,6 +21,8 @@ struct NoteDetailView: View {
     @State private var settingCount = false
     @State private var merging = false
     @State private var mergeSelection: Set<Int32> = []
+    /// "Preparing the recording — 40%" while a file for the share sheet is made.
+    @State private var preparing: String?
 
     private var isBusy: Bool { model.busyNoteID == noteID }
 
@@ -40,8 +42,8 @@ struct NoteDetailView: View {
         .background(Color.paper)
         .toolbar { if let note { toolbar(note) } }
         .overlay {
-            if isBusy {
-                ProgressView("Identifying speakers")
+            if isBusy || preparing != nil {
+                ProgressView(preparing ?? "Identifying speakers")
                     .font(.uiLabel)
                     .padding(24)
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
@@ -169,8 +171,69 @@ struct NoteDetailView: View {
     private func reload() async {
         note = await model.loadNote(noteID)
         loaded = true
-        shareText = await model.exportTranscript(noteID, anonymise: false)
+        shareText = withSummary(await model.exportTranscript(noteID, anonymise: false), note?.summary ?? "")
         anonymisedShareText = await model.exportTranscript(noteID, anonymise: true)
+    }
+
+    /// The title and date lines, the summary (with its own headings), then
+    /// the turns. Without names the summary is left out too: it names people.
+    private func withSummary(_ transcript: String, _ summary: String) -> String {
+        let summary = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !transcript.isEmpty, !summary.isEmpty else { return transcript }
+        let lines = transcript.components(separatedBy: "\n")
+        let head = lines.prefix(2).joined(separator: "\n")
+        let body = lines.dropFirst(2).joined(separator: "\n").trimmingCharacters(in: .newlines)
+        return "\(head)\n\n\(summary)\n\nTranscript:\n\(body)"
+    }
+
+    // MARK: - Sharing files
+
+    /// The transcript and summary as a PDF, for people who want a document.
+    private func sharePDF(_ note: NoteDetailValue) {
+        Task {
+            preparing = "Preparing the PDF"
+            defer { preparing = nil }
+            let transcript = await model.exportTranscript(noteID, anonymise: false)
+            let names = note.speakers.map(\.displayName)
+            do {
+                // On the main actor: UIKit's print formatters are, and laying
+                // out even an hour's transcript takes well under a second.
+                let url = try ShareFiles.target(name: note.title, extension: "pdf")
+                try ShareFiles.writePDF(to: url, transcript: transcript, summary: note.summary, speakerNames: names)
+                sharing = SharePayload(subject: note.title, file: url)
+            } catch {
+                model.noteError = "The PDF could not be made: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// The recording: as a small M4A (AAC), or the original WAV as recorded.
+    private func shareRecording(_ note: NoteDetailValue, compressed: Bool) {
+        guard let wav = note.audioURL else { return }
+        Task {
+            preparing = "Preparing the recording"
+            defer { preparing = nil }
+            do {
+                let url = try await Task.detached {
+                    let url = try ShareFiles.target(name: note.title, extension: compressed ? "m4a" : "wav")
+                    if compressed {
+                        var shown = -1
+                        try ShareFiles.encodeM4A(wav: wav, to: url) { progress in
+                            let percent = Int(progress * 100)
+                            guard percent != shown else { return }
+                            shown = percent
+                            Task { @MainActor in preparing = "Preparing the recording — \(percent)%" }
+                        }
+                    } else {
+                        try FileManager.default.copyItem(at: wav, to: url)
+                    }
+                    return url
+                }.value
+                sharing = SharePayload(subject: note.title, file: url)
+            } catch {
+                model.noteError = "The recording could not be prepared: \(error.localizedDescription)"
+            }
+        }
     }
 
     // MARK: - Transcript
@@ -346,15 +409,39 @@ struct NoteDetailView: View {
                 Button("Share transcript", systemImage: "square.and.arrow.up") {
                     sharing = SharePayload(subject: note.title, text: shareText)
                 }
+                Button("Share as PDF", systemImage: "doc.richtext") {
+                    sharePDF(note)
+                }
                 if note.speakerCount > 0 {
                     Button("Share without names", systemImage: "person.crop.circle.badge.questionmark") {
                         sharing = SharePayload(subject: note.title, text: anonymisedShareText)
                     }
                 }
+                if note.audioURL != nil {
+                    Divider()
+                    // Sizes from the length: AAC at 32 kbit/s, WAV at 16 kHz × 4 bytes.
+                    let seconds = Double(note.durationMs) / 1000
+                    Menu {
+                        Button {
+                            shareRecording(note, compressed: true)
+                        } label: {
+                            Text("Compressed (M4A)")
+                            Text("About \(fileSize(seconds * 4_000)) · plays anywhere")
+                        }
+                        Button {
+                            shareRecording(note, compressed: false)
+                        } label: {
+                            Text("Original (WAV)")
+                            Text("About \(fileSize(seconds * 64_000)) · as recorded")
+                        }
+                    } label: {
+                        Label("Share recording", systemImage: "waveform")
+                    }
+                }
             } label: {
                 Label("Share", systemImage: "square.and.arrow.up")
             }
-            .disabled(shareText.isEmpty)
+            .disabled(shareText.isEmpty || preparing != nil)
 
             Menu {
                 if note.audioURL != nil {
@@ -410,23 +497,29 @@ struct SpeakerDot: View {
 
 // MARK: - Share sheet
 
+/// Text, or a file made by ShareFiles, for the share sheet.
 struct SharePayload: Identifiable {
     let id = UUID()
     let subject: String
-    let text: String
+    var text: String = ""
+    var file: URL?
 }
 
-/// The system share sheet around plain text. The app sends nothing itself:
-/// whichever app the user picks does, which is why sharing needs no network.
+/// "320 KB", "14 MB", "1.2 GB": roughly, for a choice between sizes.
+private func fileSize(_ bytes: Double) -> String {
+    ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+}
+
+/// The system share sheet around text or a file. The app sends nothing
+/// itself: whichever app the user picks does, which is why sharing needs no
+/// network.
 private struct ShareSheet: UIViewControllerRepresentable {
     let payload: SharePayload
     let onFinish: () -> Void
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        let controller = UIActivityViewController(
-            activityItems: [TextItem(subject: payload.subject, text: payload.text)],
-            applicationActivities: nil
-        )
+        let item: Any = payload.file ?? TextItem(subject: payload.subject, text: payload.text)
+        let controller = UIActivityViewController(activityItems: [item], applicationActivities: nil)
         controller.completionWithItemsHandler = { _, _, _, _ in onFinish() }
         return controller
     }
