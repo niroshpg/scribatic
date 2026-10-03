@@ -1,7 +1,9 @@
 package com.scribatic.app.ui
 
 import android.Manifest
+import android.content.ClipData
 import android.content.Intent
+import androidx.core.content.FileProvider
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -140,16 +142,28 @@ private fun ScribaticApp(viewModel: TranscriptionViewModel = viewModel()) {
     BackHandler(enabled = state.screen != Screen.Notes) { viewModel.back() }
 
     // The share sheet. The app itself sends nothing anywhere: this hands text
-    // to whichever app the user picks, and that app does the sending — which
-    // is why sharing needs no INTERNET permission.
+    // or a file to whichever app the user picks, and that app does the
+    // sending — which is why sharing needs no INTERNET permission.
     LaunchedEffect(state.share) {
         val share = state.share ?: return@LaunchedEffect
-        val send = Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_SUBJECT, share.subject)
-            putExtra(Intent.EXTRA_TEXT, share.text)
+        val send = Intent(Intent.ACTION_SEND).putExtra(Intent.EXTRA_SUBJECT, share.subject)
+        val title = when (share) {
+            is ShareRequest.Text -> {
+                send.type = "text/plain"
+                send.putExtra(Intent.EXTRA_TEXT, share.text)
+                "Share transcript"
+            }
+            is ShareRequest.Attachment -> {
+                // Read access for the chosen app only, for this one file.
+                val uri = FileProvider.getUriForFile(context, "${context.packageName}.share", share.file)
+                send.type = share.mimeType
+                send.putExtra(Intent.EXTRA_STREAM, uri)
+                send.clipData = ClipData.newRawUri(share.file.name, uri)
+                send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                if (share.mimeType.startsWith("audio/")) "Share recording" else "Share PDF"
+            }
         }
-        context.startActivity(Intent.createChooser(send, "Share transcript"))
+        context.startActivity(Intent.createChooser(send, title))
         viewModel.shareHandled()
     }
 
@@ -864,6 +878,7 @@ private fun NoteScreen(id: Long, state: TranscriptUiState, viewModel: Transcript
     val note = state.note
     var menu by remember { mutableStateOf(false) }
     var shareMenu by remember { mutableStateOf(false) }
+    var recordingFormat by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf<SpeakerLabel?>(null) }
     var confirmDeleteRecording by remember { mutableStateOf(false) }
     var confirmDeleteNote by remember { mutableStateOf(false) }
@@ -881,13 +896,9 @@ private fun NoteScreen(id: Long, state: TranscriptUiState, viewModel: Transcript
                 actions = {
                     if (note != null) {
                         Box {
-                            IconButton(
-                                enabled = !state.busy,
-                                onClick = {
-                                    // Only one way to share: skip the menu.
-                                    if (note.speakerCount > 0) shareMenu = true else viewModel.share(id, anonymise = false)
-                                },
-                            ) { Icon(Icons.share, contentDescription = "Share") }
+                            IconButton(enabled = !state.busy, onClick = { shareMenu = true }) {
+                                Icon(Icons.share, contentDescription = "Share")
+                            }
                             DropdownMenu(expanded = shareMenu, onDismissRequest = { shareMenu = false }) {
                                 DropdownMenuItem(
                                     text = { Text("Share transcript") },
@@ -898,13 +909,34 @@ private fun NoteScreen(id: Long, state: TranscriptUiState, viewModel: Transcript
                                     },
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("Share without names") },
-                                    leadingIcon = { Icon(Icons.shareWithoutNames, contentDescription = null) },
+                                    text = { Text("Share as PDF") },
+                                    leadingIcon = { Icon(Icons.sharePdf, contentDescription = null) },
                                     onClick = {
                                         shareMenu = false
-                                        viewModel.share(id, anonymise = true)
+                                        viewModel.sharePdf(id)
                                     },
                                 )
+                                if (note.speakerCount > 0) {
+                                    DropdownMenuItem(
+                                        text = { Text("Share without names") },
+                                        leadingIcon = { Icon(Icons.shareWithoutNames, contentDescription = null) },
+                                        onClick = {
+                                            shareMenu = false
+                                            viewModel.share(id, anonymise = true)
+                                        },
+                                    )
+                                }
+                                if (note.audioPath != null) {
+                                    HorizontalDivider(color = c.line)
+                                    DropdownMenuItem(
+                                        text = { Text("Share recording…") },
+                                        leadingIcon = { Icon(Icons.shareRecording, contentDescription = null) },
+                                        onClick = {
+                                            shareMenu = false
+                                            recordingFormat = true
+                                        },
+                                    )
+                                }
                             }
                         }
                         Box {
@@ -970,7 +1002,7 @@ private fun NoteScreen(id: Long, state: TranscriptUiState, viewModel: Transcript
             } else {
                 NoteBody(
                     note = note,
-                    busy = state.busy,
+                    busy = if (state.busy) state.busyStep ?: "Working…" else null,
                     playing = state.playingNoteId == id,
                     onPlay = { if (state.playingNoteId == id) viewModel.stopPlayback() else viewModel.play(note) },
                     onRename = { renaming = it },
@@ -1070,6 +1102,39 @@ private fun NoteScreen(id: Long, state: TranscriptUiState, viewModel: Transcript
         )
     }
 
+    if (recordingFormat && note != null) {
+        // Sizes from the length: AAC at 32 kbit/s, WAV at 16 kHz × 4 bytes.
+        val seconds = note.durationMs / 1000.0
+        AlertDialog(
+            onDismissRequest = { recordingFormat = false },
+            title = { Text("Share recording") },
+            text = {
+                Column {
+                    TextButton(onClick = {
+                        recordingFormat = false
+                        viewModel.shareRecording(id, compressed = true)
+                    }) {
+                        Column(Modifier.fillMaxWidth()) {
+                            Text("Compressed (M4A)")
+                            Text("About ${fileSize(seconds * 4_000)} · plays anywhere", style = MaterialTheme.typography.bodySmall, color = c.inkMuted)
+                        }
+                    }
+                    TextButton(onClick = {
+                        recordingFormat = false
+                        viewModel.shareRecording(id, compressed = false)
+                    }) {
+                        Column(Modifier.fillMaxWidth()) {
+                            Text("Original (WAV)")
+                            Text("About ${fileSize(seconds * 64_000)} · as recorded", style = MaterialTheme.typography.bodySmall, color = c.inkMuted)
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { recordingFormat = false }) { Text("Cancel") } },
+        )
+    }
+
     if (merging && note != null) {
         var selected by remember { mutableStateOf(setOf<Int>()) }
         AlertDialog(
@@ -1142,7 +1207,8 @@ private fun NoteScreen(id: Long, state: TranscriptUiState, viewModel: Transcript
 @Composable
 private fun NoteBody(
     note: NoteDetail,
-    busy: Boolean,
+    /** What is being done to the note right now, or null. */
+    busy: String?,
     playing: Boolean,
     onPlay: () -> Unit,
     onRename: (SpeakerLabel) -> Unit,
@@ -1180,10 +1246,10 @@ private fun NoteBody(
                         MetaChip(null, "Audio deleted", painterRes = R.drawable.ic_waveform_slash)
                     }
                 }
-                if (busy) {
+                if (busy != null) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = c.accent, trackColor = c.lineStrong)
-                        Text("Working…", style = MaterialTheme.typography.labelLarge, color = c.inkMuted)
+                        Text(busy, style = MaterialTheme.typography.labelLarge, color = c.inkMuted)
                     }
                 }
                 if (finishing != null) {
@@ -1305,3 +1371,9 @@ private fun NoteBody(
     }
 }
 
+/** "320 KB", "14 MB", "1.2 GB": roughly, for a choice between sizes. */
+private fun fileSize(bytes: Double): String = when {
+    bytes < 1e6 -> "${maxOf(1, (bytes / 1e3).toInt())} KB"
+    bytes < 1e9 -> "${(bytes / 1e6).let { if (it < 10) "%.1f".format(it) else it.toInt().toString() }} MB"
+    else -> "${"%.1f".format(bytes / 1e9)} GB"
+}

@@ -161,6 +161,7 @@ dependencies {
     // Rounded icons for every control. R8 strips the ones not referenced.
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.activity:activity-compose:1.9.2")
+    implementation("androidx.core:core:1.13.1")            // FileProvider, for sharing files
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.6")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 

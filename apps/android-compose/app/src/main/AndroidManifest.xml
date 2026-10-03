@@ -47,6 +47,18 @@
             </intent-filter>
         </activity>
 
+        <!-- Hands one exported file (a PDF, a recording) to the app the user
+             picks to share with, read-only and only for that share. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.share"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/share_paths" />
+        </provider>
+
         <service
             android:name=".engine.TranscriptionService"
             android:exported="false"

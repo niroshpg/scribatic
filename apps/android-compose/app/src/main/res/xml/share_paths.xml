@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Files handed to the share sheet: only the cache's share/ folder, which the
+     app fills with the one file being shared and empties before the next. -->
+<paths>
+    <cache-path name="share" path="share/" />
+</paths>

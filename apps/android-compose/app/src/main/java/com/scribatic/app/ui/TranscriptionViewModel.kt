@@ -22,6 +22,7 @@ import com.scribatic.app.engine.TranscriptionEngine
 import com.scribatic.app.engine.TranscriptionService
 import com.scribatic.app.ext.ExtensionHost
 import com.scribatic.app.ext.Extensions
+import com.scribatic.app.share.ShareFiles
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
@@ -52,8 +53,15 @@ sealed interface Screen {
 /** One row of the model setup screen. */
 data class ModelRow(val spec: ModelSpec, val installed: Boolean, val wanted: Boolean)
 
-/** Text the activity should hand to the system share sheet, once. */
-data class ShareRequest(val subject: String, val text: String)
+/** What the activity should hand to the system share sheet, once. */
+sealed interface ShareRequest {
+    val subject: String
+
+    data class Text(override val subject: String, val text: String) : ShareRequest
+
+    /** A file in the cache's share/ folder, handed over through the FileProvider. */
+    data class Attachment(override val subject: String, val file: File, val mimeType: String) : ShareRequest
+}
 
 data class TranscriptUiState(
     val phase: Phase = Phase.STARTING,
@@ -66,6 +74,8 @@ data class TranscriptUiState(
     val canIdentifySpeakers: Boolean = false,
     val playingNoteId: Long? = null,
     val busy: Boolean = false,
+    /** What [busy] is doing, when it is worth saying: "Preparing the recording — 40%". */
+    val busyStep: String? = null,
     val message: String? = null,
     val share: ShareRequest? = null,
     val models: List<ModelRow> = emptyList(),
@@ -616,12 +626,89 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
+    /**
+     * The transcript as text, with the summary above it when the note has one.
+     * Without names, the summary is left out too: it names people.
+     */
     fun share(id: Long, anonymise: Boolean) {
         val engine = engine ?: return
         viewModelScope.launch(Dispatchers.Default) {
-            val text = engine.exportTranscript(id, includeTimestamps = true, anonymise = anonymise)
-            val subject = _uiState.value.note?.title.orEmpty()
-            if (text.isNotEmpty()) _uiState.update { it.copy(share = ShareRequest(subject, text)) }
+            val note = engine.loadNote(id) ?: return@launch
+            val transcript = engine.exportTranscript(id, includeTimestamps = true, anonymise = anonymise)
+            if (transcript.isEmpty()) return@launch
+            val text = if (anonymise || note.summary.isBlank()) transcript else withSummary(transcript, note.summary)
+            _uiState.update { it.copy(share = ShareRequest.Text(note.title, text)) }
+        }
+    }
+
+    /** The title and date lines, the summary (with its own headings), then the turns. */
+    private fun withSummary(transcript: String, summary: String): String {
+        val lines = transcript.lines()
+        val head = lines.take(2).joinToString("\n")
+        val body = lines.drop(2).joinToString("\n").trimStart('\n')
+        return "$head\n\n${summary.trim()}\n\nTranscript:\n$body"
+    }
+
+    /** The transcript and summary as a PDF, for people who want a document. */
+    fun sharePdf(id: Long) {
+        exportFile(id, "Preparing the PDF") { engine, note, onProgress ->
+            val transcript = engine.exportTranscript(id, includeTimestamps = true, anonymise = false)
+            ShareFiles.target(getApplication(), note.title, "pdf").also { file ->
+                ShareFiles.writePdf(file, transcript, note.summary, note.speakers.map { it.displayName })
+                onProgress(1f)
+            } to "application/pdf"
+        }
+    }
+
+    /** The recording: as a small M4A (AAC), or the original WAV as recorded. */
+    fun shareRecording(id: Long, compressed: Boolean) {
+        exportFile(id, "Preparing the recording") { _, note, onProgress ->
+            val wav = File(note.audioPath ?: return@exportFile null)
+            if (!wav.exists()) return@exportFile null
+            if (compressed) {
+                ShareFiles.target(getApplication(), note.title, "m4a").also { file ->
+                    ShareFiles.encodeM4a(wav, file, onProgress)
+                } to "audio/mp4"
+            } else {
+                // Shared through the FileProvider, which only exposes share/.
+                ShareFiles.target(getApplication(), note.title, "wav").also { file ->
+                    wav.copyTo(file, overwrite = true)
+                } to "audio/wav"
+            }
+        }
+    }
+
+    private fun exportFile(
+        id: Long,
+        step: String,
+        make: suspend (TranscriptionEngine, NoteDetail, (Float) -> Unit) -> Pair<File, String>?,
+    ) {
+        val engine = engine ?: return
+        _uiState.update { it.copy(busy = true, busyStep = "$step…") }
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                val note = engine.loadNote(id) ?: return@runCatching null
+                var shown = -1
+                make(engine, note) { progress ->
+                    val percent = (progress * 100).toInt()
+                    if (percent != shown) {
+                        shown = percent
+                        _uiState.update { it.copy(busyStep = "$step — $percent%") }
+                    }
+                }?.let { (file, mime) -> ShareRequest.Attachment(note.title, file, mime) }
+            }
+            _uiState.update {
+                it.copy(
+                    busy = false,
+                    busyStep = null,
+                    share = result.getOrNull() ?: it.share,
+                    message = when {
+                        result.isFailure -> "That could not be prepared: ${result.exceptionOrNull()?.message}"
+                        result.getOrNull() == null -> "There is nothing to share."
+                        else -> it.message
+                    },
+                )
+            }
         }
     }
 

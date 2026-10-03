@@ -2,6 +2,7 @@ package com.scribatic.app.ui
 
 import androidx.compose.material.icons.Icons as MaterialIcons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.AudioFile
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
@@ -15,6 +16,7 @@ import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.NoAccounts
 import androidx.compose.material.icons.rounded.OpenInBrowser
 import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PictureAsPdf
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.RecordVoiceOver
 import androidx.compose.material.icons.rounded.Refresh
@@ -39,6 +41,8 @@ object Icons {
     val play = MaterialIcons.Rounded.PlayArrow
     val share = MaterialIcons.Rounded.Share
     val shareWithoutNames = MaterialIcons.Rounded.NoAccounts
+    val sharePdf = MaterialIcons.Rounded.PictureAsPdf
+    val shareRecording = MaterialIcons.Rounded.AudioFile
     val more = MaterialIcons.Rounded.MoreVert
     val edit = MaterialIcons.Rounded.Edit
     val identifySpeakers = MaterialIcons.Rounded.RecordVoiceOver
