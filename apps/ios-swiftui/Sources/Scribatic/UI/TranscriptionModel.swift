@@ -562,10 +562,18 @@ final class TranscriptionModel {
         }
     }
 
+    /// On backgrounding, which includes the screen locking. A recording keeps
+    /// going under the `audio` background mode, so it keeps the engine too:
+    /// recording, paused, or still flushing and saving after Stop. Hibernating
+    /// then would end the recording and free the model under the flush.
     func hibernate() async {
-        stopRecording()
+        switch phase {
+        case .recording, .paused, .processing:
+            return
+        case .starting, .ready, .failed:
+            break
+        }
         stopPlayback()
-        streamTask?.cancel()
         await engine?.hibernate()
     }
 }
