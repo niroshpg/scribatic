@@ -42,6 +42,7 @@ inline constexpr std::string_view kLoadNote =
 
 inline constexpr std::string_view kSetLayout = "UPDATE notes SET layout = ? WHERE id = ?;";
 inline constexpr std::string_view kSetRefined = "UPDATE notes SET refined = ? WHERE id = ?;";
+inline constexpr std::string_view kSetLocale = "UPDATE notes SET locale = ? WHERE id = ?;";
 inline constexpr std::string_view kDeleteWords = "DELETE FROM words WHERE note_id = ?;";
 
 inline constexpr std::string_view kSetSegmentSpeaker =

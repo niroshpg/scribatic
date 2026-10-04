@@ -102,9 +102,14 @@ private:
     EngineStatus decodeWindow(bool flushing) noexcept;
 
     /// Reconciles the store with the recordings directory: forgets recordings
-    /// whose file is gone, and deletes files no note refers to — the leftovers
-    /// of a crash between a file operation and the database write after it.
+    /// whose file is gone, and recovers files no note refers to — a recording
+    /// the app was closed, killed or crashed during, or a crash between a
+    /// file operation and the database write after it.
     void sweepRecordings();
+
+    /// An unreferenced recording becomes a "Recovered recording" note with no
+    /// transcript yet; one too short or unreadable to be worth it is deleted.
+    void recoverRecording(const std::string& name);
 
     /// After speakers are known: a speaker whose own speech is confidently in
     /// another language than the recording's — a bilingual meeting, say — has

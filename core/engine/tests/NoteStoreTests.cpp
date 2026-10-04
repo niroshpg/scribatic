@@ -336,6 +336,10 @@ void testLayoutAndRefinedPreview() {
     assert(note.speakerCount == 0 && "speakers are identified again from the new words");
     assert(store.words(id).size() == 2 && store.words(id)[1].text == " two");
     assert(note.layout == "lecture" && "the user's layout survives refinement");
+    assert(note.language == "en");
+
+    assert(store.replaceWithRefined(id, {segment(0, 1500, "final one")}, {}, "si") == EngineStatus::Ok);
+    assert(store.load(id, dir).language == "si" && "a detected language becomes the note's");
 }
 
 // -- Engine: recordings on disk -----------------------------------------------------
@@ -409,6 +413,82 @@ void testRecordingLifecycle() {
     scribaticEngineRelease(engine);
 }
 
+/// A mono 16 kHz float32 WAV as a writer leaves it when the app dies before
+/// closing it: RIFF and `data` sizes still 0, the last sample half written.
+void writeUnfinishedWav(const std::string& path, std::size_t samples) {
+    const auto u32 = [](std::uint32_t v) { return std::string(reinterpret_cast<const char*>(&v), 4); };
+    const auto u16 = [](std::uint16_t v) { return std::string(reinterpret_cast<const char*>(&v), 2); };
+    std::string bytes = "RIFF" + u32(0) + "WAVE";
+    bytes += "fmt " + u32(16) + u16(3) + u16(1) + u32(16000) + u32(64000) + u16(4) + u16(32);
+    bytes += "data" + u32(0);
+    for (std::size_t i = 0; i < samples; ++i) {
+        const float sample = 0.25F * static_cast<float>(i % 32) / 32.0F;
+        bytes.append(reinterpret_cast<const char*>(&sample), 4);
+    }
+    bytes += "\x01\x02";   // a torn last sample
+    touch(path, bytes);
+}
+
+std::uint32_t u32At(const std::string& path, std::streamoff offset) {
+    std::ifstream file(path, std::ios::binary);
+    file.seekg(offset);
+    std::uint32_t value = 0;
+    file.read(reinterpret_cast<char*>(&value), 4);
+    return value;
+}
+
+/// A recording the app was killed during is kept as a note rather than swept.
+void testUnfinishedRecordingIsRecovered() {
+    const std::string dir = tempDirectory();
+    const std::string recordings = dir + "/recordings";
+    assert(::mkdir(recordings.c_str(), 0700) == 0);
+    touch(dir + "/whisper.bin", "not a model");
+    touch(dir + "/llama.gguf", "not a model");
+
+    const std::string cut = recordings + "/recording-1790000000123.wav";
+    writeUnfinishedWav(cut, 40000);                                   // 2.5 s
+    writeUnfinishedWav(recordings + "/recording-1790000100000.wav", 8000);   // 0.5 s
+    touch(recordings + "/recording-1790000200000.wav");                 // not audio
+
+    EngineConfig config;
+    config.whisperModelPath = dir + "/whisper.bin";
+    config.llamaModelPath = dir + "/llama.gguf";
+    config.databasePath = dir + "/notes.sqlite";
+    config.recordingsDirectory = recordings;
+    const auto start = [&config] {
+        EngineStatus status = EngineStatus::Ok;
+        EngineInterface* engine = EngineInterface::create(config, &status);
+        assert(engine != nullptr);
+        assert(engine->warmUp() == EngineStatus::ModelLoadFailed);   // after the sweep
+        return engine;
+    };
+
+    EngineInterface* engine = start();
+    const auto notes = engine->listNotes();
+    assert(notes.size() == 1 && "only the recording worth keeping is recovered");
+    assert(notes[0].title == "Recovered recording" && notes[0].hasAudio);
+    assert(notes[0].createdAt == 1790000000 && "started when its name says");
+    assert(notes[0].durationMs == 2500);
+    const NoteDetail note = engine->loadNote(notes[0].id);
+    assert(note.segments.empty() && note.language == "auto" && !note.refined);
+    assert(note.audioPath == cut);
+    assert(!exists(recordings + "/recording-1790000100000.wav") && "too short to keep");
+    assert(!exists(recordings + "/recording-1790000200000.wav") && "not audio");
+
+    struct stat info {};
+    assert(::stat(cut.c_str(), &info) == 0 && info.st_size == 44 + 160000 && "torn sample dropped");
+    assert(u32At(cut, 4) == 36 + 160000 && u32At(cut, 40) == 160000 && "sizes written");
+
+    // Deleted, it stays deleted: the file goes with the note, so the next
+    // launch has nothing to recover.
+    assert(engine->deleteNote(note.id) == EngineStatus::Ok);
+    assert(!exists(cut));
+    scribaticEngineRelease(engine);
+    engine = start();
+    assert(engine->listNotes().empty());
+    scribaticEngineRelease(engine);
+}
+
 // -- Model catalog --------------------------------------------------------------------
 
 void testCatalogPinsEveryModel() {
@@ -464,6 +544,7 @@ int main() {
     testSpeakersCanBeCorrected();
     testLayoutAndRefinedPreview();
     testRecordingLifecycle();
+    testUnfinishedRecordingIsRecovered();
     testCatalogPinsEveryModel();
     testEngineStartsWithoutTheInstructModel();
     std::printf("ok\n");

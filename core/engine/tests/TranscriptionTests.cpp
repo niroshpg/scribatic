@@ -118,6 +118,13 @@ void testSpeechBecomesTranscript() {
     }
 
     assert(engine->warmUp() == EngineStatus::Ok && "weights should load");
+    // The iOS app's lifecycle: warm at launch, hibernate in the background
+    // while idle, warm again before the next recording — and that warm-up
+    // must also be harmless when nothing was hibernated.
+    assert(engine->warmUp() == EngineStatus::Ok && "warm again is a no-op");
+    engine->hibernate();
+    assert(engine->runTranscriptionPass() == EngineStatus::NotInitialized && "hibernated");
+    assert(engine->warmUp() == EngineStatus::Ok && "weights load again after hibernate");
 
     // Push in realistic slices: the ring buffer is the realtime path, and a
     // single giant write would not exercise it the way the audio tap does.

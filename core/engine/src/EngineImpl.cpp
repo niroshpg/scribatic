@@ -14,13 +14,16 @@
 #include "whisper.h"
 
 #include <dirent.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cerrno>
+#include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <unordered_set>
 #include <utility>
 
@@ -73,6 +76,69 @@ whisper_alignment_heads_preset alignmentPreset(const std::string& modelPath) {
 /// Removes a file; a file that is already gone counts as removed.
 bool removeFile(const std::string& path) noexcept {
     return ::unlink(path.c_str()) == 0 || errno == ENOENT;
+}
+
+/// A recording the app never stopped still has the RIFF and `data` sizes the
+/// writer only fills in on close. Sets them from what reached the disk, less a
+/// trailing partial sample, so a player reads it as an ordinary WAV. A file
+/// whose sizes were already written is left as it is.
+bool finishWavHeader(const std::string& path) noexcept {
+    const int fd = ::open(path.c_str(), O_RDWR | O_CLOEXEC);
+    if (fd < 0) { return false; }
+    struct Close { int fd; ~Close() { ::close(fd); } } closeAtEnd{fd};
+
+    struct stat info {};
+    if (::fstat(fd, &info) != 0) { return false; }
+    const auto size = static_cast<std::uint64_t>(info.st_size);
+    unsigned char riff[12];
+    if (::pread(fd, riff, sizeof riff, 0) != static_cast<ssize_t>(sizeof riff) ||
+        std::memcmp(riff, "RIFF", 4) != 0 || std::memcmp(riff + 8, "WAVE", 4) != 0) {
+        return false;
+    }
+
+    std::uint16_t blockAlign = 4;   // mono float32, what both apps write
+    std::uint64_t pos = 12;
+    while (pos + 8 <= size) {
+        unsigned char chunk[8];
+        if (::pread(fd, chunk, sizeof chunk, static_cast<off_t>(pos)) != static_cast<ssize_t>(sizeof chunk)) {
+            return false;
+        }
+        std::uint32_t chunkSize = 0;
+        std::memcpy(&chunkSize, chunk + 4, 4);
+        const std::uint64_t body = pos + 8;
+
+        if (std::memcmp(chunk, "fmt ", 4) == 0) {
+            unsigned char align[2];
+            if (::pread(fd, align, 2, static_cast<off_t>(body + 12)) == 2) {
+                std::memcpy(&blockAlign, align, 2);
+                if (blockAlign == 0) { blockAlign = 4; }
+            }
+        } else if (std::memcmp(chunk, "data", 4) == 0) {
+            if (chunkSize != 0 && chunkSize <= size - body) { return true; }
+            const std::uint64_t dataBytes = (size - body) / blockAlign * blockAlign;
+            if (body + dataBytes - 8 > UINT32_MAX) { return false; }
+            const auto dataSize = static_cast<std::uint32_t>(dataBytes);
+            const auto riffSize = static_cast<std::uint32_t>(body + dataBytes - 8);
+            return ::ftruncate(fd, static_cast<off_t>(body + dataBytes)) == 0 &&
+                   ::pwrite(fd, &dataSize, 4, static_cast<off_t>(pos + 4)) == 4 &&
+                   ::pwrite(fd, &riffSize, 4, 4) == 4;
+        }
+        pos = body + chunkSize + (chunkSize & 1);
+    }
+    return false;
+}
+
+/// When a recording started, in Unix seconds: the millisecond stamp both apps
+/// put in its name, or failing that the file's own time.
+std::int64_t recordingStartedAt(const std::string& path, const std::string& name) {
+    constexpr std::size_t kPrefix = sizeof("recording-") - 1;
+    constexpr std::size_t kSuffix = sizeof(".wav") - 1;
+    const std::string stamp = name.substr(kPrefix, name.size() - kPrefix - kSuffix);
+    char* end = nullptr;
+    const long long millis = std::strtoll(stamp.c_str(), &end, 10);
+    if (!stamp.empty() && end != nullptr && *end == '\0' && millis > 0) { return millis / 1000; }
+    struct stat info {};
+    return ::stat(path.c_str(), &info) == 0 ? static_cast<std::int64_t>(info.st_mtime) : 0;
 }
 
 /// Turns what whisper decoded into segments and their words, `offsetMs` being
@@ -225,11 +291,14 @@ EngineStatus EngineImpl::warmUp() noexcept {
             return EngineStatus::DatabaseFailed;
         }
         // Only at first open, never on a re-warm after hibernate: a sweep
-        // while a recording is being written would delete that recording.
+        // while a recording is being written would take it for a recording
+        // cut short, and recover it as a note of its own.
         sweepRecordings();
     }
 
-    if (config_.useMemoryMapping) {
+    // Mapping again would unmap the weights from under a live context, so a
+    // warm engine keeps them; after hibernate, whisper_ is null and they map.
+    if (config_.useMemoryMapping && whisper_ == nullptr) {
         if (!whisperWeights_.map(config_.whisperModelPath)) {
             state_.store(EngineState::Faulted, std::memory_order_release);
             return EngineStatus::ModelLoadFailed;
@@ -743,6 +812,12 @@ EngineStatus EngineImpl::refineTranscript(std::int64_t noteId) {
     if (whisper_full(ctx, params, audio.samples(), static_cast<int>(audio.count())) != 0) {
         return refineCancel_.load(std::memory_order_acquire) ? EngineStatus::Cancelled : EngineStatus::InferenceFailed;
     }
+    // A recovered recording has no language until this pass detects one.
+    std::string settled;
+    if (note.language == "auto") {
+        const int detected = language == "auto" ? whisper_full_lang_id(ctx) : -1;
+        settled = detected >= 0 ? whisper_lang_str(detected) : "en";
+    }
     std::vector<TranscriptSegment> decoded;
     std::vector<std::vector<WordTiming>> decodedWords;
     collectSegments(ctx, 0, decoded, decodedWords);
@@ -762,7 +837,7 @@ EngineStatus EngineImpl::refineTranscript(std::int64_t noteId) {
         segments.push_back(std::move(decoded[k]));
     }
     refineProgress_.store(1.0F, std::memory_order_relaxed);
-    return store_.replaceWithRefined(noteId, segments, words);
+    return store_.replaceWithRefined(noteId, segments, words, settled);
 }
 
 EngineStatus EngineImpl::setSegmentSpeaker(std::int64_t noteId, std::int64_t segmentId, std::int32_t speaker) {
@@ -827,16 +902,14 @@ EngineStatus EngineImpl::deleteRecording(std::int64_t noteId) {
 }
 
 EngineStatus EngineImpl::deleteNote(std::int64_t noteId) {
-    std::string name;
-    const EngineStatus status = store_.deleteNote(noteId, &name);
-    if (status != EngineStatus::Ok) { return status; }
-    // The row is gone, so a file that will not delete is now unreferenced —
-    // and the next sweep removes unreferenced recordings. Still reported, so
-    // the UI does not claim the audio is gone while it is on disk.
+    // The file before the row: a recording no note refers to is recovered as
+    // a new note at the next launch, so a deleted one must not outlive its
+    // row. If the row then fails to go, the sweep only forgets the file.
+    const std::string name = store_.audioName(noteId);
     if (!name.empty() && !removeFile(recordingPath(name))) {
         return EngineStatus::FileRemovalFailed;
     }
-    return EngineStatus::Ok;
+    return store_.deleteNote(noteId, nullptr);
 }
 
 std::string EngineImpl::exportTranscript(std::int64_t noteId, bool includeTimestamps,
@@ -862,15 +935,37 @@ void EngineImpl::sweepRecordings() {
         }
     }
 
+    std::vector<std::string> unreferenced;
     DIR* directory = ::opendir(config_.recordingsDirectory.c_str());
     if (directory == nullptr) { return; }
     while (const dirent* entry = ::readdir(directory)) {
         const std::string name = entry->d_name;
         if (isRecordingFileName(name) && referenced.count(name) == 0) {
-            (void)removeFile(recordingPath(name));
+            unreferenced.push_back(name);
         }
     }
     ::closedir(directory);
+
+    for (const auto& name : unreferenced) { recoverRecording(name); }
+}
+
+void EngineImpl::recoverRecording(const std::string& name) {
+    const std::string path = recordingPath(name);
+    (void)finishWavHeader(path);
+    std::int64_t durationMs = 0;
+    {
+        RecordingAudio audio;
+        // Under a second is a tap on Record and nothing more, or not audio.
+        if (!audio.open(path) || audio.count() < kSampleRate) {
+            (void)removeFile(path);
+            return;
+        }
+        durationMs = static_cast<std::int64_t>(audio.count() * 1000 / kSampleRate);
+    }
+    // No transcript yet and no language: "Improve transcript" makes both
+    // from the audio. A failed insert leaves the file for the next sweep.
+    (void)store_.insertNote("Recovered recording", recordingStartedAt(path, name), durationMs,
+                            name, {}, {}, "auto");
 }
 
 void EngineImpl::requestCancel() noexcept {

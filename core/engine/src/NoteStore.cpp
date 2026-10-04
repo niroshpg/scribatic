@@ -379,7 +379,8 @@ EngineStatus NoteStore::setSummary(std::int64_t noteId, const std::string& summa
 
 EngineStatus NoteStore::replaceWithRefined(std::int64_t noteId,
                                           const std::vector<TranscriptSegment>& segments,
-                                          const std::vector<WordTiming>& words) {
+                                          const std::vector<WordTiming>& words,
+                                          const std::string& language) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (db_ == nullptr) { return EngineStatus::DatabaseFailed; }
     Transaction transaction(db_);
@@ -406,6 +407,10 @@ EngineStatus NoteStore::replaceWithRefined(std::int64_t noteId,
     if (!count.bind(1, std::int32_t{0}).bind(2, noteId).run() ||
         !refined.bind(1, std::int32_t{1}).bind(2, noteId).run()) {
         return EngineStatus::DatabaseFailed;
+    }
+    if (!language.empty()) {
+        Statement locale(db_, q::kSetLocale);
+        if (!locale.bind(1, language).bind(2, noteId).run()) { return EngineStatus::DatabaseFailed; }
     }
     if (rebuildChunks(noteId) != EngineStatus::Ok) { return EngineStatus::DatabaseFailed; }
     return transaction.commit() ? EngineStatus::Ok : EngineStatus::DatabaseFailed;

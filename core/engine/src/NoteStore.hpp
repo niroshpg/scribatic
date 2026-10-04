@@ -65,10 +65,12 @@ public:
 
     /// The accurate pass's result: segments and words replace the preview's,
     /// speakers are cleared (they are identified from the new words) and the
-    /// note is marked refined.
+    /// note is marked refined. A non-empty `language` becomes the note's: the
+    /// one detected for a recovered recording, which had none.
     EngineStatus replaceWithRefined(std::int64_t noteId,
                                     const std::vector<TranscriptSegment>& segments,
-                                    const std::vector<WordTiming>& words);
+                                    const std::vector<WordTiming>& words,
+                                    const std::string& language = {});
 
     /// Gives one segment to `speaker`, or to a new speaker when it is
     /// negative; `outSpeaker` gets the speaker it ended up with. Speakers
