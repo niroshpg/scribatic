@@ -14,7 +14,24 @@ import Foundation
 /// Persisting the audio is deliberately NOT done on the render thread. The
 /// buffer is copied and the write dispatched to a serial queue, because
 /// `AVAudioFile.write` touches the filesystem and has no realtime guarantee.
+///
+/// ## When iOS takes the microphone away
+/// A call, Siri or an alarm interrupts the session, and the engine stops
+/// without a word; so does a change of input hardware, such as AirPods
+/// connecting. Interruptions are reported through `onEvent` for the recorder
+/// to pause and resume; a hardware change is handled here, by rebuilding the
+/// tap for the new input and carrying on into the same file.
 final class AudioCapture {
+
+    enum Event {
+        /// Another app or a call has the microphone; capture has stopped.
+        case interruptionBegan
+        /// The microphone is back. `shouldResume` is iOS saying recording
+        /// may pick up again without the user asking.
+        case interruptionEnded(shouldResume: Bool)
+        /// Capture cannot continue; what was recorded is intact.
+        case failed(String)
+    }
 
     enum CaptureError: LocalizedError {
         case permissionDenied
@@ -41,14 +58,22 @@ final class AudioCapture {
         interleaved: false
     )!
 
-    private let audioEngine = AVAudioEngine()
+    /// New for every recording: one that lived through a media services
+    /// reset is unusable, and there is no telling which those are.
+    private var audioEngine = AVAudioEngine()
     private let writeQueue = DispatchQueue(label: "com.scribatic.audio.write", qos: .utility)
 
     private var converter: AVAudioConverter?
     private var file: AVAudioFile?
+    private var sink: (@Sendable (UnsafePointer<Float>, Int) -> Void)?
+    private var observers: [NSObjectProtocol] = []
 
     private(set) var isRunning = false
+    private var isPaused = false
     private(set) var recordingURL: URL?
+
+    /// Delivered on the main actor, from the time capture starts until it stops.
+    var onEvent: (@MainActor (Event) -> Void)?
 
     #if DEBUG
     private var injected: InjectedAudioSource?
@@ -123,34 +148,25 @@ final class AudioCapture {
         try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
         try session.setActive(true)
 
-        let input = audioEngine.inputNode
-        let inputFormat = input.outputFormat(forBus: 0)
-        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
-            throw CaptureError.noInputAvailable
-        }
-
-        guard let converter = AVAudioConverter(from: inputFormat, to: Self.targetFormat) else {
-            throw CaptureError.converterUnavailable
-        }
-        self.converter = converter
+        audioEngine = AVAudioEngine()
+        self.sink = sink
+        try installTap()
 
         self.file = try AVAudioFile(forWriting: url, settings: Self.fileSettings)
         self.recordingURL = url
 
-        input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
-            guard let self else { return }
-            self.handle(buffer: buffer, sink: sink)
-        }
-
         audioEngine.prepare()
         try audioEngine.start()
         isRunning = true
+        isPaused = false
+        observe()
     }
 
     /// Leaves the tap installed and the file open; only the engine is paused, so
     /// resuming does not start a new recording.
     func pause() {
         guard isRunning else { return }
+        isPaused = true
         #if DEBUG
         if let injected { injected.pause(); return }
         #endif
@@ -160,14 +176,19 @@ final class AudioCapture {
     func resume() throws {
         guard isRunning else { return }
         #if DEBUG
-        if let injected { injected.resume(); return }
+        if let injected { injected.resume(); isPaused = false; return }
         #endif
+        // An interruption deactivated the session; after a manual pause this
+        // is a no-op.
+        try AVAudioSession.sharedInstance().setActive(true)
         try audioEngine.start()
+        isPaused = false
     }
 
     func stop() {
         guard isRunning else { return }
         isRunning = false
+        isPaused = false
 
         #if DEBUG
         if let injected {
@@ -178,6 +199,8 @@ final class AudioCapture {
         }
         #endif
 
+        observers.forEach(NotificationCenter.default.removeObserver)
+        observers = []
         audioEngine.inputNode.removeTap(onBus: 0)
         audioEngine.stop()
 
@@ -185,8 +208,89 @@ final class AudioCapture {
         // released while a write is still in flight.
         writeQueue.sync { self.file = nil }
         converter = nil
+        sink = nil
 
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+
+    // MARK: - Interruptions and hardware changes
+
+    /// The converter is built for the input's current format, which is the
+    /// hardware's: it changes when the input does.
+    private func installTap() throws {
+        guard let sink else { return }
+        let input = audioEngine.inputNode
+        let inputFormat = input.outputFormat(forBus: 0)
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+            throw CaptureError.noInputAvailable
+        }
+        guard let converter = AVAudioConverter(from: inputFormat, to: Self.targetFormat) else {
+            throw CaptureError.converterUnavailable
+        }
+        self.converter = converter
+
+        input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
+            guard let self else { return }
+            self.handle(buffer: buffer, sink: sink)
+        }
+    }
+
+    private func observe() {
+        let center = NotificationCenter.default
+        // The blocks are @Sendable and this class is not; they run on the
+        // main queue, which is where every other use of it happens.
+        nonisolated(unsafe) let capture = self
+
+        observers.append(center.addObserver(
+            forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
+        ) { note in
+            let info = note.userInfo
+            guard let raw = info?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+            let options = AVAudioSession.InterruptionOptions(
+                rawValue: info?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0)
+            MainActor.assumeIsolated {
+                switch type {
+                case .began:
+                    capture.onEvent?(.interruptionBegan)
+                case .ended:
+                    capture.onEvent?(.interruptionEnded(shouldResume: options.contains(.shouldResume)))
+                @unknown default:
+                    break
+                }
+            }
+        })
+
+        observers.append(center.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: audioEngine, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { capture.inputChanged() }
+        })
+
+        observers.append(center.addObserver(
+            forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated {
+                capture.onEvent?(.failed("The microphone stopped working."))
+            }
+        })
+    }
+
+    /// The engine has stopped itself for new input hardware. A new tap for the
+    /// new format, then on into the same file — unless paused, when resuming
+    /// starts the engine.
+    @MainActor private func inputChanged() {
+        guard isRunning else { return }
+        audioEngine.inputNode.removeTap(onBus: 0)
+        do {
+            try installTap()
+            if !isPaused {
+                audioEngine.prepare()
+                try audioEngine.start()
+            }
+        } catch {
+            onEvent?(.failed("The microphone stopped working."))
+        }
     }
 
     // MARK: - Render thread

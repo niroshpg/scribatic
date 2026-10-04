@@ -118,6 +118,9 @@ final class TranscriptionModel {
     private var streamTask: Task<Void, Never>?
     private let capture = AudioCapture()
     private var recordingStartedAt = Date()
+    /// Paused by an interruption rather than by the user, so it may resume
+    /// by itself when the interruption ends.
+    @ObservationIgnored private var pausedByInterruption = false
     private var player: AVAudioPlayer?
     private var playerDelegate: PlayerDelegate?
 
@@ -280,12 +283,16 @@ final class TranscriptionModel {
 
         do {
             try await AudioCapture.requestPermission()
+            // Backgrounding while idle hibernated it; a no-op when warm.
+            try await engine.warmUp()
             await engine.setLanguage(spokenLanguage)
             await engine.beginSession()
             segments = []
             sessionLanguage = ""
             recordingStartedAt = Date()
             let url = AudioCapture.newRecordingURL(in: URL(filePath: configuration.recordingsDirectory))
+            capture.onEvent = { [weak self] event in self?.captureEvent(event) }
+            pausedByInterruption = false
             try capture.start(writingTo: url) { buffer, frameCount in
                 // Render thread. nonisolated by design — the lock-free ring
                 // buffer on the C++ side is what makes this safe.
@@ -306,11 +313,44 @@ final class TranscriptionModel {
 
     func resumeRecording() {
         guard phase == .paused else { return }
+        pausedByInterruption = false
         do {
             try capture.resume()
             phase = .recording
         } catch {
-            phase = .failed(error.localizedDescription)
+            stopAfterFailure("Recording could not resume: \(error.localizedDescription)")
+        }
+    }
+
+    /// Mid-recording, a failure must not leave the microphone open behind an
+    /// error screen with no way to stop it: stop, save what was recorded (the
+    /// accurate pass then transcribes all of it), and say why.
+    private func stopAfterFailure(_ message: String) {
+        if phase == .recording || phase == .paused {
+            stopRecording()
+            noteError = "\(message)\n\nEverything recorded up to then has been saved."
+        } else {
+            phase = .failed(message)
+        }
+    }
+
+    /// A call, Siri or an alarm pauses the recording, as the Pause button
+    /// would; iOS says when it may carry on, and otherwise Resume does. A
+    /// failure stops and saves, so the note keeps everything up to it.
+    private func captureEvent(_ event: AudioCapture.Event) {
+        switch event {
+        case .interruptionBegan:
+            guard phase == .recording else { return }
+            pauseRecording()
+            pausedByInterruption = true
+        case let .interruptionEnded(shouldResume):
+            guard phase == .paused, pausedByInterruption else { return }
+            if shouldResume {
+                resumeRecording()
+            }
+        case let .failed(message):
+            guard phase == .recording || phase == .paused else { return }
+            stopAfterFailure(message)
         }
     }
 
@@ -557,7 +597,7 @@ final class TranscriptionModel {
             } catch is CancellationError {
                 // Expected on stop.
             } catch {
-                await MainActor.run { self.phase = .failed("\(error)") }
+                await MainActor.run { self.stopAfterFailure("Live transcription stopped: \(error)") }
             }
         }
     }
