@@ -32,7 +32,7 @@ android {
         applicationId = "com.scribatic.app"
         minSdk        = 28          // AAudio low-latency callback + mmap headroom
         targetSdk     = 36
-        versionCode   = 11
+        versionCode   = 12
         versionName   = "0.1.0"
 
         ndk {
