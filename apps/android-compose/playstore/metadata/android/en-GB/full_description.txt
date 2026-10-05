@@ -1,4 +1,4 @@
-Scribatic records a conversation and turns it into a transcript on your phone, marking who said what. Nothing is uploaded: the app has no internet permission, so it has no way to send your recordings anywhere.
+Scribatic records a conversation and turns it into a transcript on your phone, marking who said what. Nothing is uploaded: the app has no internet permission, so it can't send your recordings anywhere. They leave the phone only if you share them or back them up.
 
 What you can do
 • Record a meeting, lecture, interview or call, and watch the words appear as people speak
@@ -6,8 +6,13 @@ What you can do
 • Pause and resume, then stop to save the note
 • See each speaker's words marked in their own colour, identified automatically when you stop
 • Give speakers names, only on this device and only for that note
-• Play a recording back, or identify the speakers again if the count was off
+• Play a recording back, or just the part you're reading
+• Correct a misheard name, number or word in any part of the transcript, and undo it or restore the original
+• Fix speakers: move a part to someone else, or tell Scribatic two labels are the same person
+• Import a recording you already have, such as a voice memo or a call, and transcribe it the same way
 • Share a transcript to any app you choose, with or without the speakers' names
+• Back up your notes to a place you choose, encrypted with your own passphrase, and restore them on another device
+• See how much recording time your storage has left, with a warning before it runs low
 • Delete the audio and keep the words, or delete a note entirely
 • Find notes grouped by day, with light and dark themes
 
@@ -16,6 +21,7 @@ Private by design
 • The app has no INTERNET permission, so recordings, transcripts and names cannot leave the phone through it
 • No account, no sign-in, no ads, no analytics, no crash reporting
 • When you share a transcript, it goes only to the app you pick, and that app sends it
+• A backup goes only where you save it, encrypted so that only your passphrase opens it. Scribatic can't read it or recover a forgotten passphrase
 
 Good to know
 • The speech models download once through Google Play when you first open the app, about 470 MB

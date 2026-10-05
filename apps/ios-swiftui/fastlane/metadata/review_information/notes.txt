@@ -4,4 +4,6 @@ On first launch the Models screen appears while the speech models download as Ap
 
 To try it: tap the orange microphone button on the Notes screen, which starts recording at once. Speak for a few seconds (or play a conversation near the device), then tap Stop. The note opens with the transcript; speakers are identified when the recording stops. Tap a speaker's name to rename them. Share is in the toolbar; delete options are under More.
 
+To correct text, touch and hold a part of the transcript and choose Edit text; Play this part plays its audio. Import audio is under the Notes screen's More (…) menu. Storage & memory and Backup are on the Models screen (the chip icon on the Notes screen). A backup is written only to a folder the user picks in the Files picker, encrypted with a passphrase they choose (AES-256-GCM through Apple's CryptoKit); the app never uploads it.
+
 Microphone access is used only while recording. Transcription works in about 99 languages: the language is detected from the first words, or can be chosen under Models > Spoken language.
