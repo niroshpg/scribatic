@@ -81,6 +81,13 @@ private:
     sqlite3_stmt* stmt_ = nullptr;
 };
 
+/// Any change to the transcript or its speakers: a summary written before it
+/// no longer matches, and is marked so until it is written again.
+bool markSummaryStale(sqlite3* db, std::int64_t noteId) {
+    Statement stale(db, q::kMarkSummaryStale);
+    return stale.bind(1, noteId).run();
+}
+
 bool exec(sqlite3* db, std::string_view sql) {
     const std::string owned(sql);   // sqlite3_exec needs NUL termination
     return sqlite3_exec(db, owned.c_str(), nullptr, nullptr, nullptr) == SQLITE_OK;
@@ -261,6 +268,7 @@ NoteDetail NoteStore::loadLocked(std::int64_t noteId, const std::string& recordi
     if (!note.isNull(6)) { detail.summary = note.text(6); }
     detail.layout       = note.text(8);
     detail.refined      = note.int32(9) != 0;
+    detail.summaryStale = note.int32(10) != 0;
 
     Statement speakers(db_, q::kLoadSpeakers);
     speakers.bind(1, noteId);
@@ -282,6 +290,8 @@ NoteDetail NoteStore::loadLocked(std::int64_t noteId, const std::string& recordi
         segment.confidence = static_cast<float>(segments.real(3));
         segment.speaker    = segments.int32(4);
         segment.id         = segments.int64(5);
+        segment.edited     = !segments.isNull(6);
+        if (segment.edited) { segment.original = segments.text(6); }
         segment.isFinal    = true;
         detail.segments.push_back(std::move(segment));
     }
@@ -336,7 +346,7 @@ EngineStatus NoteStore::replaceTranscript(std::int64_t noteId,
     }
 
     Statement count(db_, q::kUpdateSpeakerCount);
-    if (!count.bind(1, speakerCount).bind(2, noteId).run()) {
+    if (!count.bind(1, speakerCount).bind(2, noteId).run() || !markSummaryStale(db_, noteId)) {
         return EngineStatus::DatabaseFailed;
     }
 
@@ -354,7 +364,7 @@ EngineStatus NoteStore::renameSpeaker(std::int64_t noteId, std::int32_t speaker,
 
     Statement rename(db_, q::kRenameSpeaker);
     if (!rename.bind(1, name).bind(2, noteId).bind(3, speaker).run() ||
-        sqlite3_changes(db_) != 1) {
+        sqlite3_changes(db_) != 1 || !markSummaryStale(db_, noteId)) {
         return EngineStatus::DatabaseFailed;
     }
     // Names are part of the indexed text, so a rename re-indexes the note.
@@ -405,7 +415,7 @@ EngineStatus NoteStore::replaceWithRefined(std::int64_t noteId,
     Statement count(db_, q::kUpdateSpeakerCount);
     Statement refined(db_, q::kSetRefined);
     if (!count.bind(1, std::int32_t{0}).bind(2, noteId).run() ||
-        !refined.bind(1, std::int32_t{1}).bind(2, noteId).run()) {
+        !refined.bind(1, std::int32_t{1}).bind(2, noteId).run() || !markSummaryStale(db_, noteId)) {
         return EngineStatus::DatabaseFailed;
     }
     if (!language.empty()) {
@@ -442,7 +452,8 @@ EngineStatus NoteStore::compactSpeakers(std::int64_t noteId) {
         }
     }
     Statement count(db_, q::kUpdateSpeakerCount);
-    if (!count.bind(1, static_cast<std::int32_t>(indices.size())).bind(2, noteId).run()) {
+    if (!count.bind(1, static_cast<std::int32_t>(indices.size())).bind(2, noteId).run() ||
+        !markSummaryStale(db_, noteId)) {
         return EngineStatus::DatabaseFailed;
     }
     return rebuildChunks(noteId);
@@ -506,6 +517,40 @@ EngineStatus NoteStore::setLayout(std::int64_t noteId, const std::string& layout
         return EngineStatus::DatabaseFailed;
     }
     return EngineStatus::Ok;
+}
+
+EngineStatus NoteStore::editText(std::int64_t noteId, const std::vector<std::int64_t>& segmentIds,
+                                 const std::string& text) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (db_ == nullptr || segmentIds.empty()) { return EngineStatus::DatabaseFailed; }
+    Transaction transaction(db_);
+    if (!transaction.began()) { return EngineStatus::DatabaseFailed; }
+    for (std::size_t k = 0; k < segmentIds.size(); ++k) {
+        Statement update(db_, q::kEditSegmentText);
+        if (!update.bind(1, k == 0 ? text : std::string()).bind(2, segmentIds[k]).bind(3, noteId).run() ||
+            sqlite3_changes(db_) != 1) {
+            return EngineStatus::DatabaseFailed;
+        }
+    }
+    if (!markSummaryStale(db_, noteId) || rebuildChunks(noteId) != EngineStatus::Ok) {
+        return EngineStatus::DatabaseFailed;
+    }
+    return transaction.commit() ? EngineStatus::Ok : EngineStatus::DatabaseFailed;
+}
+
+EngineStatus NoteStore::restoreText(std::int64_t noteId, const std::vector<std::int64_t>& segmentIds) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (db_ == nullptr) { return EngineStatus::DatabaseFailed; }
+    Transaction transaction(db_);
+    if (!transaction.began()) { return EngineStatus::DatabaseFailed; }
+    for (const std::int64_t id : segmentIds) {
+        Statement restore(db_, q::kRestoreSegmentText);
+        if (!restore.bind(1, id).bind(2, noteId).run()) { return EngineStatus::DatabaseFailed; }
+    }
+    if (!markSummaryStale(db_, noteId) || rebuildChunks(noteId) != EngineStatus::Ok) {
+        return EngineStatus::DatabaseFailed;
+    }
+    return transaction.commit() ? EngineStatus::Ok : EngineStatus::DatabaseFailed;
 }
 
 std::string NoteStore::audioName(std::int64_t noteId) {

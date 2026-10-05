@@ -84,6 +84,15 @@ public:
 
     EngineStatus setLayout(std::int64_t noteId, const std::string& layout);
 
+    /// A card's corrected text: all of it to the first of `segmentIds`, the
+    /// rest emptied, so the card keeps its times and audio. Each segment's
+    /// recognised text is kept the first time, for restoreText().
+    EngineStatus editText(std::int64_t noteId, const std::vector<std::int64_t>& segmentIds,
+                          const std::string& text);
+
+    /// Puts the recognised text back on whichever of `segmentIds` were edited.
+    EngineStatus restoreText(std::int64_t noteId, const std::vector<std::int64_t>& segmentIds);
+
     /// File name of the note's recording; empty if it has none.
     [[nodiscard]] std::string audioName(std::int64_t noteId);
     EngineStatus clearAudio(std::int64_t noteId);

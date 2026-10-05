@@ -163,6 +163,24 @@ public:
     /// "auto", "discussion" or "lecture".
     virtual EngineStatus setNoteLayout(std::int64_t noteId, const std::string& layout) = 0;
 
+    // -- Correcting text -------------------------------------------------------
+
+    /// A card's corrected text. `segmentIds` are the card's segments in order:
+    /// the text goes to the first and the rest are emptied, so the card keeps
+    /// its start and end, its speaker and its audio. What recognition wrote is
+    /// kept the first time a segment is corrected, for restoreText(). Search
+    /// and exports use the correction; a summary is marked stale.
+    ///
+    /// Identifying speakers again or refining the transcript rebuilds the
+    /// segments from recognition and so discards corrections: the apps ask
+    /// before doing either to a corrected note.
+    virtual EngineStatus editText(std::int64_t noteId, const SegmentIdList& segmentIds,
+                                  const std::string& text) = 0;
+
+    /// Puts back what recognition wrote on whichever of `segmentIds` were
+    /// corrected.
+    virtual EngineStatus restoreText(std::int64_t noteId, const SegmentIdList& segmentIds) = 0;
+
     // -- Language ------------------------------------------------------------
     /// The language recordings are in: an ISO 639-1 code such as "es", or
     /// "auto" to detect it. Detection listens to the first speech of each

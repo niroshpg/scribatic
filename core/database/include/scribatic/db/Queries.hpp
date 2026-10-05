@@ -31,13 +31,13 @@ inline constexpr std::string_view kListNotes =
     "SELECT n.id, n.title, n.created_at, n.duration_ms, n.audio_path IS NOT NULL, "
     "       n.speaker_count, "
     "       (SELECT group_concat(text, ' ') FROM "
-    "           (SELECT text FROM segments WHERE note_id = n.id "
+    "           (SELECT text FROM segments WHERE note_id = n.id AND text <> '' "
     "            ORDER BY start_ms, id LIMIT 3)) "
     "FROM notes n ORDER BY n.created_at DESC, n.id DESC;";
 
 inline constexpr std::string_view kLoadNote =
     "SELECT id, title, created_at, duration_ms, audio_path, speaker_count, summary, locale, "
-    "       layout, refined "
+    "       layout, refined, summary_stale "
     "FROM notes WHERE id = ?;";
 
 inline constexpr std::string_view kSetLayout = "UPDATE notes SET layout = ? WHERE id = ?;";
@@ -57,10 +57,25 @@ inline constexpr std::string_view kCountSpeakers =
     "SELECT COUNT(*) FROM speakers WHERE note_id = ?;";
 
 inline constexpr std::string_view kSetSummary =
-    "UPDATE notes SET summary = ? WHERE id = ?;";
+    "UPDATE notes SET summary = ?, summary_stale = 0 WHERE id = ?;";
+
+/// After any change to the transcript or its speakers: a summary written
+/// before it no longer matches.
+inline constexpr std::string_view kMarkSummaryStale =
+    "UPDATE notes SET summary_stale = 1 WHERE id = ? AND summary IS NOT NULL;";
+
+/// A correction. The recognised text is kept the first time, never
+/// overwritten by a later correction.
+inline constexpr std::string_view kEditSegmentText =
+    "UPDATE segments SET original_text = COALESCE(original_text, text), text = ? "
+    "WHERE id = ? AND note_id = ?;";
+
+inline constexpr std::string_view kRestoreSegmentText =
+    "UPDATE segments SET text = original_text, original_text = NULL "
+    "WHERE id = ? AND note_id = ? AND original_text IS NOT NULL;";
 
 inline constexpr std::string_view kLoadSegments =
-    "SELECT start_ms, end_ms, text, confidence, speaker, id FROM segments "
+    "SELECT start_ms, end_ms, text, confidence, speaker, id, original_text FROM segments "
     "WHERE note_id = ? ORDER BY start_ms, id;";
 
 inline constexpr std::string_view kLoadSpeakers =

@@ -18,7 +18,7 @@
 namespace scribatic::db {
 
 /// Bumped on every migration; compared against `PRAGMA user_version`.
-inline constexpr std::int32_t kSchemaVersion   = 3;
+inline constexpr std::int32_t kSchemaVersion   = 4;
 inline constexpr std::int32_t kEmbeddingDims   = 384;
 inline constexpr std::int32_t kChunkTokenSize  = 256;
 inline constexpr std::int32_t kChunkTokenStride= 64;   ///< overlap for recall
@@ -169,5 +169,17 @@ inline constexpr std::string_view kAddNoteLayout =
 /// model after Stop; until then the note holds the live preview.
 inline constexpr std::string_view kAddNoteRefined =
     "ALTER TABLE notes ADD COLUMN refined INTEGER NOT NULL DEFAULT 0;";
+
+// -- Version 4 ---------------------------------------------------------------
+
+/// What recognition wrote, kept the first time the user corrects a segment so
+/// the correction can be undone; NULL while the segment is as recognised.
+inline constexpr std::string_view kAddSegmentOriginal =
+    "ALTER TABLE segments ADD COLUMN original_text TEXT;";
+
+/// 1 when the transcript changed after the summary was written: the summary
+/// no longer matches it until it is written again.
+inline constexpr std::string_view kAddNoteSummaryStale =
+    "ALTER TABLE notes ADD COLUMN summary_stale INTEGER NOT NULL DEFAULT 0;";
 
 } // namespace scribatic::db

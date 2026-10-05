@@ -28,6 +28,9 @@ std::string speakerNameFor(const NoteDetail& note, std::int32_t index, bool anon
 std::vector<Paragraph> paragraphs(const NoteDetail& note, bool anonymise) {
     std::vector<Paragraph> out;
     for (const auto& segment : note.segments) {
+        // A corrected card keeps its words in its first segment; the rest
+        // are emptied and say nothing.
+        if (segment.text.empty()) { continue; }
         std::string speaker = speakerNameFor(note, segment.speaker, anonymise);
         if (!out.empty() && out.back().speaker == speaker) {
             out.back().text += ' ';

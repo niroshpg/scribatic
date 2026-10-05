@@ -59,6 +59,9 @@ public:
     EngineStatus mergeSpeakers(std::int64_t noteId, const SpeakerList& speakers,
                                std::int32_t into) override;
     EngineStatus setNoteLayout(std::int64_t noteId, const std::string& layout) override;
+    EngineStatus editText(std::int64_t noteId, const SegmentIdList& segmentIds,
+                          const std::string& text) override;
+    EngineStatus restoreText(std::int64_t noteId, const SegmentIdList& segmentIds) override;
     std::string  sessionLanguage() override;
 
     std::vector<NoteSummary> listNotes() override;

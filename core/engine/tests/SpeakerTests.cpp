@@ -279,6 +279,59 @@ void testRefineThenIdentify(const Models& models) {
     scribaticEngineRelease(engine);
 }
 
+/// Detecting automatically, the accurate pass decides the language itself and
+/// saves it: here the live session was pinned to the wrong one (English, for
+/// Spanish speech), as a misheard first window would leave it.
+void testRefineSettlesTheLanguage(const Models& models) {
+    const std::string fixture = repoPath("core/engine/tests/fixtures/speech-es-16k-mono.wav");
+    if (!exists(fixture) || !exists(models.accurate)) {
+        std::printf("  skip: language needs the Spanish fixture and %s\n", models.accurate.c_str());
+        return;
+    }
+    char pattern[] = "/tmp/scribatic-language-XXXXXX";
+    const std::string dir = ::mkdtemp(pattern);
+    const std::string recordings = dir + "/recordings";
+    ::mkdir(recordings.c_str(), 0700);
+    const std::string recording = recordings + "/recording-1.wav";
+    EngineConfig config;
+    config.whisperModelPath = models.whisper;
+    config.llamaModelPath = models.llama;
+    config.accurateModelPath = models.accurate;
+    config.databasePath = dir + "/notes.sqlite";
+    config.recordingsDirectory = recordings;
+    config.threadCount = 4;
+    EngineStatus status = EngineStatus::Ok;
+    EngineInterface* engine = EngineInterface::create(config, &status);
+    assert(engine != nullptr && engine->warmUp() == EngineStatus::Ok);
+    copyFile(fixture, recording);
+    RecordingAudio audio;
+    assert(audio.open(recording));
+
+    engine->setLanguage("en");
+    engine->beginSession();
+    for (std::size_t offset = 0; offset < audio.count(); offset += 1600) {
+        engine->pushAudio(audio.samples() + offset, std::min<std::size_t>(1600, audio.count() - offset));
+        engine->runTranscriptionPass();
+    }
+    engine->flush();
+    (void)engine->drainSegments();
+    const std::int64_t id = engine->saveSession("Spanish", 1700000000, recording);
+    assert(engine->loadNote(id).language == "en");
+
+    engine->setLanguage("auto");
+    assert(engine->refineTranscript(id) == EngineStatus::Ok);
+    const NoteDetail note = engine->loadNote(id);
+    std::printf("    language after refining: %s\n", note.language.c_str());
+    assert(note.language == "es" && "the accurate pass corrects a wrong live language");
+
+    // Pinned, the user's choice stands.
+    const std::int64_t pinned = engine->saveSession("Pinned", 1700000000, recording);
+    engine->setLanguage("en");
+    assert(engine->refineTranscript(pinned) == EngineStatus::Ok);
+    assert(engine->loadNote(pinned).language == "en");
+    scribaticEngineRelease(engine);
+}
+
 /// Prints what speaker identification makes of any recording: estimated and
 /// told-two. For investigating a tester's note; asserts nothing.
 void diagnoseRecording(const Models& models, const std::string& wav) {
@@ -405,6 +458,7 @@ int main() {
         testEachSpeakerInTheirLanguage(models);
         testFourVoicesStayApart(models);
         testRefineThenIdentify(models);
+        testRefineSettlesTheLanguage(models);
         // A recording to look at, not to assert on: SCRIBATIC_SPEAKERS_WAV=/path.wav
         if (const char* extra = std::getenv("SCRIBATIC_SPEAKERS_WAV"); extra != nullptr) {
             diagnoseRecording(models, extra);

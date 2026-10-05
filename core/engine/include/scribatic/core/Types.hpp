@@ -52,6 +52,8 @@ enum class EngineState : std::int32_t {
 /// Immutable unit of recognised speech emitted by the whisper backend.
 /// Speaker numbers within a note. Named so Swift can build one.
 using SpeakerList = std::vector<std::int32_t>;
+/// Stored segment ids, in transcript order. Named for the same reason.
+using SegmentIdList = std::vector<std::int64_t>;
 
 struct TranscriptSegment {
     std::int64_t startMs   = 0;
@@ -64,6 +66,11 @@ struct TranscriptSegment {
     std::int32_t speaker    = -1;
     /// The stored segment's id; 0 for one not saved yet (the live stream).
     std::int64_t id         = 0;
+    /// What recognition wrote, when the user has corrected `text`; empty
+    /// while the segment is as recognised. A corrected card's later segments
+    /// carry empty `text`, so its words are all in the first.
+    std::string  original;
+    bool         edited     = false;
 };
 
 /// One voice in a note. Speakers are per note: "Speaker 1" in one recording
@@ -102,6 +109,8 @@ struct NoteDetail {
     std::string                    layout = "auto";
     /// The accurate pass after Stop has replaced the live preview.
     bool                           refined = false;
+    /// The transcript or its speakers changed after `summary` was written.
+    bool                           summaryStale = false;
 };
 
 /// A row returned from the SQLite-VSS approximate nearest-neighbour index.

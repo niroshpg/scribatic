@@ -342,6 +342,57 @@ void testLayoutAndRefinedPreview() {
     assert(store.load(id, dir).language == "si" && "a detected language becomes the note's");
 }
 
+/// A card's correction: its words in the first segment, the rest emptied, the
+/// recognised text kept until restored. Exports, search and the summary flag
+/// all follow the correction.
+void testCorrectingACard() {
+    const std::string dir = tempDirectory();
+    const std::string db = dir + "/notes.sqlite";
+    NoteStore store;
+    assert(store.open(db) == EngineStatus::Ok);
+    const std::int64_t id = store.insertNote("Call", 1700000000, 6000, "",
+        {segment(0, 2000, "we use quick books zero"), segment(2000, 4000, "for invoices"),
+         segment(4000, 6000, "and that is it")}, {});
+    NoteDetail note = store.load(id, dir);
+    const std::vector<std::int64_t> card{note.segments[0].id, note.segments[1].id};
+    assert(!note.segments[0].edited && note.segments[0].original.empty());
+
+    assert(store.setSummary(id, "They use QuickBooks.") == EngineStatus::Ok);
+    assert(!store.load(id, dir).summaryStale);
+
+    assert(store.editText(id, card, "We use QuickBooks and Xero for invoices.") == EngineStatus::Ok);
+    note = store.load(id, dir);
+    assert(note.segments.size() == 3 && "segments keep their times and audio");
+    assert(note.segments[0].text == "We use QuickBooks and Xero for invoices.");
+    assert(note.segments[0].edited && note.segments[0].original == "we use quick books zero");
+    assert(note.segments[1].text.empty() && note.segments[1].original == "for invoices");
+    assert(note.segments[0].startMs == 0 && note.segments[1].endMs == 4000);
+    assert(!note.segments[2].edited);
+    assert(note.summaryStale && "the summary no longer matches");
+
+    const std::string shared = formatTranscript(note, {false, false});
+    assert(shared.find("QuickBooks and Xero") != std::string::npos);
+    assert(shared.find("quick books zero") == std::string::npos && "exports use the correction");
+    assert(shared.find("  ") == std::string::npos && "an emptied segment leaves no gap");
+    assert(scalar(db, "SELECT COUNT(*) FROM chunks_fts WHERE chunks_fts MATCH 'xero'") == 1);
+    assert(scalar(db, "SELECT COUNT(*) FROM chunks_fts WHERE chunks_fts MATCH 'zero'") == 0);
+    assert(store.list()[0].preview.find("Xero") != std::string::npos);
+
+    // A second correction keeps the first original, not the first correction.
+    assert(store.editText(id, card, "We use Xero for invoices.") == EngineStatus::Ok);
+    assert(store.load(id, dir).segments[0].original == "we use quick books zero");
+
+    assert(store.setSummary(id, "They use Xero.") == EngineStatus::Ok);
+    assert(!store.load(id, dir).summaryStale && "a new summary is current again");
+
+    assert(store.restoreText(id, card) == EngineStatus::Ok);
+    note = store.load(id, dir);
+    assert(note.segments[0].text == "we use quick books zero" && !note.segments[0].edited);
+    assert(note.segments[1].text == "for invoices" && note.segments[1].original.empty());
+    assert(note.summaryStale);
+    assert(scalar(db, "SELECT COUNT(*) FROM chunks_fts WHERE chunks_fts MATCH 'xero'") == 0);
+}
+
 // -- Engine: recordings on disk -----------------------------------------------------
 
 /// Drives the engine's file lifecycle without any weights. create() only checks
@@ -543,6 +594,7 @@ int main() {
     testSpeakerNamesAreIndexedAndRenamable();
     testSpeakersCanBeCorrected();
     testLayoutAndRefinedPreview();
+    testCorrectingACard();
     testRecordingLifecycle();
     testUnfinishedRecordingIsRecovered();
     testCatalogPinsEveryModel();

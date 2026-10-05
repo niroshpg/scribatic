@@ -19,6 +19,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cerrno>
 #include <cstdint>
@@ -172,6 +173,13 @@ void collectSegments(whisper_context* ctx, std::int64_t offsetMs,
             (trimmed.front() == '[' && trimmed.back() == ']') ||
             (trimmed.front() == '(' && trimmed.back() == ')');
         if (isAnnotation) { continue; }
+        // Punctuation alone (".", "...") is whisper filling a pause, not
+        // speech. Any byte above ASCII counts as a letter: non-Latin scripts.
+        const bool saysSomething = std::any_of(trimmed.begin(), trimmed.end(), [](char c) {
+            const auto byte = static_cast<unsigned char>(c);
+            return byte >= 0x80 || std::isalnum(byte) != 0;
+        });
+        if (!saysSomething) { continue; }
 
         TranscriptSegment segment;
         segment.startMs = offsetMs + whisper_full_get_segment_t0(ctx, i) * 10;
@@ -787,9 +795,20 @@ EngineStatus EngineImpl::refineTranscript(std::int64_t noteId) {
     whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
     params.n_threads        = config_.threadCount > 0 ? config_.threadCount : 4;
     params.translate        = false;
-    // The language the preview settled on; per-speaker languages are put
-    // right afterwards, when speakers are identified.
-    const std::string language = whisper_is_multilingual(ctx) != 0 && !note.language.empty() ? note.language : "en";
+    // Detecting automatically, this model decides the language again from
+    // its first 30 s: the preview settled it from one 5 s window with the
+    // live model, and quiet or brief speech there can mislead it. A language
+    // the user chose is kept. Per-speaker languages are put right afterwards,
+    // when speakers are identified.
+    bool redetect = false;
+    {
+        std::lock_guard<std::mutex> languageLock(languageMutex_);
+        redetect = languagePreference_ == "auto";
+    }
+    std::string language = "en";
+    if (whisper_is_multilingual(ctx) != 0) {
+        language = redetect || note.language.empty() || note.language == "auto" ? "auto" : note.language;
+    }
     params.language         = language.c_str();
     params.no_timestamps    = false;
     params.token_timestamps = true;
@@ -812,11 +831,14 @@ EngineStatus EngineImpl::refineTranscript(std::int64_t noteId) {
     if (whisper_full(ctx, params, audio.samples(), static_cast<int>(audio.count())) != 0) {
         return refineCancel_.load(std::memory_order_acquire) ? EngineStatus::Cancelled : EngineStatus::InferenceFailed;
     }
-    // A recovered recording has no language until this pass detects one.
+    // The language this pass detected becomes the note's: a recovered
+    // recording had none, and a live guess may have been wrong.
     std::string settled;
-    if (note.language == "auto") {
-        const int detected = language == "auto" ? whisper_full_lang_id(ctx) : -1;
+    if (language == "auto") {
+        const int detected = whisper_full_lang_id(ctx);
         settled = detected >= 0 ? whisper_lang_str(detected) : "en";
+    } else if (note.language == "auto") {
+        settled = language;
     }
     std::vector<TranscriptSegment> decoded;
     std::vector<std::vector<WordTiming>> decodedWords;
@@ -847,6 +869,15 @@ EngineStatus EngineImpl::setSegmentSpeaker(std::int64_t noteId, std::int64_t seg
 EngineStatus EngineImpl::mergeSpeakers(std::int64_t noteId, const SpeakerList& speakers,
                                        std::int32_t into) {
     return store_.mergeSpeakers(noteId, speakers, into);
+}
+
+EngineStatus EngineImpl::editText(std::int64_t noteId, const SegmentIdList& segmentIds,
+                                  const std::string& text) {
+    return store_.editText(noteId, segmentIds, text);
+}
+
+EngineStatus EngineImpl::restoreText(std::int64_t noteId, const SegmentIdList& segmentIds) {
+    return store_.restoreText(noteId, segmentIds);
 }
 
 EngineStatus EngineImpl::setNoteLayout(std::int64_t noteId, const std::string& layout) {

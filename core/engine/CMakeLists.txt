@@ -136,6 +136,13 @@ if (NOT CMAKE_CROSSCOMPILING)
                         scribatic_store_tests scribatic_speaker_tests)
         target_compile_options(${test_target} PRIVATE -UNDEBUG)
     endforeach()
+
+    # Replays a recording through the pipeline stage by stage (tools/Replay.cpp).
+    if (TARGET whisper)
+        add_executable(scribatic_replay tools/Replay.cpp)
+        target_link_libraries(scribatic_replay PRIVATE scribatic_core whisper Threads::Threads)
+        target_include_directories(scribatic_replay PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    endif()
 endif()
 
 # --- Scribatic Pro ----------------------------------------------------------
