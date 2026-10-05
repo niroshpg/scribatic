@@ -4,6 +4,7 @@ import SwiftUI
 struct NotesListView: View {
     @Bindable var model: TranscriptionModel
     @State private var pendingDelete: [Int64] = []
+    @State private var choosingAudio = false
 
     private var engineStopped: Bool { model.failureMessage != nil && model.notes.isEmpty }
 
@@ -14,6 +15,10 @@ struct NotesListView: View {
             .background(Color.paper)
             .navigationTitle("Notes")
             .toolbar {
+                ToolbarItem(placement: .secondaryAction) {
+                    Button("Import audio…", systemImage: "square.and.arrow.down") { choosingAudio = true }
+                        .disabled(model.phase != .ready || model.importingAudio != nil)
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Button {
                         model.showingModels = true
@@ -26,11 +31,30 @@ struct NotesListView: View {
                 if !engineStopped {
                     // One tap: pushing the recorder starts capture.
                     RecordButton(stop: false, label: "New recording", floating: true) {
-                        model.path.append(.recorder)
+                        model.requestRecording()
                     }
                     .disabled(model.phase != .ready)
                     .padding(.bottom, 4)
                 }
+            }
+            .fileImporter(isPresented: $choosingAudio, allowedContentTypes: [.audio]) { result in
+                if case let .success(url) = result {
+                    Task { await model.importAudio(url) }
+                }
+            }
+            .overlay {
+                if let importing = model.importingAudio {
+                    ProgressView(importing)
+                        .font(.uiLabel)
+                        .padding(24)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                }
+            }
+            .alert("Record anyway?", isPresented: cautionBinding) {
+                Button("Record") { model.confirmRecording() }
+                Button("Cancel", role: .cancel) { model.recordingCaution = nil }
+            } message: {
+                Text(model.recordingCaution ?? "")
             }
             .confirmationDialog("Delete this note?", isPresented: deleteBinding, titleVisibility: .visible) {
                 Button("Delete note", role: .destructive) {
@@ -40,6 +64,10 @@ struct NotesListView: View {
             } message: {
                 Text("The transcript, the speaker names and the recording are all removed from this device.")
             }
+    }
+
+    private var cautionBinding: Binding<Bool> {
+        Binding(get: { model.recordingCaution != nil }, set: { if !$0 { model.recordingCaution = nil } })
     }
 
     private var deleteBinding: Binding<Bool> {

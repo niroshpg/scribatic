@@ -29,7 +29,7 @@
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Scribatic transcribes audio entirely on this device. Recordings and transcripts never leave your iPhone.</string>
+	<string>Scribatic records and transcribes on this device and uploads nothing. A recording leaves it only if you share it or back it up.</string>
 	<key>UIAppFonts</key>
 	<array>
 		<string>InstrumentSerif-Regular.ttf</string>

@@ -49,6 +49,15 @@ void appendSegment(std::vector<std::string>& out, const scribatic::core::Transcr
     out.push_back(std::to_string(s.confidence));
     out.push_back(std::to_string(s.speaker));
     out.push_back(std::to_string(s.id));
+    out.push_back(s.edited ? "1" : "0");
+    out.push_back(s.original);
+}
+
+std::vector<std::int64_t> toSegmentIds(JNIEnv* env, jlongArray segments) {
+    const jsize n = env->GetArrayLength(segments);
+    std::vector<std::int64_t> list(static_cast<std::size_t>(n));
+    env->GetLongArrayRegion(segments, 0, n, reinterpret_cast<jlong*>(list.data()));
+    return list;
 }
 
 std::string toStdString(JNIEnv* env, jstring value) {
@@ -288,6 +297,7 @@ Java_com_scribatic_app_engine_TranscriptionEngine_nativeLoadNote(
             flat.push_back(note.language);
             flat.push_back(note.layout);
             flat.push_back(note.refined ? "1" : "0");
+            flat.push_back(note.summaryStale ? "1" : "0");
         }
     }
     return toStringArray(env, flat);
@@ -397,6 +407,52 @@ Java_com_scribatic_app_engine_TranscriptionEngine_nativeMergeSpeakers(
     env->GetIntArrayRegion(speakers, 0, n, reinterpret_cast<jint*>(list.data()));
     return static_cast<jint>(asEngine(handle)->mergeSpeakers(
         static_cast<std::int64_t>(noteId), list, static_cast<std::int32_t>(into)));
+}
+
+JNIEXPORT jint JNICALL
+Java_com_scribatic_app_engine_TranscriptionEngine_nativeWriteBackup(
+        JNIEnv* env, jobject, jlong handle, jstring databasePath) {
+    if (handle == 0) { return static_cast<jint>(scribatic::core::EngineStatus::NotInitialized); }
+    return static_cast<jint>(asEngine(handle)->writeBackup(toStdString(env, databasePath)));
+}
+
+/// [status, restored, skipped].
+JNIEXPORT jintArray JNICALL
+Java_com_scribatic_app_engine_TranscriptionEngine_nativeRestoreBackup(
+        JNIEnv* env, jobject, jlong handle, jstring databasePath, jstring recordingsDirectory) {
+    scribatic::core::RestoreResult result;
+    result.status = scribatic::core::EngineStatus::NotInitialized;
+    if (handle != 0) {
+        result = asEngine(handle)->restoreBackup(toStdString(env, databasePath), toStdString(env, recordingsDirectory));
+    }
+    const jint values[3] = {static_cast<jint>(result.status), result.restored, result.skipped};
+    jintArray out = env->NewIntArray(3);
+    env->SetIntArrayRegion(out, 0, 3, values);
+    return out;
+}
+
+JNIEXPORT jlong JNICALL
+Java_com_scribatic_app_engine_TranscriptionEngine_nativeImportRecording(
+        JNIEnv* env, jobject, jlong handle, jstring audioPath, jstring title, jlong createdAt) {
+    if (handle == 0) { return 0; }
+    return static_cast<jlong>(asEngine(handle)->importRecording(
+        toStdString(env, audioPath), toStdString(env, title), static_cast<std::int64_t>(createdAt)));
+}
+
+JNIEXPORT jint JNICALL
+Java_com_scribatic_app_engine_TranscriptionEngine_nativeEditText(
+        JNIEnv* env, jobject, jlong handle, jlong noteId, jlongArray segments, jstring text) {
+    if (handle == 0) { return static_cast<jint>(scribatic::core::EngineStatus::NotInitialized); }
+    return static_cast<jint>(asEngine(handle)->editText(
+        static_cast<std::int64_t>(noteId), toSegmentIds(env, segments), toStdString(env, text)));
+}
+
+JNIEXPORT jint JNICALL
+Java_com_scribatic_app_engine_TranscriptionEngine_nativeRestoreText(
+        JNIEnv* env, jobject, jlong handle, jlong noteId, jlongArray segments) {
+    if (handle == 0) { return static_cast<jint>(scribatic::core::EngineStatus::NotInitialized); }
+    return static_cast<jint>(asEngine(handle)->restoreText(
+        static_cast<std::int64_t>(noteId), toSegmentIds(env, segments)));
 }
 
 JNIEXPORT jint JNICALL

@@ -168,6 +168,27 @@ actor ScribaticEngine {
         try check(engine.deleteNote(id))
     }
 
+    /// A converted recording from elsewhere, as a note with no transcript yet;
+    /// nil if the core refused it.
+    func importRecording(_ path: String, title: String, createdAt: Date) -> Int64? {
+        let id = engine.importRecording(std.string(path), std.string(title), Int64(createdAt.timeIntervalSince1970))
+        return id > 0 ? id : nil
+    }
+
+    // MARK: - Backup
+
+    /// Every note as a database at `path`, for Backup to pack and encrypt.
+    func writeBackup(_ path: String) throws {
+        try check(engine.writeBackup(std.string(path)))
+    }
+
+    /// Notes restored, and those skipped as already here.
+    func restoreBackup(database: String, recordings: String) throws -> (restored: Int, skipped: Int) {
+        let result = engine.restoreBackup(std.string(database), std.string(recordings))
+        try check(result.status)
+        return (Int(result.restored), Int(result.skipped))
+    }
+
     func exportTranscript(_ id: Int64, includeTimestamps: Bool, anonymise: Bool) -> String {
         String(engine.exportTranscript(id, includeTimestamps, anonymise))
     }
@@ -218,6 +239,23 @@ actor ScribaticEngine {
         var list = scribatic.core.SpeakerList()
         for speaker in speakers { list.push_back(speaker) }
         try check(engine.mergeSpeakers(id, list, into))
+    }
+
+    // MARK: - Correcting text
+
+    /// A card's corrected text; `segments` are the card's, in order.
+    func editText(_ id: Int64, segments: [Int64], text: String) throws {
+        try check(engine.editText(id, segmentList(segments), std.string(text)))
+    }
+
+    func restoreText(_ id: Int64, segments: [Int64]) throws {
+        try check(engine.restoreText(id, segmentList(segments)))
+    }
+
+    private func segmentList(_ segments: [Int64]) -> scribatic.core.SegmentIdList {
+        var list = scribatic.core.SegmentIdList()
+        for segment in segments { list.push_back(segment) }
+        return list
     }
 
     func setNoteLayout(_ id: Int64, layout: String) throws {

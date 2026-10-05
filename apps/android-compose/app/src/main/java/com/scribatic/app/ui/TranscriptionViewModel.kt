@@ -27,6 +27,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
+import android.text.format.Formatter
+import android.provider.OpenableColumns
+import com.scribatic.app.audio.AudioImport
+import java.io.IOException
+import com.scribatic.app.engine.DeviceStatus
+import com.scribatic.app.engine.Backup
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -73,6 +79,16 @@ data class TranscriptUiState(
     val note: NoteDetail? = null,
     val canIdentifySpeakers: Boolean = false,
     val playingNoteId: Long? = null,
+    /** The start of the card being played; null for the whole recording. */
+    val playingSpan: Long? = null,
+    /** The last text correction, offered for Undo until it is replaced or dismissed. */
+    val lastCorrection: Correction? = null,
+    /** Why recording might not go well, for the user to confirm before it starts. */
+    val recordingCaution: String? = null,
+    /** "Importing — 40%" while audio from elsewhere is converted. */
+    val importingAudio: String? = null,
+    /** "Backing up — 40%" or "Restoring — 40%" while either runs. */
+    val backupProgress: String? = null,
     val busy: Boolean = false,
     /** What [busy] is doing, when it is worth saying: "Preparing the recording — 40%". */
     val busyStep: String? = null,
@@ -127,6 +143,14 @@ data class TranscriptUiState(
  * This is an [AndroidViewModel] because the engine's paths are resolved against
  * `filesDir`, which needs a Context.
  */
+/** A saved correction, with what the card said before it. */
+data class Correction(
+    val noteId: Long,
+    val segmentIds: List<Long>,
+    val previous: String,
+    val previouslyEdited: Boolean,
+)
+
 class TranscriptionViewModel(application: Application) : AndroidViewModel(application), ExtensionHost {
 
     private val _uiState = MutableStateFlow(TranscriptUiState())
@@ -134,6 +158,7 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
 
     private var engine: TranscriptionEngine? = null
     private var streamJob: Job? = null
+    private var storageJob: Job? = null
     private var capture: AudioCapture? = null
     private var recordingFile: File? = null
     private var recordingStartedAt = 0L
@@ -362,7 +387,224 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
 
     fun openRecorder() {
         if (_uiState.value.phase != Phase.READY) return
-        _uiState.update { it.copy(screen = Screen.Recorder, segments = emptyList()) }
+        _uiState.update { it.copy(screen = Screen.Recorder, segments = emptyList(), recordingCaution = null) }
+    }
+
+    // -- Backup ----------------------------------------------------------------------
+
+    val canBackUp: Boolean get() = engine != null
+
+    /**
+     * The passphrase between its dialog and the system's save picker. Held
+     * here, in memory only: the screen's own state goes while the picker is in
+     * front, and saved state could be written to disk.
+     */
+    var pendingPassphrase: String? = null
+
+    var backupRecordings: Boolean
+        get() = settings.getBoolean("backupRecordings", true)
+        set(value) = settings.edit().putBoolean("backupRecordings", value).apply()
+
+    var lastBackup: Long
+        get() = settings.getLong("lastBackup", 0L)
+        private set(value) = settings.edit().putLong("lastBackup", value).apply()
+
+    /** A name for the file the user is about to create. */
+    fun backupFileName(): String =
+        "Scribatic backup ${java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(Date())}.${Backup.FILE_EXTENSION}"
+
+    /** Writes an encrypted backup to [destination], a file the user created in the system picker. */
+    fun backUp(destination: Uri, passphrase: String, includeRecordings: Boolean) {
+        val engine = engine ?: return
+        _uiState.update { it.copy(backupProgress = "Backing up") }
+        viewModelScope.launch(Dispatchers.IO) {
+            val context = getApplication<Application>()
+            val work = File(context.cacheDir, "backup-${System.currentTimeMillis()}").apply { mkdirs() }
+            val message = try {
+                val database = File(work, "notes.sqlite")
+                val status = engine.writeBackup(database.absolutePath)
+                if (status != EngineStatus.OK) throw IOException("The notes could not be read: $status")
+                val recordings = if (includeRecordings) {
+                    recordingsDir.listFiles().orEmpty().filter { it.name.startsWith("recording-") && it.extension == "wav" }
+                } else {
+                    emptyList()
+                }
+                val output = context.contentResolver.openOutputStream(destination, "wt")
+                    ?: throw IOException("The chosen place can't be written to.")
+                output.buffered().use { out ->
+                    var shown = -1
+                    Backup.write(database, recordings, out, passphrase) { progress ->
+                        val percent = (progress * 100).toInt()
+                        if (percent != shown) {
+                            shown = percent
+                            _uiState.update { it.copy(backupProgress = "Backing up — $percent%") }
+                        }
+                    }
+                }
+                lastBackup = System.currentTimeMillis()
+                val notes = _uiState.value.notes.size
+                when {
+                    notes == 1 && includeRecordings -> "1 note and its recording backed up."
+                    notes == 1 -> "1 note backed up."
+                    includeRecordings -> "$notes notes and their recordings backed up."
+                    else -> "$notes notes backed up."
+                }
+            } catch (e: Exception) {
+                // Half a backup is worse than none: it would only fail later.
+                runCatching { android.provider.DocumentsContract.deleteDocument(context.contentResolver, destination) }
+                "The backup could not be made. ${(e as? IOException)?.message.orEmpty()}"
+            } finally {
+                work.deleteRecursively()
+            }
+            _uiState.update { it.copy(backupProgress = null, message = message) }
+        }
+    }
+
+    /** Restores the notes in [source] that aren't already here. */
+    fun restore(source: Uri, passphrase: String) {
+        val engine = engine ?: return
+        _uiState.update { it.copy(backupProgress = "Restoring") }
+        viewModelScope.launch(Dispatchers.IO) {
+            val context = getApplication<Application>()
+            val work = File(context.cacheDir, "restore-${System.currentTimeMillis()}").apply { mkdirs() }
+            val message = try {
+                val size = context.contentResolver.query(source, arrayOf(OpenableColumns.SIZE), null, null, null)
+                    ?.use { if (it.moveToFirst()) it.getLong(0) else 0L } ?: 0L
+                if (DeviceStatus.freeBytes(context) < size + DeviceStatus.MINIMUM_FREE) {
+                    throw IOException("There isn't enough free storage: it needs about ${size / 1_000_000} MB.")
+                }
+                val input = context.contentResolver.openInputStream(source) ?: throw IOException("The backup can't be read.")
+                input.buffered().use { stream ->
+                    var shown = -1
+                    Backup.unpack(stream, size, passphrase, work) { progress ->
+                        val percent = (progress * 100).toInt()
+                        if (percent != shown) {
+                            shown = percent
+                            _uiState.update { it.copy(backupProgress = "Restoring — $percent%") }
+                        }
+                    }
+                }
+                val (status, restored, skipped) = engine.restoreBackup(
+                    File(work, "notes.sqlite").absolutePath,
+                    File(work, "recordings").absolutePath,
+                )
+                if (status != EngineStatus.OK) throw IOException("The notes could not be added: $status")
+                _uiState.update { it.copy(notes = engine.listNotes()) }
+                when {
+                    restored == 0 && skipped == 1 -> "Nothing new to restore: that note is already here."
+                    restored == 0 -> "Nothing new to restore: all $skipped notes are already here."
+                    else -> (if (restored == 1) "1 note restored" else "$restored notes restored") +
+                        (when (skipped) { 0 -> ""; 1 -> "; 1 was already here"; else -> "; $skipped were already here" }) + "."
+                }
+            } catch (e: Exception) {
+                "The backup could not be restored. ${(e as? IOException)?.message.orEmpty()}"
+            } finally {
+                work.deleteRecursively()
+            }
+            _uiState.update { it.copy(backupProgress = null, message = message) }
+        }
+    }
+
+    // -- Importing audio -------------------------------------------------------------
+
+    /**
+     * Audio recorded elsewhere becomes a note like any recording: converted on
+     * this phone, then transcribed and its speakers identified.
+     */
+    fun importAudio(uri: Uri) {
+        val engine = engine ?: return
+        if (_uiState.value.importingAudio != null) return
+        stopPlayback()
+        _uiState.update { it.copy(importingAudio = "Importing") }
+        viewModelScope.launch(Dispatchers.IO) {
+            val context = getApplication<Application>()
+            val file = File(recordingsDir, "recording-${System.currentTimeMillis()}.wav")
+            try {
+                AudioImport.convert(context, uri, file) { progress ->
+                    _uiState.update { it.copy(importingAudio = "Importing — ${(progress * 100).toInt()}%") }
+                }
+            } catch (e: IOException) {
+                _uiState.update { it.copy(importingAudio = null, message = "The audio could not be imported. ${e.message.orEmpty()}") }
+                return@launch
+            }
+            val title = displayName(uri)?.substringBeforeLast('.') ?: "Imported audio"
+            val id = engine.importRecording(file.absolutePath, title, System.currentTimeMillis() / 1000)
+            if (id == null) {
+                file.delete()
+                _uiState.update { it.copy(importingAudio = null, message = "The audio could not be imported.") }
+                return@launch
+            }
+            _uiState.update { it.copy(importingAudio = null, notes = engine.listNotes()) }
+            openNote(id)
+            finishNote(id)
+        }
+    }
+
+    private fun displayName(uri: Uri): String? =
+        getApplication<Application>().contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+
+    // -- Storage and memory ----------------------------------------------------------
+
+    fun deviceStatus(): DeviceStatus = DeviceStatus.current(
+        getApplication(),
+        recordingsDir,
+        installer.catalog.map { installer.fileFor(it) ?: File(filesDir, it.fileName) },
+        File(filesDir, "store"),
+    )
+
+    /**
+     * The record button: straight to the recorder, unless storage or memory
+     * say it may not go well, in which case [TranscriptUiState.recordingCaution]
+     * asks first. With almost no space left, recording does not start at all.
+     */
+    fun requestRecording() {
+        if (_uiState.value.phase != Phase.READY) return
+        val context = getApplication<Application>()
+        val free = DeviceStatus.freeBytes(context)
+        if (free < DeviceStatus.MINIMUM_FREE) {
+            _uiState.update {
+                it.copy(message = "There isn't enough free storage to record. Free up space on this phone, or delete recordings you no longer need.")
+            }
+            return
+        }
+        val cautions = buildList {
+            if (free < DeviceStatus.warningLevel(context)) {
+                val left = (free - DeviceStatus.MINIMUM_FREE) / DeviceStatus.BYTES_PER_SECOND
+                add(
+                    "Only ${Formatter.formatShortFileSize(context, free)} free: about ${durationEstimate(left)} of recording. " +
+                        "It stops and is saved if space runs out.",
+                )
+            }
+            if (DeviceStatus.memory(context).lowMemory) {
+                add("Memory is low, so Android may close the app during a long recording. What was recorded is kept.")
+            }
+        }
+        if (cautions.isEmpty()) openRecorder() else _uiState.update { it.copy(recordingCaution = cautions.joinToString("\n\n")) }
+    }
+
+    fun dismissCaution() = _uiState.update { it.copy(recordingCaution = null) }
+
+    /** Checks free space every 30 s while recording; stops and saves before writes fail. */
+    private fun watchStorage() {
+        storageJob?.cancel()
+        storageJob = viewModelScope.launch(Dispatchers.Default) {
+            while (true) {
+                delay(30_000)
+                val phase = _uiState.value.phase
+                if (phase != Phase.RECORDING && phase != Phase.PAUSED) return@launch
+                if (DeviceStatus.freeBytes(getApplication()) < DeviceStatus.MINIMUM_FREE) {
+                    stopAfterFailure("Storage is almost full, so recording stopped. Everything recorded up to then has been saved.")
+                    return@launch
+                }
+            }
+        }
+    }
+
+    /** Mid-recording, a failure stops and saves rather than leaving the microphone open. */
+    private fun stopAfterFailure(message: String) {
+        stopRecording()
+        _uiState.update { it.copy(message = message) }
     }
 
     fun openNote(id: Long) {
@@ -404,6 +646,10 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
             engine.beginSession()
             val file = File(recordingsDir, "recording-${System.currentTimeMillis()}.wav")
             val audio = AudioCapture(file)
+            audio.onWriteFailure = {
+                // On the capture thread, which stopping joins: hand it over.
+                viewModelScope.launch(Dispatchers.Default) { stopAfterFailure("The recording could not be written to storage, so it stopped. Is the phone full? Everything recorded up to then has been saved.") }
+            }
             if (BuildConfig.DEBUG) {
                 audio.injectedSource = File(filesDir, "inject/conversation.wav").takeIf { it.exists() }
             }
@@ -426,6 +672,7 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
             // app in front. Started now, while Record has just been tapped:
             // Android won't start a microphone service from the background.
             TranscriptionService.show(getApplication(), paused = false)
+            watchStorage()
 
             streamJob?.cancel()
             streamJob = viewModelScope.launch(Dispatchers.Default) {
@@ -464,6 +711,8 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
 
         val stream = streamJob
         streamJob = null
+        storageJob?.cancel()
+        storageJob = null
         // The microphone closes now, but the service stays until the note is
         // saved, so Android does not kill a backgrounded app mid-save.
         processing("Finishing transcript")
@@ -584,6 +833,41 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
         val status = engine.mergeSpeakers(noteId, speakers, into)
         if (status != EngineStatus.OK) "Could not merge speakers: $status" else null
     }
+
+    // -- Correcting text ------------------------------------------------------------
+
+    /**
+     * A card's corrected text. [previous] and [previouslyEdited] describe the
+     * card before, so the correction can be undone.
+     */
+    fun editText(noteId: Long, segmentIds: List<Long>, text: String, previous: String, previouslyEdited: Boolean) =
+        noteOperation(noteId) { engine ->
+            val status = engine.editText(noteId, segmentIds, text)
+            if (status != EngineStatus.OK) return@noteOperation "The correction could not be saved: $status"
+            _uiState.update { it.copy(lastCorrection = Correction(noteId, segmentIds, previous, previouslyEdited)) }
+            null
+        }
+
+    /** Puts back what recognition wrote for a card. */
+    fun restoreText(noteId: Long, segmentIds: List<Long>) = noteOperation(noteId) { engine ->
+        val status = engine.restoreText(noteId, segmentIds)
+        if (status != EngineStatus.OK) "The original text could not be restored: $status" else null
+    }
+
+    fun undoCorrection() {
+        val correction = _uiState.value.lastCorrection ?: return
+        _uiState.update { it.copy(lastCorrection = null) }
+        if (correction.previouslyEdited) {
+            noteOperation(correction.noteId) { engine ->
+                val status = engine.editText(correction.noteId, correction.segmentIds, correction.previous)
+                if (status != EngineStatus.OK) "Could not undo: $status" else null
+            }
+        } else {
+            restoreText(correction.noteId, correction.segmentIds)
+        }
+    }
+
+    fun dismissCorrection() = _uiState.update { it.copy(lastCorrection = null) }
 
     fun setLayout(noteId: Long, layout: String) = noteOperation(noteId) { engine ->
         val status = engine.setNoteLayout(noteId, layout)
@@ -749,19 +1033,26 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
 
     // -- Playback -----------------------------------------------------------------
 
-    fun play(note: NoteDetail) {
+    /**
+     * The whole recording, or one card of it: [fromMs] to [toMs], with a
+     * moment either side, since word times can sit a little late or early.
+     */
+    fun play(note: NoteDetail, fromMs: Long = 0, toMs: Long? = null) {
         val path = note.audioPath ?: return
         stopPlayback()
-        _uiState.update { it.copy(playingNoteId = note.id) }
-        playback.play(File(path)) {
-            // Arrives on the playback thread once the file runs out.
-            _uiState.update { if (it.playingNoteId == note.id) it.copy(playingNoteId = null) else it }
+        val span = if (toMs != null) fromMs else null
+        _uiState.update { it.copy(playingNoteId = note.id, playingSpan = span) }
+        playback.play(File(path), maxOf(0L, fromMs - 300), toMs?.plus(300)) {
+            // Arrives on the playback thread once the part runs out.
+            _uiState.update {
+                if (it.playingNoteId == note.id && it.playingSpan == span) it.copy(playingNoteId = null, playingSpan = null) else it
+            }
         }
     }
 
     fun stopPlayback() {
         playback.stop()
-        _uiState.update { it.copy(playingNoteId = null) }
+        _uiState.update { it.copy(playingNoteId = null, playingSpan = null) }
     }
 
     private fun processing(step: String) {
@@ -782,4 +1073,11 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
         streamJob?.cancel()
         engine?.close()
     }
+}
+
+/** "3 hours", "40 minutes": roughly, for how long a recording can still run. */
+fun durationEstimate(seconds: Long): String = when {
+    seconds >= 7200 -> "${seconds / 3600} hours"
+    seconds >= 3600 -> "1 hour"
+    else -> "${maxOf(1L, seconds / 60)} minutes"
 }

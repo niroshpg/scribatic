@@ -70,6 +70,8 @@ final class AudioCapture {
 
     private(set) var isRunning = false
     private var isPaused = false
+    /// Set on the write queue once a write has failed.
+    private var writeFailed = false
     private(set) var recordingURL: URL?
 
     /// Delivered on the main actor, from the time capture starts until it stops.
@@ -149,6 +151,7 @@ final class AudioCapture {
         try session.setActive(true)
 
         audioEngine = AVAudioEngine()
+        writeFailed = false
         self.sink = sink
         try installTap()
 
@@ -337,7 +340,20 @@ final class AudioCapture {
         }
 
         writeQueue.async { [weak self] in
-            try? self?.file?.write(from: copy)
+            guard let self, let file = self.file else { return }
+            do {
+                try file.write(from: copy)
+            } catch {
+                // Storage full, most likely. Once: every later buffer fails too.
+                guard !self.writeFailed else { return }
+                self.writeFailed = true
+                nonisolated(unsafe) let capture = self
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        capture.onEvent?(.failed("The recording could not be written to storage, so it stopped. Is the device full?"))
+                    }
+                }
+            }
         }
     }
 }

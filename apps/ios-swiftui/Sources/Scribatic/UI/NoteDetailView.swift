@@ -23,10 +23,99 @@ struct NoteDetailView: View {
     @State private var mergeSelection: Set<Int32> = []
     /// "Preparing the recording — 40%" while a file for the share sheet is made.
     @State private var preparing: String?
+    /// The card whose text is being corrected.
+    @State private var editing: TranscriptBlock?
+    /// The last correction, for its Undo.
+    @State private var lastCorrection: Correction?
+    /// Speaker identification or the accurate pass, waiting on the user's OK
+    /// to drop their corrections.
+    @State private var pendingRebuild: Rebuild?
+
+    private struct Correction: Equatable {
+        let segmentIds: [Int64]
+        /// The card's text before, and whether that was itself a correction.
+        let previous: String
+        let previouslyEdited: Bool
+        let id = UUID()
+    }
+
+    private enum Rebuild: Identifiable {
+        case speakers(Int32)
+        case refine
+        var id: String {
+            switch self {
+            case let .speakers(count): "speakers-\(count)"
+            case .refine: "refine"
+            }
+        }
+    }
 
     private var isBusy: Bool { model.busyNoteID == noteID }
 
     var body: some View {
+        withDialogs
+        .sheet(item: $editing) { block in
+            CardEditor(block: block, canPlay: note?.audioURL != nil,
+                       playing: model.playingSpan == block.startMs,
+                       onPlay: { toggleCardPlayback(block) },
+                       onSave: { text in
+                           editing = nil
+                           Task {
+                               if await model.editText(noteID, segments: block.segmentIds, text: text) {
+                                   lastCorrection = Correction(segmentIds: block.segmentIds, previous: block.text,
+                                                               previouslyEdited: block.edited)
+                               }
+                           }
+                       },
+                       onRestore: {
+                           editing = nil
+                           Task { await model.restoreText(noteID, segments: block.segmentIds) }
+                       },
+                       onCancel: { editing = nil })
+        }
+        .confirmationDialog("Discard your corrections?", isPresented: rebuildBinding, titleVisibility: .visible,
+                            presenting: pendingRebuild) { rebuild in
+            Button(rebuild.id == "refine" ? "Improve transcript" : "Identify speakers", role: .destructive) {
+                run(rebuild)
+            }
+        } message: { _ in
+            let count = note?.corrections ?? 0
+            Text("This rebuilds the transcript from the recording, so your \(count == 1 ? "correction" : "\(count) corrections") to the text will be lost.")
+        }
+        .safeAreaInset(edge: .bottom) {
+            if let correction = lastCorrection {
+                HStack {
+                    Text("Text corrected").font(.uiLabel).foregroundStyle(Color.paper)
+                    Spacer()
+                    Button("Undo") {
+                        lastCorrection = nil
+                        Task {
+                            if correction.previouslyEdited {
+                                await model.editText(noteID, segments: correction.segmentIds, text: correction.previous)
+                            } else {
+                                await model.restoreText(noteID, segments: correction.segmentIds)
+                            }
+                        }
+                    }
+                    .font(.uiLabel.weight(.semibold))
+                    .foregroundStyle(Color.paper)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(Color.ink, in: RoundedRectangle(cornerRadius: 12))
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .task(id: correction.id) {
+                    try? await Task.sleep(for: .seconds(6))
+                    if lastCorrection == correction { lastCorrection = nil }
+                }
+            }
+        }
+        .animation(.default, value: lastCorrection)
+    }
+
+    private var base: some View {
         Group {
             if let note {
                 transcript(note)
@@ -59,6 +148,10 @@ struct NoteDetailView: View {
                 .presentationDetents([.medium, .large])
                 .ignoresSafeArea()
         }
+    }
+
+    private var withDialogs: some View {
+        base
         .alert("Name this speaker", isPresented: renamingBinding, presenting: renaming) { speaker in
             TextField(speaker.displayName, text: $newName)
                 .textInputAutocapitalization(.words)
@@ -79,6 +172,14 @@ struct NoteDetailView: View {
                 }
                 Button("Someone new") {
                     Task { await model.setBlockSpeaker(noteID, segments: block.segmentIds, speaker: -1) }
+                }
+                // Not just this part: everything one label said is another's.
+                if let current = note.speakers.first(where: { $0.index == block.speaker }) {
+                    ForEach(note.speakers.filter { $0.index != block.speaker }) { other in
+                        Button("Everything \(current.displayName) said is \(other.displayName)") {
+                            Task { await model.mergeSpeakers(noteID, speakers: [other.index, current.index], into: other.index) }
+                        }
+                    }
                 }
                 if let current = note.speakers.first(where: { $0.index == block.speaker }) {
                     Button("Rename \(current.displayName)…") {
@@ -162,6 +263,35 @@ struct NoteDetailView: View {
             }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    private var rebuildBinding: Binding<Bool> {
+        Binding(get: { pendingRebuild != nil }, set: { if !$0 { pendingRebuild = nil } })
+    }
+
+    private func toggleCardPlayback(_ block: TranscriptBlock) {
+        guard let note else { return }
+        if model.playingSpan == block.startMs {
+            model.stopPlayback()
+        } else {
+            model.play(note, fromMs: block.startMs, toMs: block.endMs)
+        }
+    }
+
+    /// Rebuilding from recognition drops corrections: asked first when there are any.
+    private func rebuild(_ rebuild: Rebuild) {
+        if (note?.corrections ?? 0) > 0 {
+            pendingRebuild = rebuild
+        } else {
+            run(rebuild)
+        }
+    }
+
+    private func run(_ rebuild: Rebuild) {
+        switch rebuild {
+        case let .speakers(count): Task { await model.identifySpeakers(noteID, expected: count) }
+        case .refine: model.finishNote(noteID)
+        }
     }
 
     private var renamingBinding: Binding<Bool> {
@@ -290,6 +420,17 @@ struct NoteDetailView: View {
             }
 
             headerRow("Transcript")
+            // Finishing rebuilds the transcript from recognition, so a
+            // correction made meanwhile would be lost: none until it is done.
+            let finishing = model.finishingNoteID == note.id
+            if !note.segments.isEmpty {
+                Text(finishing ? "You can correct the text once this is finished."
+                               : "Touch and hold a part to correct its text\(note.audioURL != nil ? " or play it" : "").")
+                    .font(.uiCaption)
+                    .foregroundStyle(Color.inkSoft)
+                    .listRowBackground(Color.paper)
+                    .listRowSeparator(.hidden)
+            }
             if note.segments.isEmpty {
                 Text("Nothing was transcribed.")
                     .font(.uiBodySmall)
@@ -300,14 +441,33 @@ struct NoteDetailView: View {
             // A discussion is a card per turn, with whose turn it is; a
             // lecture, one voice throughout, is a card per paragraph.
             ForEach(note.isLecture ? lectureBlocks(note.segments) : discussionBlocks(note.segments)) { block in
+                let playing = model.playingSpan == block.startMs
+                let onPlay: (() -> Void)? = note.audioURL != nil ? { toggleCardPlayback(block) } : nil
                 Group {
                     if note.isLecture {
-                        LectureCard(block: block)
+                        LectureCard(block: block, playing: playing, onPlay: onPlay)
                     } else {
                         DiscussionCard(block: block,
-                                       label: note.speakers.first(where: { $0.index == block.speaker })) {
+                                       label: note.speakers.first(where: { $0.index == block.speaker }),
+                                       playing: playing, onPlay: onPlay) {
                             blockMenu = block
                         }
+                    }
+                }
+                .contextMenu {
+                    Button("Edit text", systemImage: "pencil") { editing = block }
+                        .disabled(finishing)
+                    if let onPlay {
+                        Button(playing ? "Stop" : "Play this part", systemImage: playing ? "stop.fill" : "play.fill",
+                               action: onPlay)
+                    }
+                    if block.edited && !finishing {
+                        Button("Restore original", systemImage: "arrow.uturn.backward") {
+                            Task { await model.restoreText(noteID, segments: block.segmentIds) }
+                        }
+                    }
+                    if !note.isLecture && block.speaker >= 0 {
+                        Button("Change speaker…", systemImage: "person.crop.circle") { blockMenu = block }
                     }
                 }
                 .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
@@ -364,7 +524,7 @@ struct NoteDetailView: View {
                 HStack {
                     Text("Live preview").font(.uiLabel).foregroundStyle(Color.inkMuted)
                     Spacer()
-                    Button("Improve transcript") { model.finishNote(note.id) }
+                    Button("Improve transcript") { rebuild(.refine) }
                         .font(.uiLabel)
                         .buttonStyle(.borderless)
                 }
@@ -478,7 +638,7 @@ struct NoteDetailView: View {
     }
 
     private func reidentify(_ expected: Int32) {
-        Task { await model.identifySpeakers(noteID, expected: expected) }
+        rebuild(.speakers(expected))
     }
 }
 

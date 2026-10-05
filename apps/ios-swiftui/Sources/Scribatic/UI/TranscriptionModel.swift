@@ -61,6 +61,9 @@ final class TranscriptionModel {
     private(set) var canIdentifySpeakers = false
     /// Which note's recording is playing, if any.
     private(set) var playingNoteID: Int64?
+    /// The start of the card being played; nil for the whole recording.
+    private(set) var playingSpan: Int64?
+    @ObservationIgnored private var spanTask: Task<Void, Never>?
     /// A note-level operation in flight ("Identifying speakers…").
     private(set) var busyNoteID: Int64?
     /// The accurate model is on the device: notes are finished after Stop.
@@ -121,6 +124,22 @@ final class TranscriptionModel {
     /// Paused by an interruption rather than by the user, so it may resume
     /// by itself when the interruption ends.
     @ObservationIgnored private var pausedByInterruption = false
+    /// Watches free storage while recording.
+    @ObservationIgnored private var storageTask: Task<Void, Never>?
+    @ObservationIgnored private var memoryObserver: NSObjectProtocol?
+    /// When iOS last warned that memory is low.
+    private(set) var lowMemoryAt: Date?
+    /// Why recording might not go well, for the user to confirm first.
+    var recordingCaution: String?
+    /// "Importing — 40%" while audio from elsewhere is converted.
+    private(set) var importingAudio: String?
+    /// "Backing up — 40%" or "Restoring — 40%" while either runs.
+    private(set) var backupProgress: String?
+    var lastBackup: Date? {
+        get { UserDefaults.standard.object(forKey: "lastBackup") as? Date }
+        set { UserDefaults.standard.set(newValue, forKey: "lastBackup") }
+    }
+    var canBackUp: Bool { engine != nil }
     private var player: AVAudioPlayer?
     private var playerDelegate: PlayerDelegate?
 
@@ -133,6 +152,13 @@ final class TranscriptionModel {
     func prepare() async {
         guard engine == nil else { return }
         phase = .starting
+        if memoryObserver == nil {
+            memoryObserver = NotificationCenter.default.addObserver(
+                forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.lowMemoryAt = Date() }
+            }
+        }
 
         installer.sweepPartials()
         refreshModels()
@@ -275,6 +301,193 @@ final class TranscriptionModel {
         spokenLanguage = code
     }
 
+    // MARK: - Storage and memory
+
+    /// iOS warned of low memory in the last five minutes.
+    var lowMemory: Bool { lowMemoryAt.map { Date().timeIntervalSince($0) < 300 } ?? false }
+
+    func deviceStatus() -> DeviceStatus { DeviceStatus.current(configuration) }
+
+    /// The record button: straight to the recorder, unless storage or memory
+    /// say it may not go well, in which case `recordingCaution` asks first.
+    /// With almost no space left, recording does not start at all.
+    func requestRecording() {
+        let free = DeviceStatus.freeBytes()
+        guard free >= DeviceStatus.minimumFree else {
+            noteError = "There isn't enough free storage to record. Free up space on this device, or delete recordings you no longer need."
+            return
+        }
+        var cautions: [String] = []
+        if free < DeviceStatus.warningLevel {
+            let size = ByteCountFormatter.string(fromByteCount: free, countStyle: .file)
+            let left = Double(free - DeviceStatus.minimumFree) / Double(DeviceStatus.bytesPerSecond)
+            cautions.append("Only \(size) free: \(durationEstimate(left).lowercased()) of recording. It stops and is saved if space runs out.")
+        }
+        if lowMemory {
+            cautions.append("Memory is low, so iOS may close the app during a long recording. What was recorded is kept.")
+        }
+        if cautions.isEmpty {
+            path.append(.recorder)
+        } else {
+            recordingCaution = cautions.joined(separator: "\n\n")
+        }
+    }
+
+    func confirmRecording() {
+        recordingCaution = nil
+        path.append(.recorder)
+    }
+
+    /// Checks free space every 30 s while recording, and stops and saves
+    /// before the file can no longer be written.
+    private func watchStorage() {
+        storageTask?.cancel()
+        storageTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                guard let self, self.phase == .recording || self.phase == .paused else { return }
+                if DeviceStatus.freeBytes() < DeviceStatus.minimumFree {
+                    self.stopAfterFailure("Storage is almost full, so recording stopped.")
+                    return
+                }
+            }
+        }
+    }
+
+    // MARK: - Backup
+
+    /// Writes an encrypted backup into `folder`, which the user chose. Returns
+    /// what to tell them.
+    func backUp(to folder: URL, passphrase: String, includeRecordings: Bool) async -> String {
+        guard let engine, let configuration else { return "The app isn't ready yet." }
+        let access = folder.startAccessingSecurityScopedResource()
+        defer { if access { folder.stopAccessingSecurityScopedResource() } }
+        let work = FileManager.default.temporaryDirectory.appending(path: "backup-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: work) }
+        backupProgress = "Backing up"
+        defer { backupProgress = nil }
+        do {
+            try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+            let database = work.appending(path: "notes.sqlite")
+            try await engine.writeBackup(database.path(percentEncoded: false))
+            let recordings = includeRecordings
+                ? ((try? FileManager.default.contentsOfDirectory(at: URL(filePath: configuration.recordingsDirectory),
+                                                                 includingPropertiesForKeys: nil)) ?? [])
+                    .filter { $0.lastPathComponent.hasPrefix("recording-") && $0.pathExtension == "wav" }
+                : []
+            let needed = ([database] + recordings).map(Backup.fileSize).reduce(0, +)
+            guard DeviceStatus.freeBytes() >= needed + DeviceStatus.minimumFree else {
+                throw Backup.BackupError.notEnoughSpace(needed: needed)
+            }
+            let stamp = Date().formatted(.iso8601.year().month().day())
+            var destination = folder.appending(path: "Scribatic backup \(stamp).\(Backup.fileExtension)")
+            var copy = 2
+            while FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)) {
+                destination = folder.appending(path: "Scribatic backup \(stamp) \(copy).\(Backup.fileExtension)")
+                copy += 1
+            }
+            let target = destination
+            try await Task.detached {
+                var shown = -1
+                try Backup.write(database: database, recordings: recordings, to: target, passphrase: passphrase) { progress in
+                    let percent = Int(progress * 100)
+                    guard percent != shown else { return }
+                    shown = percent
+                    Task { @MainActor in self.backupProgress = "Backing up — \(percent)%" }
+                }
+            }.value
+            lastBackup = Date()
+            let notes = self.notes.count
+            let what = switch (notes == 1, includeRecordings) {
+            case (true, true): "1 note and its recording"
+            case (true, false): "1 note"
+            case (false, true): "\(notes) notes and their recordings"
+            case (false, false): "\(notes) notes"
+            }
+            return "\(what) backed up to \(destination.lastPathComponent)."
+        } catch {
+            return "The backup could not be made. \(error.localizedDescription)"
+        }
+    }
+
+    /// Restores the notes in `file` that aren't already here. Returns what to
+    /// tell the user.
+    func restore(from file: URL, passphrase: String) async -> String {
+        guard let engine else { return "The app isn't ready yet." }
+        let access = file.startAccessingSecurityScopedResource()
+        defer { if access { file.stopAccessingSecurityScopedResource() } }
+        let work = FileManager.default.temporaryDirectory.appending(path: "restore-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: work) }
+        backupProgress = "Restoring"
+        defer { backupProgress = nil }
+        do {
+            let needed = Backup.fileSize(file)
+            guard DeviceStatus.freeBytes() >= needed + DeviceStatus.minimumFree else {
+                throw Backup.BackupError.notEnoughSpace(needed: needed)
+            }
+            try await Task.detached {
+                var shown = -1
+                try Backup.unpack(file, passphrase: passphrase, into: work) { progress in
+                    let percent = Int(progress * 100)
+                    guard percent != shown else { return }
+                    shown = percent
+                    Task { @MainActor in self.backupProgress = "Restoring — \(percent)%" }
+                }
+            }.value
+            let result = try await engine.restoreBackup(database: work.appending(path: "notes.sqlite").path(percentEncoded: false),
+                                                        recordings: work.appending(path: "recordings").path(percentEncoded: false))
+            await noteChanged()
+            if result.restored == 0 {
+                return result.skipped == 1 ? "Nothing new to restore: that note is already here."
+                                           : "Nothing new to restore: all \(result.skipped) notes are already here."
+            }
+            let restored = result.restored == 1 ? "1 note restored" : "\(result.restored) notes restored"
+            let skipped = result.skipped == 0 ? "" : result.skipped == 1 ? "; 1 was already here" : "; \(result.skipped) were already here"
+            return restored + skipped + "."
+        } catch {
+            return "The backup could not be restored. \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - Importing audio
+
+    /// Audio recorded elsewhere becomes a note like any recording: converted
+    /// on this device, then transcribed and its speakers identified.
+    func importAudio(_ url: URL) async {
+        guard let engine, let configuration else { return }
+        let access = url.startAccessingSecurityScopedResource()
+        defer { if access { url.stopAccessingSecurityScopedResource() } }
+        importingAudio = "Importing"
+        defer { importingAudio = nil }
+        stopPlayback()
+
+        let destination = AudioCapture.newRecordingURL(in: URL(filePath: configuration.recordingsDirectory))
+        do {
+            try await Task.detached {
+                var shown = -1
+                try AudioImport.convert(url, to: destination) { progress in
+                    let percent = Int(progress * 100)
+                    guard percent != shown else { return }
+                    shown = percent
+                    Task { @MainActor in self.importingAudio = "Importing — \(percent)%" }
+                }
+            }.value
+        } catch {
+            noteError = "The audio could not be imported. \(error.localizedDescription)"
+            return
+        }
+        let title = url.deletingPathExtension().lastPathComponent
+        guard let id = await engine.importRecording(destination.path(percentEncoded: false), title: title,
+                                                    createdAt: Date()) else {
+            try? FileManager.default.removeItem(at: destination)
+            noteError = "The audio could not be imported."
+            return
+        }
+        await refreshNotes()
+        path = [.note(id)]
+        finishNote(id)
+    }
+
     // MARK: - Recording
 
     func startRecording() async {
@@ -300,6 +513,7 @@ final class TranscriptionModel {
             }
             phase = .recording
             startStreaming()
+            watchStorage()
         } catch {
             phase = .failed(error.localizedDescription)
         }
@@ -362,6 +576,8 @@ final class TranscriptionModel {
     func stopRecording() {
         guard phase == .recording || phase == .paused else { return }
         capture.stop()
+        storageTask?.cancel()
+        storageTask = nil
         streamTask?.cancel()
         streamTask = nil
         let audioURL = capture.recordingURL
@@ -479,6 +695,33 @@ final class TranscriptionModel {
         await noteChanged()
     }
 
+    // MARK: - Correcting text
+
+    /// Saves a card's corrected text. False if it could not be saved.
+    @discardableResult
+    func editText(_ id: Int64, segments: [Int64], text: String) async -> Bool {
+        guard let engine else { return false }
+        do {
+            try await engine.editText(id, segments: segments, text: text)
+        } catch {
+            noteError = "The correction could not be saved: \(error)"
+            return false
+        }
+        await noteChanged()
+        return true
+    }
+
+    /// Puts back what recognition wrote for a card.
+    func restoreText(_ id: Int64, segments: [Int64]) async {
+        guard let engine else { return }
+        do {
+            try await engine.restoreText(id, segments: segments)
+        } catch {
+            noteError = "The original text could not be restored: \(error)"
+        }
+        await noteChanged()
+    }
+
     func setLayout(_ id: Int64, layout: String) async {
         guard let engine else { return }
         do {
@@ -554,30 +797,47 @@ final class TranscriptionModel {
 
     // MARK: - Playback
 
-    func play(_ note: NoteDetailValue) {
+    /// The whole recording, or one card of it: `fromMs` to `toMs`, with a
+    /// moment either side, since word times can sit a little late or early.
+    func play(_ note: NoteDetailValue, fromMs: Int64 = 0, toMs: Int64? = nil) {
         guard let url = note.audioURL else { return }
         stopPlayback()
 
         do {
             let player = try AVAudioPlayer(contentsOf: url)
             let delegate = PlayerDelegate { [weak self] in
-                Task { @MainActor in self?.playingNoteID = nil }
+                Task { @MainActor in self?.stopPlayback() }
             }
             player.delegate = delegate
             self.playerDelegate = delegate
             self.player = player
+            player.currentTime = max(0, Double(fromMs - 300) / 1000)
             player.play()
             playingNoteID = note.id
+            if let toMs {
+                playingSpan = fromMs
+                let end = Double(toMs + 300) / 1000
+                spanTask = Task { [weak self] in
+                    while !Task.isCancelled {
+                        try? await Task.sleep(for: .milliseconds(100))
+                        guard let self, let player = self.player, player.isPlaying else { return }
+                        if player.currentTime >= end { self.stopPlayback(); return }
+                    }
+                }
+            }
         } catch {
             noteError = error.localizedDescription
         }
     }
 
     func stopPlayback() {
+        spanTask?.cancel()
+        spanTask = nil
         player?.stop()
         player = nil
         playerDelegate = nil
         playingNoteID = nil
+        playingSpan = nil
     }
 
     // MARK: - Transcript stream

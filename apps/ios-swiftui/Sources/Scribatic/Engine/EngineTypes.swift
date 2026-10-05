@@ -26,6 +26,10 @@ struct TranscriptSegmentValue: Identifiable, Sendable, Equatable {
     let speaker: Int32
     /// The stored segment's id, for correcting its speaker; 0 while recording.
     let segmentId: Int64
+    /// The user corrected it; `original` is what recognition wrote. A
+    /// corrected card's later segments have empty `text`.
+    let edited: Bool
+    let original: String
 
     init(_ cxx: scribatic.core.TranscriptSegment) {
         self.startMs = cxx.startMs
@@ -35,6 +39,8 @@ struct TranscriptSegmentValue: Identifiable, Sendable, Equatable {
         self.isFinal = cxx.isFinal
         self.speaker = cxx.speaker
         self.segmentId = cxx.id
+        self.edited = cxx.edited
+        self.original = String(cxx.original)
     }
 }
 
@@ -91,6 +97,12 @@ struct NoteDetailValue: Identifiable, Sendable, Equatable {
     let layout: String
     /// The accurate pass after Stop has replaced the live preview.
     let refined: Bool
+    /// The transcript changed after the summary was written.
+    let summaryStale: Bool
+
+    /// Cards the user corrected: rebuilding the transcript from recognition
+    /// (speakers again, or the accurate pass) would lose them.
+    var corrections: Int { segments.filter { $0.edited && !$0.text.isEmpty }.count }
 
     /// What the note is shown as: a lecture has one voice, so no speaker cards.
     var isLecture: Bool {
@@ -119,6 +131,7 @@ struct NoteDetailValue: Identifiable, Sendable, Equatable {
         let layout = String(cxx.layout)
         self.layout = layout.isEmpty ? "auto" : layout
         self.refined = cxx.refined
+        self.summaryStale = cxx.summaryStale
     }
 
     func speakerName(_ index: Int32) -> String? {

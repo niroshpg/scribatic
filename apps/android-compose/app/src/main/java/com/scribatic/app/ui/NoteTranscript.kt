@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -27,8 +28,39 @@ import com.scribatic.app.ui.theme.Scribatic
 /** Consecutive segments shown as one card: one speaker's turn, or one paragraph of a lecture. */
 data class TranscriptBlock(val speaker: Int, val segments: List<TranscriptSegment>) {
     val startMs: Long get() = segments.first().startMs
+    val endMs: Long get() = segments.last().endMs
     val segmentIds: List<Long> get() = segments.map { it.id }
     val key: Long get() = segments.first().id.takeIf { it != 0L } ?: startMs
+    /** What the card says. A corrected card keeps it all in its first segment; the others are empty. */
+    val text: String get() = segments.map { it.text }.filter { it.isNotEmpty() }.joinToString(" ")
+    val edited: Boolean get() = segments.any { it.edited }
+    /** What recognition wrote for the card, before any correction. */
+    val original: String
+        get() = segments.map { if (it.edited) it.original else it.text }.filter { it.isNotEmpty() }.joinToString(" ")
+}
+
+/** Beside a card's time: play just this part, and a mark once its text has been corrected. */
+@Composable
+private fun CardTimeRow(block: TranscriptBlock, playing: Boolean, onPlay: (() -> Unit)?) {
+    val c = Scribatic.colors
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (onPlay != null) {
+            Box(
+                Modifier
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .background(c.paper)
+                    .clickable(onClickLabel = if (playing) "Stop" else "Play this part", role = Role.Button, onClick = onPlay),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(if (playing) Icons.stop else Icons.play, contentDescription = null, tint = c.inkMuted, modifier = Modifier.size(14.dp))
+            }
+        }
+        Text(clock(block.startMs), style = MaterialTheme.typography.labelMedium, color = c.inkSoft)
+        if (block.edited) {
+            Text("Edited", style = MaterialTheme.typography.labelSmall, color = c.inkSoft)
+        }
+    }
 }
 
 /** A discussion: a new card wherever the speaker changes. */
@@ -87,7 +119,14 @@ fun SpeakerAvatar(initials: String, index: Int, modifier: Modifier = Modifier) {
  * Tapping either opens [onSpeaker], to rename, move the turn or split it off.
  */
 @Composable
-fun DiscussionCard(block: TranscriptBlock, label: SpeakerLabel?, onSpeaker: () -> Unit) {
+fun DiscussionCard(
+    block: TranscriptBlock,
+    label: SpeakerLabel?,
+    playing: Boolean = false,
+    onPlay: (() -> Unit)? = null,
+    onCard: () -> Unit = {},
+    onSpeaker: () -> Unit,
+) {
     val c = Scribatic.colors
     val identified = block.speaker >= 0
     Row(
@@ -107,6 +146,7 @@ fun DiscussionCard(block: TranscriptBlock, label: SpeakerLabel?, onSpeaker: () -
                 .weight(1f)
                 .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 16.dp, bottomEnd = 16.dp, bottomStart = 16.dp))
                 .background(c.surfaceRaised)
+                .clickable(onClickLabel = "Correct or play", onClick = onCard)
                 .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
@@ -123,16 +163,18 @@ fun DiscussionCard(block: TranscriptBlock, label: SpeakerLabel?, onSpeaker: () -
                 } else {
                     Box(Modifier.weight(1f))
                 }
-                Text(clock(block.startMs), style = MaterialTheme.typography.labelMedium, color = c.inkSoft)
+                CardTimeRow(block, playing, onPlay)
             }
-            block.segments.forEach { Text(it.text, style = MaterialTheme.typography.bodyLarge, color = c.ink) }
+            block.segments.filter { it.text.isNotEmpty() }.forEach {
+                Text(it.text, style = MaterialTheme.typography.bodyLarge, color = c.ink)
+            }
         }
     }
 }
 
 /** A paragraph of a lecture: no avatar and no title, one voice throughout. */
 @Composable
-fun LectureCard(block: TranscriptBlock) {
+fun LectureCard(block: TranscriptBlock, playing: Boolean = false, onPlay: (() -> Unit)? = null, onCard: () -> Unit = {}) {
     val c = Scribatic.colors
     Column(
         Modifier
@@ -140,12 +182,13 @@ fun LectureCard(block: TranscriptBlock) {
             .padding(horizontal = 16.dp, vertical = 5.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(c.surfaceRaised)
+            .clickable(onClickLabel = "Correct or play", onClick = onCard)
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Text(clock(block.startMs), style = MaterialTheme.typography.labelMedium, color = c.inkSoft)
+        CardTimeRow(block, playing, onPlay)
         Text(
-            block.segments.joinToString(" ") { it.text },
+            block.text,
             style = MaterialTheme.typography.bodyLarge,
             color = c.ink,
         )

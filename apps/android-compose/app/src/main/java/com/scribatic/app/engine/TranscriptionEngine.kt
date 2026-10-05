@@ -227,6 +227,38 @@ class TranscriptionEngine private constructor(
         EngineStatus.from(nativeMergeSpeakers(nativeHandle.get(), noteId, speakers.toIntArray(), into))
     }
 
+    /** Every note as a database at [path], for Backup to pack and encrypt. */
+    suspend fun writeBackup(path: String): EngineStatus = withContext(dispatcher) {
+        EngineStatus.from(nativeWriteBackup(nativeHandle.get(), path))
+    }
+
+    /** Notes restored and skipped as already here, or the status that stopped it. */
+    suspend fun restoreBackup(database: String, recordings: String): Triple<EngineStatus, Int, Int> =
+        withContext(dispatcher) {
+            val values = nativeRestoreBackup(nativeHandle.get(), database, recordings)
+            Triple(EngineStatus.from(values[0]), values[1], values[2])
+        }
+
+    /**
+     * A converted recording from elsewhere, as a note with no transcript yet;
+     * null if the core refused it.
+     */
+    suspend fun importRecording(audioPath: String, title: String, createdAtSeconds: Long): Long? =
+        withContext(dispatcher) {
+            nativeImportRecording(nativeHandle.get(), audioPath, title, createdAtSeconds).takeIf { it > 0 }
+        }
+
+    /** A card's corrected text; [segmentIds] are the card's, in order. */
+    suspend fun editText(noteId: Long, segmentIds: List<Long>, text: String): EngineStatus =
+        withContext(dispatcher) {
+            EngineStatus.from(nativeEditText(nativeHandle.get(), noteId, segmentIds.toLongArray(), text))
+        }
+
+    /** Puts back what recognition wrote for a card. */
+    suspend fun restoreText(noteId: Long, segmentIds: List<Long>): EngineStatus = withContext(dispatcher) {
+        EngineStatus.from(nativeRestoreText(nativeHandle.get(), noteId, segmentIds.toLongArray()))
+    }
+
     suspend fun setNoteLayout(noteId: Long, layout: String): EngineStatus = withContext(dispatcher) {
         EngineStatus.from(nativeSetNoteLayout(nativeHandle.get(), noteId, layout))
     }
@@ -276,7 +308,7 @@ class TranscriptionEngine private constructor(
         handleLock.write { nativeDestroy(handle) }
     }
 
-    /** Flat [startMs, endMs, text, confidence, speaker] tuples -> typed segments. */
+    /** Flat [startMs, endMs, text, confidence, speaker, id, edited, original] tuples -> typed segments. */
     private fun decodeSegments(flat: Array<String>): List<TranscriptSegment> =
         flat.toList().chunked(SEGMENT_FIELDS).mapNotNull { tuple ->
             if (tuple.size < SEGMENT_FIELDS) return@mapNotNull null
@@ -290,6 +322,8 @@ class TranscriptionEngine private constructor(
         confidence = f[at + 3].toFloatOrNull() ?: 0f,
         speaker = f[at + 4].toIntOrNull() ?: -1,
         id = f[at + 5].toLongOrNull() ?: 0L,
+        edited = f[at + 6] == "1",
+        original = f[at + 7],
     )
 
     /**
@@ -313,6 +347,7 @@ class TranscriptionEngine private constructor(
         val language = f.getOrNull(at + 1)?.ifEmpty { null } ?: "en"
         val layout = f.getOrNull(at + 2)?.ifEmpty { null } ?: "auto"
         val refined = f.getOrNull(at + 3) == "1"
+        val summaryStale = f.getOrNull(at + 4) == "1"
         return NoteDetail(
             id = f[0].toLong(),
             title = f[1],
@@ -326,6 +361,7 @@ class TranscriptionEngine private constructor(
             language = language,
             layout = layout,
             refined = refined,
+            summaryStale = summaryStale,
         )
     }
 
@@ -361,6 +397,11 @@ class TranscriptionEngine private constructor(
     private external fun nativeSetSegmentSpeaker(handle: Long, noteId: Long, segmentId: Long, speaker: Int): Int
     private external fun nativeMergeSpeakers(handle: Long, noteId: Long, speakers: IntArray, into: Int): Int
     private external fun nativeSetNoteLayout(handle: Long, noteId: Long, layout: String): Int
+    private external fun nativeWriteBackup(handle: Long, databasePath: String): Int
+    private external fun nativeRestoreBackup(handle: Long, databasePath: String, recordingsDirectory: String): IntArray
+    private external fun nativeImportRecording(handle: Long, audioPath: String, title: String, createdAt: Long): Long
+    private external fun nativeEditText(handle: Long, noteId: Long, segments: LongArray, text: String): Int
+    private external fun nativeRestoreText(handle: Long, noteId: Long, segments: LongArray): Int
     private external fun nativeSetLanguage(handle: Long, code: String)
     private external fun nativeSessionLanguage(handle: Long): String
     private external fun nativeSaveSession(handle: Long, title: String, createdAt: Long, audioPath: String): Long
@@ -379,5 +420,5 @@ class TranscriptionEngine private constructor(
     private external fun nativeRenameSpeaker(handle: Long, noteId: Long, speaker: Int, name: String): Int
 }
 
-private const val SEGMENT_FIELDS = 6
+private const val SEGMENT_FIELDS = 8
 private const val NOTE_FIELDS = 7

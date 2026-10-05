@@ -8,7 +8,49 @@ struct TranscriptBlock: Identifiable {
 
     var id: Int64 { segments[0].segmentId != 0 ? segments[0].segmentId : segments[0].startMs }
     var startMs: Int64 { segments[0].startMs }
+    var endMs: Int64 { segments[segments.count - 1].endMs }
     var segmentIds: [Int64] { segments.map(\.segmentId) }
+    /// What the card says. A corrected card keeps it all in its first
+    /// segment; the others are empty.
+    var text: String { segments.map(\.text).filter { !$0.isEmpty }.joined(separator: " ") }
+    var edited: Bool { segments.contains(where: \.edited) }
+    /// What recognition wrote for the card, before any correction.
+    var original: String {
+        segments.map { $0.edited ? $0.original : $0.text }.filter { !$0.isEmpty }.joined(separator: " ")
+    }
+}
+
+/// A card's controls that sit beside its time: play just this part, and a
+/// mark once its text has been corrected.
+struct CardTimeRow: View {
+    let block: TranscriptBlock
+    let playing: Bool
+    let onPlay: (() -> Void)?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if let onPlay {
+                Button(action: onPlay) {
+                    Image(systemName: playing ? "stop.fill" : "play.fill")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Color.inkMuted)
+                        .frame(width: 22, height: 22)
+                        .background(Color.paper, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(playing ? "Stop" : "Play this part")
+            }
+            Text(timestamp(block.startMs))
+                .font(.timestamp)
+                .foregroundStyle(Color.inkSoft)
+            if block.edited {
+                Text("Edited")
+                    .font(.uiCaption)
+                    .foregroundStyle(Color.inkSoft)
+                    .accessibilityLabel("Text corrected")
+            }
+        }
+    }
 }
 
 /// A discussion: a new card wherever the speaker changes.
@@ -74,6 +116,8 @@ struct SpeakerAvatar: View {
 struct DiscussionCard: View {
     let block: TranscriptBlock
     let label: SpeakerLabelValue?
+    var playing = false
+    var onPlay: (() -> Void)?
     let onSpeaker: () -> Void
 
     var body: some View {
@@ -98,11 +142,9 @@ struct DiscussionCard: View {
                         .buttonStyle(.plain)
                     }
                     Spacer()
-                    Text(timestamp(block.startMs))
-                        .font(.timestamp)
-                        .foregroundStyle(Color.inkSoft)
+                    CardTimeRow(block: block, playing: playing, onPlay: onPlay)
                 }
-                ForEach(block.segments) { segment in
+                ForEach(block.segments.filter { !$0.text.isEmpty }) { segment in
                     Text(segment.text)
                         .font(.uiBody)
                         .foregroundStyle(Color.ink)
@@ -122,13 +164,13 @@ struct DiscussionCard: View {
 /// A paragraph of a lecture: no avatar and no title, one voice throughout.
 struct LectureCard: View {
     let block: TranscriptBlock
+    var playing = false
+    var onPlay: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(timestamp(block.startMs))
-                .font(.timestamp)
-                .foregroundStyle(Color.inkSoft)
-            Text(block.segments.map(\.text).joined(separator: " "))
+            CardTimeRow(block: block, playing: playing, onPlay: onPlay)
+            Text(block.text)
                 .font(.uiBody)
                 .foregroundStyle(Color.ink)
                 .textSelection(.enabled)

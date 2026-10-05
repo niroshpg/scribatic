@@ -71,6 +71,11 @@ struct ModelSetupView: View {
                 )
             }
 
+            StorageSection(model: model)
+            if model.canBackUp {
+                BackupSection(model: model)
+            }
+
             // The fallback, only once the store route has failed.
             if model.packsUnavailable {
                 Section {
@@ -92,6 +97,14 @@ struct ModelSetupView: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(Color.paper)
+        .overlay {
+            if let progress = model.backupProgress {
+                ProgressView(progress)
+                    .font(.uiLabel)
+                    .padding(24)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            }
+        }
         .navigationTitle("Models")
         .toolbar {
             ToolbarItem(placement: .secondaryAction) {
@@ -290,5 +303,63 @@ private struct StepRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// How much room is left and what Scribatic keeps: free storage as recording
+/// time, the app's own recordings, models and notes, and memory. And when to
+/// warn before a recording, as free space runs low.
+struct StorageSection: View {
+    let model: TranscriptionModel
+    @State private var status: DeviceStatus?
+    @State private var level = DeviceStatus.warningLevel
+
+    var body: some View {
+        Section {
+            if let status {
+                row("Free on this device", bytes(status.freeBytes),
+                    detail: "\(durationEstimate(status.recordingTimeLeft)) of recording")
+                row("Recordings", bytes(status.recordingsBytes),
+                    detail: status.recordingCount == 1 ? "1 recording" : "\(status.recordingCount) recordings")
+                row("Models", bytes(status.modelsBytes))
+                row("Notes", bytes(status.notesBytes))
+                row("Memory available to Scribatic", bytes(status.availableMemory),
+                    detail: model.lowMemory ? "iOS reported low memory recently"
+                                            : "of \(bytes(status.totalMemory)) on this device",
+                    warning: model.lowMemory)
+            }
+            Picker("Warn before recording below", selection: $level) {
+                ForEach(DeviceStatus.warningLevels, id: \.self) { Text(bytes($0)).tag($0) }
+            }
+            .font(.uiBody)
+            .listRowBackground(Color.surfaceRaised)
+            .onChange(of: level) { _, new in DeviceStatus.warningLevel = new }
+        } header: {
+            SectionHeader(title: "Storage & memory")
+        } footer: {
+            Text("A recording takes about 230 MB an hour. If storage runs out while recording, it stops and what was recorded is saved.")
+                .font(.uiCaption)
+                .foregroundStyle(Color.inkMuted)
+        }
+        .task { status = model.deviceStatus() }
+    }
+
+    private func row(_ title: String, _ value: String, detail: String? = nil, warning: Bool = false) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.uiBody).foregroundStyle(Color.ink)
+                if let detail {
+                    Text(detail).font(.uiBodySmall).foregroundStyle(warning ? Color.danger : Color.inkMuted)
+                }
+            }
+            Spacer()
+            Text(value).font(.timestamp).foregroundStyle(Color.inkMuted)
+        }
+        .listRowBackground(Color.surfaceRaised)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func bytes(_ count: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: count, countStyle: .file)
     }
 }

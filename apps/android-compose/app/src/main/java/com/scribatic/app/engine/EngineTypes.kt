@@ -49,6 +49,12 @@ data class TranscriptSegment(
     val speaker: Int = -1,
     /** The stored segment's id, for correcting its speaker; 0 while recording. */
     val id: Long = 0,
+    /**
+     * The user corrected it; [original] is what recognition wrote. A corrected
+     * card's later segments have empty [text].
+     */
+    val edited: Boolean = false,
+    val original: String = "",
 )
 
 /** One voice in one note. `displayName` is the name, or "Speaker N". */
@@ -86,7 +92,16 @@ data class NoteDetail(
     val layout: String = "auto",
     /** The accurate pass after Stop has replaced the live preview. */
     val refined: Boolean = false,
+    /** The transcript changed after [summary] was written. */
+    val summaryStale: Boolean = false,
 ) {
+    /**
+     * Cards the user corrected: rebuilding the transcript from recognition
+     * (speakers again, or the accurate pass) would lose them.
+     */
+    val corrections: Int
+        get() = segments.count { it.edited && it.text.isNotEmpty() }
+
     /** What the note is shown as: a lecture has one voice, so no speaker cards. */
     val isLecture: Boolean
         get() = when (layout) {

@@ -39,6 +39,16 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import com.scribatic.app.engine.Backup
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import com.scribatic.app.engine.DeviceStatus
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -232,6 +242,32 @@ private fun groupByDay(notes: List<NoteSummary>): List<DayGroup> {
 @Composable
 private fun NotesScreen(state: TranscriptUiState, viewModel: TranscriptionViewModel) {
     val c = Scribatic.colors
+    // The system picker: the app reads only the file the user chooses.
+    val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) viewModel.importAudio(uri)
+    }
+    state.importingAudio?.let { step ->
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Importing audio") },
+            text = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = c.accent)
+                    Text(step)
+                }
+            },
+            confirmButton = {},
+        )
+    }
+    state.recordingCaution?.let { caution ->
+        AlertDialog(
+            onDismissRequest = viewModel::dismissCaution,
+            title = { Text("Record anyway?") },
+            text = { Text(caution) },
+            confirmButton = { TextButton(onClick = viewModel::openRecorder) { Text("Record") } },
+            dismissButton = { TextButton(onClick = viewModel::dismissCaution) { Text("Cancel") } },
+        )
+    }
     val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val clipboard = LocalClipboardManager.current
     var pendingDelete by remember { mutableStateOf<NoteSummary?>(null) }
@@ -245,6 +281,10 @@ private fun NotesScreen(state: TranscriptUiState, viewModel: TranscriptionViewMo
             LargeTopAppBar(
                 title = { Text("Notes") },
                 actions = {
+                    IconButton(
+                        enabled = state.phase == Phase.READY && state.importingAudio == null,
+                        onClick = { importPicker.launch(arrayOf("audio/*")) },
+                    ) { Icon(Icons.importAudio, contentDescription = "Import audio") }
                     IconButton(onClick = viewModel::openModels) { Icon(Icons.models, contentDescription = "Models") }
                 },
                 windowInsets = WindowInsets(0),
@@ -258,7 +298,7 @@ private fun NotesScreen(state: TranscriptUiState, viewModel: TranscriptionViewMo
                 RecordButton(
                     stop = false,
                     contentDescription = "New recording",
-                    onClick = viewModel::openRecorder,
+                    onClick = viewModel::requestRecording,
                     enabled = state.phase == Phase.READY,
                     floating = true,
                 )
@@ -523,6 +563,8 @@ private fun ModelsScreen(state: TranscriptUiState, viewModel: TranscriptionViewM
                     }
                 }
             }
+            item { StorageSection(viewModel) }
+            if (viewModel.canBackUp) item { BackupSection(state, viewModel) }
         }
     }
 
@@ -885,10 +927,35 @@ private fun NoteScreen(id: Long, state: TranscriptUiState, viewModel: Transcript
     var identifyMenu by remember { mutableStateOf(false) }
     var blockMenu by remember { mutableStateOf<TranscriptBlock?>(null) }
     var merging by remember { mutableStateOf(false) }
+    /** The card whose actions are showing, and the one being corrected. */
+    var cardMenu by remember { mutableStateOf<TranscriptBlock?>(null) }
+    var editing by remember { mutableStateOf<TranscriptBlock?>(null) }
+    /** Speakers again or the accurate pass, waiting on an OK to drop corrections. */
+    var pendingRebuild by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
+    val snackbar = remember { SnackbarHostState() }
+
+    fun rebuild(label: String, action: () -> Unit) {
+        if ((note?.corrections ?: 0) > 0) pendingRebuild = label to action else action()
+    }
+
+    fun togglePlay(block: TranscriptBlock) {
+        if (note == null) return
+        if (state.playingSpan == block.startMs) viewModel.stopPlayback()
+        else viewModel.play(note, block.startMs, block.endMs)
+    }
+
+    val correction = state.lastCorrection
+    LaunchedEffect(correction) {
+        if (correction != null) {
+            val result = snackbar.showSnackbar("Text corrected", actionLabel = "Undo", duration = SnackbarDuration.Long)
+            if (result == SnackbarResult.ActionPerformed) viewModel.undoCorrection() else viewModel.dismissCorrection()
+        }
+    }
 
     Scaffold(
         containerColor = c.paper,
         contentWindowInsets = WindowInsets(0),
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = {},
@@ -1009,10 +1076,13 @@ private fun NoteScreen(id: Long, state: TranscriptUiState, viewModel: Transcript
                     extras = { Extensions.noteSections.forEach { section -> section.Content(note, viewModel) } },
                     finishing = if (state.finishingNoteId == id) state.finishingStep to state.finishingProgress else null,
                     canImprove = state.canRefine && !note.refined && note.audioPath != null && state.finishingNoteId != id,
-                    onImprove = { viewModel.finishNote(id) },
+                    onImprove = { rebuild("Improve transcript") { viewModel.finishNote(id) } },
                     onSetCount = { identifyMenu = true },
                     onMerge = { merging = true },
                     onBlockSpeaker = { blockMenu = it },
+                    playingSpan = if (state.playingNoteId == id) state.playingSpan else null,
+                    onPlayCard = { togglePlay(it) },
+                    onCard = { cardMenu = it },
                 )
             }
         }
@@ -1057,7 +1127,7 @@ private fun NoteScreen(id: Long, state: TranscriptUiState, viewModel: Transcript
                     (listOf(0) + (2..6)).forEach { count ->
                         TextButton(onClick = {
                             identifyMenu = false
-                            viewModel.identifySpeakers(id, count)
+                            rebuild("Identify speakers") { viewModel.identifySpeakers(id, count) }
                         }) { Text(if (count == 0) "Work it out" else "$count people") }
                     }
                 }
@@ -1088,6 +1158,15 @@ private fun NoteScreen(id: Long, state: TranscriptUiState, viewModel: Transcript
                         blockMenu = null
                         viewModel.setBlockSpeaker(id, block.segmentIds, -1)
                     }) { Text("Someone new") }
+                    // Not just this part: everything one label said is another's.
+                    if (current != null) {
+                        note.speakers.filter { it.index != block.speaker }.forEach { other ->
+                            TextButton(onClick = {
+                                blockMenu = null
+                                viewModel.mergeSpeakers(id, listOf(other.index, current.index), other.index)
+                            }) { Text("Everything ${current.displayName} said is ${other.displayName}") }
+                        }
+                    }
                     if (current != null) {
                         HorizontalDivider(color = c.line)
                         TextButton(onClick = {
@@ -1099,6 +1178,112 @@ private fun NoteScreen(id: Long, state: TranscriptUiState, viewModel: Transcript
             },
             confirmButton = {},
             dismissButton = { TextButton(onClick = { blockMenu = null }) { Text("Cancel") } },
+        )
+    }
+
+    cardMenu?.let { block ->
+        val playing = state.playingNoteId == id && state.playingSpan == block.startMs
+        // Finishing rebuilds the transcript from recognition, so a correction
+        // made meanwhile would be lost: none until it is done.
+        val finishing = state.finishingNoteId == id
+        AlertDialog(
+            onDismissRequest = { cardMenu = null },
+            title = { Text(clock(block.startMs)) },
+            text = {
+                Column {
+                    TextButton(enabled = !finishing, onClick = {
+                        cardMenu = null
+                        editing = block
+                    }) { Text(if (finishing) "Edit text (once this note is finished)" else "Edit text") }
+                    if (note?.audioPath != null) {
+                        TextButton(onClick = {
+                            cardMenu = null
+                            togglePlay(block)
+                        }) { Text(if (playing) "Stop" else "Play this part") }
+                    }
+                    if (block.edited && !finishing) {
+                        TextButton(onClick = {
+                            cardMenu = null
+                            viewModel.restoreText(id, block.segmentIds)
+                        }) { Text("Restore original") }
+                    }
+                    if (note?.isLecture == false && block.speaker >= 0) {
+                        TextButton(onClick = {
+                            cardMenu = null
+                            blockMenu = block
+                        }) { Text("Change speaker…") }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { cardMenu = null }) { Text("Cancel") } },
+        )
+    }
+
+    editing?.let { block ->
+        var text by remember(block) { mutableStateOf(block.text) }
+        val trimmed = text.trim()
+        val playing = state.playingNoteId == id && state.playingSpan == block.startMs
+        AlertDialog(
+            onDismissRequest = { if (trimmed == block.text) editing = null },
+            title = { Text("Edit text") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(clock(block.startMs), style = MaterialTheme.typography.labelMedium, color = c.inkSoft, modifier = Modifier.weight(1f))
+                        if (note?.audioPath != null) {
+                            TextButton(onClick = { togglePlay(block) }) { Text(if (playing) "Stop" else "Play this part") }
+                        }
+                    }
+                    OutlinedTextField(
+                        value = text,
+                        onValueChange = { text = it },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
+                    )
+                    Text(
+                        "Only the words change. The recording and its timing stay as they were.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = c.inkSoft,
+                    )
+                    if (block.edited) {
+                        HorizontalDivider(color = c.line)
+                        Text("As recognised", style = MaterialTheme.typography.labelMedium, color = c.inkMuted)
+                        Text(block.original, style = MaterialTheme.typography.bodySmall, color = c.inkMuted)
+                        TextButton(onClick = {
+                            editing = null
+                            viewModel.restoreText(id, block.segmentIds)
+                        }) { Text("Restore original", color = c.danger) }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = trimmed.isNotEmpty() && trimmed != block.text, onClick = {
+                    editing = null
+                    viewModel.editText(id, block.segmentIds, trimmed, block.text, block.edited)
+                }) { Text("Save") }
+            },
+            dismissButton = { TextButton(onClick = { editing = null }) { Text("Cancel") } },
+        )
+    }
+
+    pendingRebuild?.let { (label, action) ->
+        val count = note?.corrections ?: 0
+        AlertDialog(
+            onDismissRequest = { pendingRebuild = null },
+            title = { Text("Discard your corrections?") },
+            text = {
+                Text(
+                    "This rebuilds the transcript from the recording, so your " +
+                        (if (count == 1) "correction" else "$count corrections") + " to the text will be lost.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingRebuild = null
+                    action()
+                }) { Text(label, color = c.danger) }
+            },
+            dismissButton = { TextButton(onClick = { pendingRebuild = null }) { Text("Cancel") } },
         )
     }
 
@@ -1222,6 +1407,11 @@ private fun NoteBody(
     onSetCount: () -> Unit,
     onMerge: () -> Unit,
     onBlockSpeaker: (TranscriptBlock) -> Unit,
+    /** The start of the card playing, if one is. */
+    playingSpan: Long?,
+    onPlayCard: (TranscriptBlock) -> Unit,
+    /** A card was tapped: correct it, play it, or change its speaker. */
+    onCard: (TranscriptBlock) -> Unit,
 ) {
     val c = Scribatic.colors
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
@@ -1348,6 +1538,16 @@ private fun NoteBody(
         }
 
         item { SectionHeader("Transcript") }
+        if (note.segments.isNotEmpty()) {
+            item {
+                Text(
+                    if (note.audioPath != null) "Tap a part to correct its text or play it." else "Tap a part to correct its text.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = c.inkSoft,
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp),
+                )
+            }
+        }
         if (note.segments.isEmpty()) {
             item {
                 Text(
@@ -1362,10 +1562,18 @@ private fun NoteBody(
         // one voice throughout, is a card per paragraph with no one named.
         val blocks = if (note.isLecture) lectureBlocks(note.segments) else discussionBlocks(note.segments)
         items(blocks, key = { it.key }) { block ->
+            val playing = playingSpan == block.startMs
+            val onPlay: (() -> Unit)? = if (note.audioPath != null) ({ onPlayCard(block) }) else null
             if (note.isLecture) {
-                LectureCard(block)
+                LectureCard(block, playing, onPlay) { onCard(block) }
             } else {
-                DiscussionCard(block, note.speakers.firstOrNull { it.index == block.speaker }) { onBlockSpeaker(block) }
+                DiscussionCard(
+                    block,
+                    note.speakers.firstOrNull { it.index == block.speaker },
+                    playing = playing,
+                    onPlay = onPlay,
+                    onCard = { onCard(block) },
+                ) { onBlockSpeaker(block) }
             }
         }
     }
@@ -1376,4 +1584,199 @@ private fun fileSize(bytes: Double): String = when {
     bytes < 1e6 -> "${maxOf(1, (bytes / 1e3).toInt())} KB"
     bytes < 1e9 -> "${(bytes / 1e6).let { if (it < 10) "%.1f".format(it) else it.toInt().toString() }} MB"
     else -> "${"%.1f".format(bytes / 1e9)} GB"
+}
+
+/**
+ * How much room is left and what Scribatic keeps: free storage as recording
+ * time, the app's own recordings, models and notes, and memory. And when to
+ * warn before a recording, as free space runs low.
+ */
+@Composable
+private fun StorageSection(viewModel: TranscriptionViewModel) {
+    val c = Scribatic.colors
+    val context = LocalContext.current
+    val status = remember { viewModel.deviceStatus() }
+    var level by remember { mutableStateOf(DeviceStatus.warningLevel(context)) }
+    fun size(bytes: Long) = Formatter.formatShortFileSize(context, bytes)
+
+    Column {
+        SectionHeader("Storage & memory")
+        Column(Modifier.padding(horizontal = 16.dp).clip(RoundedCornerShape(12.dp)).background(c.surfaceRaised)) {
+            @Composable
+            fun row(title: String, value: String, detail: String? = null, warning: Boolean = false) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(title, style = MaterialTheme.typography.bodyLarge, color = c.ink)
+                        if (detail != null) {
+                            Text(detail, style = MaterialTheme.typography.bodySmall, color = if (warning) c.danger else c.inkMuted)
+                        }
+                    }
+                    Text(value, style = MaterialTheme.typography.labelMedium, color = c.inkMuted)
+                }
+            }
+            row("Free on this phone", size(status.freeBytes), "About ${durationEstimate(status.recordingSecondsLeft)} of recording")
+            HorizontalDivider(color = c.line)
+            row("Recordings", size(status.recordingsBytes), if (status.recordingCount == 1) "1 recording" else "${status.recordingCount} recordings")
+            HorizontalDivider(color = c.line)
+            row("Models", size(status.modelsBytes))
+            HorizontalDivider(color = c.line)
+            row("Notes", size(status.notesBytes))
+            HorizontalDivider(color = c.line)
+            row(
+                "Memory available",
+                size(status.availableMemory),
+                if (status.lowMemory) "Android reports memory is low" else "of ${size(status.totalMemory)} on this phone",
+                warning = status.lowMemory,
+            )
+            HorizontalDivider(color = c.line)
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                Text("Warn before recording below", style = MaterialTheme.typography.bodyLarge, color = c.ink)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                    DeviceStatus.WARNING_LEVELS.forEach { bytes ->
+                        FilterChip(
+                            selected = level == bytes,
+                            onClick = {
+                                level = bytes
+                                DeviceStatus.setWarningLevel(context, bytes)
+                            },
+                            label = { Text(size(bytes)) },
+                        )
+                    }
+                }
+            }
+        }
+        Text(
+            "A recording takes about 230 MB an hour. If storage runs out while recording, it stops and what was recorded is saved.",
+            style = MaterialTheme.typography.bodySmall,
+            color = c.inkMuted,
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),
+        )
+    }
+}
+
+/**
+ * Backing up to a place the user picks, and restoring. The file is encrypted
+ * with a passphrase only the user knows; Scribatic never uploads it, and keeps
+ * no copy of the passphrase.
+ */
+@Composable
+private fun BackupSection(state: TranscriptUiState, viewModel: TranscriptionViewModel) {
+    val c = Scribatic.colors
+    var includeRecordings by remember { mutableStateOf(viewModel.backupRecordings) }
+    var asking by remember { mutableStateOf<String?>(null) }   // "backup" or "restore"
+    var restoreFrom by remember { mutableStateOf<android.net.Uri?>(null) }
+    val create = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+        val passphrase = viewModel.pendingPassphrase
+        viewModel.pendingPassphrase = null
+        if (uri != null && passphrase != null) viewModel.backUp(uri, passphrase, viewModel.backupRecordings)
+    }
+    val open = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            restoreFrom = uri
+            asking = "restore"
+        }
+    }
+    val busy = state.backupProgress != null
+
+    Column {
+        SectionHeader(
+            "Backup",
+            viewModel.lastBackup.takeIf { it > 0 }?.let { "Last: " + DateFormat.getMediumDateFormat(LocalContext.current).format(Date(it)) },
+        )
+        Column(Modifier.padding(horizontal = 16.dp).clip(RoundedCornerShape(12.dp)).background(c.surfaceRaised)) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Include recordings", style = MaterialTheme.typography.bodyLarge, color = c.ink)
+                    Text(
+                        "Without them the backup is far smaller, but restored notes can't be played.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = c.inkMuted,
+                    )
+                }
+                Switch(checked = includeRecordings, onCheckedChange = {
+                    includeRecordings = it
+                    viewModel.backupRecordings = it
+                })
+            }
+            HorizontalDivider(color = c.line)
+            TextButton(enabled = !busy, onClick = { asking = "backup" }, modifier = Modifier.padding(horizontal = 4.dp)) {
+                Text("Back up now…")
+            }
+            HorizontalDivider(color = c.line)
+            TextButton(enabled = !busy, onClick = { open.launch(arrayOf("*/*")) }, modifier = Modifier.padding(horizontal = 4.dp)) {
+                Text("Restore from a backup…")
+            }
+            state.backupProgress?.let { progress ->
+                HorizontalDivider(color = c.line)
+                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = c.accent)
+                    Text(progress, style = MaterialTheme.typography.labelLarge, color = c.inkMuted)
+                }
+            }
+        }
+        Text(
+            "You choose where the backup goes: this phone, a drive, or a cloud folder you use. It's encrypted with your " +
+                "passphrase, so nobody can read it without that, including Scribatic. If you forget the passphrase, the " +
+                "backup can't be opened.",
+            style = MaterialTheme.typography.bodySmall,
+            color = c.inkMuted,
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),
+        )
+    }
+
+    asking?.let { purpose ->
+        val confirming = purpose == "backup"
+        var first by remember(purpose) { mutableStateOf("") }
+        var second by remember(purpose) { mutableStateOf("") }
+        val problem = when {
+            first.length < Backup.MINIMUM_PASSPHRASE -> "At least ${Backup.MINIMUM_PASSPHRASE} characters."
+            confirming && first != second -> "The two don't match."
+            else -> null
+        }
+        AlertDialog(
+            onDismissRequest = { asking = null },
+            title = { Text(if (confirming) "Choose a passphrase" else "Open backup") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = first,
+                        onValueChange = { first = it },
+                        label = { Text("Passphrase") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    )
+                    if (confirming) {
+                        OutlinedTextField(
+                            value = second,
+                            onValueChange = { second = it },
+                            label = { Text("Again") },
+                            singleLine = true,
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        )
+                    }
+                    Text(
+                        if (confirming) "Keep it somewhere safe, such as a password manager. Without it the backup can't be opened, and Scribatic can't recover it."
+                        else "The passphrase this backup was made with.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = c.inkMuted,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = problem == null, onClick = {
+                    asking = null
+                    if (confirming) {
+                        viewModel.pendingPassphrase = first
+                        create.launch(viewModel.backupFileName())
+                    } else {
+                        restoreFrom?.let { viewModel.restore(it, first) }
+                        restoreFrom = null
+                    }
+                }) { Text(if (confirming) "Choose where" else "Restore") }
+            },
+            dismissButton = { TextButton(onClick = { asking = null }) { Text("Cancel") } },
+        )
+    }
 }

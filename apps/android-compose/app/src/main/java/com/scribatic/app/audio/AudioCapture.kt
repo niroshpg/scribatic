@@ -7,6 +7,7 @@ import android.media.MediaRecorder
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
@@ -40,6 +41,13 @@ class AudioCapture(private val outputFile: File) {
     private var worker: Thread? = null
 
     val isRunning: Boolean get() = running.get()
+
+    /**
+     * Called once, from the capture thread, if the file can no longer be
+     * written (storage full, most likely). Capture has stopped by then; what
+     * was written before is intact.
+     */
+    var onWriteFailure: (() -> Unit)? = null
 
     /**
      * Starts capture. [sink] is called from the capture thread with a buffer of
@@ -89,21 +97,28 @@ class AudioCapture(private val outputFile: File) {
             // WAV around the same 16 kHz mono float32 samples. The container is
             // what lets the shared core read the file for speaker diarization
             // exactly as it reads the iOS app's, with one parser for both.
-            BufferedOutputStream(FileOutputStream(outputFile)).use { out ->
-                out.write(WavFile.header(SAMPLE_RATE))
-                val bytes = ByteBuffer.allocate(FRAMES_PER_READ * 4).order(ByteOrder.LITTLE_ENDIAN)
-                while (running.get()) {
-                    val read = recorder.read(buffer, 0, buffer.size, AudioRecord.READ_BLOCKING)
-                    if (read <= 0) continue
-                    if (paused.get()) continue
+            try {
+                BufferedOutputStream(FileOutputStream(outputFile)).use { out ->
+                    out.write(WavFile.header(SAMPLE_RATE))
+                    val bytes = ByteBuffer.allocate(FRAMES_PER_READ * 4).order(ByteOrder.LITTLE_ENDIAN)
+                    while (running.get()) {
+                        val read = recorder.read(buffer, 0, buffer.size, AudioRecord.READ_BLOCKING)
+                        if (read <= 0) continue
+                        if (paused.get()) continue
 
-                    sink(buffer, read)
+                        sink(buffer, read)
 
-                    bytes.clear()
-                    for (i in 0 until read) bytes.putFloat(buffer[i])
-                    out.write(bytes.array(), 0, read * 4)
+                        bytes.clear()
+                        for (i in 0 until read) bytes.putFloat(buffer[i])
+                        out.write(bytes.array(), 0, read * 4)
+                    }
+                    out.flush()
                 }
-                out.flush()
+            } catch (e: IOException) {
+                // Uncaught, this would take the app down with the recording
+                // unsaved. The loop is over; the caller's stop() releases the
+                // microphone and finishes the file's header.
+                onWriteFailure?.invoke()
             }
         }
     }

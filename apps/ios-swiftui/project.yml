@@ -61,8 +61,8 @@ targets:
       properties:
         CFBundleDisplayName: Scribatic
         NSMicrophoneUsageDescription: >-
-          Scribatic transcribes audio entirely on this device. Recordings and
-          transcripts never leave your iPhone.
+          Scribatic records and transcribes on this device and uploads nothing.
+          A recording leaves it only if you share it or back it up.
         UIBackgroundModes: [audio]
         # The design system's faces (SIL OFL, licences in Resources/Fonts).
         # Resources are copied flat into the bundle, so bare file names.

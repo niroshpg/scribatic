@@ -50,6 +50,7 @@ object Icons {
     val duration = MaterialIcons.Rounded.Schedule
     val delete = MaterialIcons.Rounded.Delete
     val models = MaterialIcons.Rounded.Memory
+    val importAudio = MaterialIcons.Rounded.AudioFile
     val folder = MaterialIcons.Rounded.FolderOpen
     val openInBrowser = MaterialIcons.Rounded.OpenInBrowser
     val installed = MaterialIcons.Rounded.CheckCircle

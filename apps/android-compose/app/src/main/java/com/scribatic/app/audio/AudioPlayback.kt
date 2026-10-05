@@ -27,8 +27,11 @@ class AudioPlayback {
 
     val isPlaying: Boolean get() = playing.get()
 
-    /** [onFinished] is invoked when the file runs out, or after [stop]. */
-    fun play(file: File, onFinished: () -> Unit) {
+    /**
+     * The whole file, or [fromMs] to [toMs] of it: one card of a transcript.
+     * [onFinished] is invoked when that runs out, or after [stop].
+     */
+    fun play(file: File, fromMs: Long = 0, toMs: Long? = null, onFinished: () -> Unit) {
         if (playing.get()) return
         if (!file.exists() || file.length() == 0L) {
             onFinished()
@@ -68,12 +71,16 @@ class AudioPlayback {
             val frames = 4096
             val bytes = ByteArray(frames * 4)
             val floats = FloatArray(frames)
+            // 4 bytes a sample: offsets stay on a sample, or it plays as noise.
+            val bytesPerMs = AudioCapture.SAMPLE_RATE * 4L / 1000
+            var remaining = if (toMs != null) maxOf(0L, toMs - fromMs) * bytesPerMs else Long.MAX_VALUE
             BufferedInputStream(FileInputStream(file)).use { input ->
                 // Past the WAV header, or it plays as a click of noise.
-                input.skip(WavFile.dataOffset(file))
-                while (playing.get()) {
-                    val read = input.read(bytes)
+                input.skip(WavFile.dataOffset(file) + maxOf(0L, fromMs) * bytesPerMs)
+                while (playing.get() && remaining > 0) {
+                    val read = input.read(bytes, 0, minOf(bytes.size.toLong(), remaining).toInt())
                     if (read <= 0) break
+                    remaining -= read
 
                     val count = read / 4
                     ByteBuffer.wrap(bytes, 0, read).order(ByteOrder.LITTLE_ENDIAN)
