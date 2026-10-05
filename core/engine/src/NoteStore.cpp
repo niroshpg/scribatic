@@ -553,6 +553,84 @@ EngineStatus NoteStore::restoreText(std::int64_t noteId, const std::vector<std::
     return transaction.commit() ? EngineStatus::Ok : EngineStatus::DatabaseFailed;
 }
 
+EngineStatus NoteStore::snapshot(const std::string& path) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (db_ == nullptr) { return EngineStatus::DatabaseFailed; }
+    Statement vacuum(db_, "VACUUM INTO ?;");
+    return vacuum.bind(1, path).run() ? EngineStatus::Ok : EngineStatus::DatabaseFailed;
+}
+
+EngineStatus NoteStore::restoreFrom(const std::string& path, std::vector<RestoredNote>* restored,
+                                    std::int32_t* skipped) {
+    {
+        // Opening migrates: an older app's backup comes up to this schema.
+        NoteStore backup;
+        if (backup.open(path) != EngineStatus::Ok) { return EngineStatus::DatabaseFailed; }
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (db_ == nullptr) { return EngineStatus::DatabaseFailed; }
+    {
+        Statement attach(db_, "ATTACH DATABASE ? AS backup;");
+        if (!attach.bind(1, path).run()) { return EngineStatus::DatabaseFailed; }
+    }
+    struct Detach {
+        sqlite3* db;
+        ~Detach() { exec(db, "DETACH DATABASE backup;"); }
+    } detachAtEnd{db_};
+
+    Transaction transaction(db_);
+    if (!transaction.began()) { return EngineStatus::DatabaseFailed; }
+
+    std::vector<std::pair<std::int64_t, std::string>> candidates;
+    {
+        Statement notes(db_, "SELECT b.id, COALESCE(b.audio_path, '') FROM backup.notes b "
+                             "WHERE NOT EXISTS (SELECT 1 FROM main.notes m WHERE m.title = b.title "
+                             "AND m.created_at = b.created_at AND m.duration_ms = b.duration_ms) "
+                             "ORDER BY b.created_at, b.id;");
+        while (notes.step() == SQLITE_ROW) { candidates.emplace_back(notes.int64(0), notes.text(1)); }
+    }
+    {
+        Statement total(db_, "SELECT COUNT(*) FROM backup.notes;");
+        const std::int32_t all = total.step() == SQLITE_ROW ? total.int32(0) : 0;
+        if (skipped != nullptr) { *skipped = all - static_cast<std::int32_t>(candidates.size()); }
+    }
+
+    std::vector<RestoredNote> added;
+    for (const auto& [from, audio] : candidates) {
+        Statement note(db_, "INSERT INTO main.notes(title, created_at, duration_ms, locale, summary, "
+                            "speaker_count, layout, refined, summary_stale) "
+                            "SELECT title, created_at, duration_ms, locale, summary, speaker_count, layout, "
+                            "refined, summary_stale FROM backup.notes WHERE id = ?;");
+        if (!note.bind(1, from).run()) { return EngineStatus::DatabaseFailed; }
+        const std::int64_t to = sqlite3_last_insert_rowid(db_);
+        for (const char* sql : {
+                 "INSERT INTO main.segments(note_id, start_ms, end_ms, text, confidence, speaker, original_text) "
+                 "SELECT ?, start_ms, end_ms, text, confidence, speaker, original_text FROM backup.segments "
+                 "WHERE note_id = ? ORDER BY start_ms, id;",
+                 "INSERT INTO main.speakers(note_id, idx, name) "
+                 "SELECT ?, idx, name FROM backup.speakers WHERE note_id = ?;",
+                 "INSERT INTO main.words(note_id, ordinal, segment, start_ms, end_ms, text, probability) "
+                 "SELECT ?, ordinal, segment, start_ms, end_ms, text, probability FROM backup.words "
+                 "WHERE note_id = ?;"}) {
+            Statement copy(db_, sql);
+            if (!copy.bind(1, to).bind(2, from).run()) { return EngineStatus::DatabaseFailed; }
+        }
+        if (rebuildChunks(to) != EngineStatus::Ok) { return EngineStatus::DatabaseFailed; }
+        added.push_back({to, audio});
+    }
+    if (!transaction.commit()) { return EngineStatus::DatabaseFailed; }
+    if (restored != nullptr) { *restored = std::move(added); }
+    return EngineStatus::Ok;
+}
+
+EngineStatus NoteStore::setAudio(std::int64_t noteId, const std::string& audioName) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (db_ == nullptr) { return EngineStatus::DatabaseFailed; }
+    Statement update(db_, "UPDATE notes SET audio_path = ? WHERE id = ?;");
+    return update.bind(1, audioName).bind(2, noteId).run() && sqlite3_changes(db_) == 1
+               ? EngineStatus::Ok : EngineStatus::DatabaseFailed;
+}
+
 std::string NoteStore::audioName(std::int64_t noteId) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (db_ == nullptr) { return {}; }

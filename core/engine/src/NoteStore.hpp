@@ -93,6 +93,25 @@ public:
     /// Puts the recognised text back on whichever of `segmentIds` were edited.
     EngineStatus restoreText(std::int64_t noteId, const std::vector<std::int64_t>& segmentIds);
 
+    /// A consistent copy of the whole database at `path`, which must not
+    /// exist yet: every note, transcript, correction and speaker, for a backup.
+    EngineStatus snapshot(const std::string& path);
+
+    struct RestoredNote {
+        std::int64_t id = 0;
+        std::string  audioName;   ///< the recording's name in the backup; empty if none
+    };
+
+    /// Copies in the notes of the database at `path` that this one does not
+    /// have; same title, start and length counts as having it. The backup is
+    /// first brought to the current schema, so an older app's backup restores.
+    /// Recordings are the caller's: each new note comes back with its
+    /// recording's name in the backup, and has none until setAudio().
+    EngineStatus restoreFrom(const std::string& path, std::vector<RestoredNote>* restored,
+                             std::int32_t* skipped);
+
+    EngineStatus setAudio(std::int64_t noteId, const std::string& audioName);
+
     /// File name of the note's recording; empty if it has none.
     [[nodiscard]] std::string audioName(std::int64_t noteId);
     EngineStatus clearAudio(std::int64_t noteId);

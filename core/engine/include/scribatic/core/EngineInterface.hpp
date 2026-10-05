@@ -248,6 +248,35 @@ public:
                                                        bool includeTimestamps,
                                                        bool anonymiseSpeakers) = 0;
 
+    /// A recording made elsewhere, already converted by the platform to the
+    /// apps' own format (16 kHz mono float32 WAV) at `audioPath`, inside
+    /// `EngineConfig::recordingsDirectory`, named as recordings are. It
+    /// becomes a note with no transcript yet, in the spoken-language setting
+    /// ("auto" to detect): refineTranscript() writes the transcript, and
+    /// identifySpeakers() the speakers, as after any recording. Returns the
+    /// note's id, or 0 if the file is not such a WAV or the note could not
+    /// be saved.
+    [[nodiscard]] virtual std::int64_t importRecording(const std::string& audioPath,
+                                                       const std::string& title,
+                                                       std::int64_t createdAt) = 0;
+
+    // -- Backup ----------------------------------------------------------------
+
+    /// Writes every note (transcripts, corrections, speakers, summaries) as a
+    /// database at `databasePath`, which must not exist yet. The platform
+    /// packs it with the recordings, encrypts the lot with the user's
+    /// passphrase and writes it where the user chose; the engine sends
+    /// nothing anywhere.
+    virtual EngineStatus writeBackup(const std::string& databasePath) = 0;
+
+    /// Restores a backup unpacked by the platform: its database at
+    /// `databasePath` and its recordings in `recordingsDirectory`. Notes
+    /// already here are skipped; each restored note's recording is moved into
+    /// the app's own recordings directory. An older app's backup is brought
+    /// to the current schema first.
+    virtual RestoreResult restoreBackup(const std::string& databasePath,
+                                        const std::string& recordingsDirectory) = 0;
+
     /// Cooperative cancellation. Safe to call from any thread; the ggml abort
     /// callback observes the flag between graph nodes.
     virtual void requestCancel() noexcept = 0;

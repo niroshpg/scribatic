@@ -113,6 +113,14 @@ struct NoteDetail {
     bool                           summaryStale = false;
 };
 
+/// What restoring a backup did. Notes already here (same title, start and
+/// length) are skipped rather than duplicated.
+struct RestoreResult {
+    EngineStatus status   = EngineStatus::Ok;
+    std::int32_t restored = 0;
+    std::int32_t skipped  = 0;
+};
+
 /// A row returned from the SQLite-VSS approximate nearest-neighbour index.
 struct RetrievalHit {
     std::int64_t noteId   = 0;

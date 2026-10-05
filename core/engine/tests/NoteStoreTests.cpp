@@ -540,6 +540,110 @@ void testUnfinishedRecordingIsRecovered() {
     scribaticEngineRelease(engine);
 }
 
+/// Audio from elsewhere, converted by the app: a note with no transcript yet,
+/// in the language setting, for the accurate pass to transcribe.
+void testImportedRecordingBecomesANote() {
+    const std::string dir = tempDirectory();
+    const std::string recordings = dir + "/recordings";
+    assert(::mkdir(recordings.c_str(), 0700) == 0);
+    touch(dir + "/whisper.bin", "not a model");
+    touch(dir + "/llama.gguf", "not a model");
+    EngineConfig config;
+    config.whisperModelPath = dir + "/whisper.bin";
+    config.llamaModelPath = dir + "/llama.gguf";
+    config.databasePath = dir + "/notes.sqlite";
+    config.recordingsDirectory = recordings;
+    EngineStatus status = EngineStatus::Ok;
+    EngineInterface* engine = EngineInterface::create(config, &status);
+    assert(engine != nullptr && engine->warmUp() == EngineStatus::ModelLoadFailed);
+
+    const std::string imported = recordings + "/recording-1790000300000.wav";
+    writeUnfinishedWav(imported, 48000);   // 3 s
+    engine->setLanguage("es");
+    const std::int64_t id = engine->importRecording(imported, "Interview.m4a", 1790000400);
+    assert(id > 0);
+    const NoteDetail note = engine->loadNote(id);
+    assert(note.title == "Interview.m4a" && note.createdAt == 1790000400);
+    assert(note.durationMs == 3000 && note.audioPath == imported);
+    assert(note.segments.empty() && !note.refined && note.language == "es");
+
+    engine->setLanguage("auto");
+    const std::string second = recordings + "/recording-1790000500000.wav";
+    writeUnfinishedWav(second, 16000);
+    assert(engine->loadNote(engine->importRecording(second, "Memo", 1)).language == "auto");
+
+    // Only the apps' own recordings, in their own directory.
+    touch(dir + "/recording-1.wav");
+    assert(engine->importRecording(dir + "/recording-1.wav", "Elsewhere", 1) == 0);
+    touch(recordings + "/notes.wav");
+    assert(engine->importRecording(recordings + "/notes.wav", "Misnamed", 1) == 0);
+    touch(recordings + "/recording-2.wav", "not audio");
+    assert(engine->importRecording(recordings + "/recording-2.wav", "Not audio", 1) == 0);
+    scribaticEngineRelease(engine);
+}
+
+/// A backup restores into another install with everything the note had,
+/// recordings under new names; restoring it again adds nothing.
+void testBackupRestoresElsewhere() {
+    const auto install = [](const std::string& dir) {
+        const std::string recordings = dir + "/recordings";
+        ::mkdir(recordings.c_str(), 0700);
+        touch(dir + "/whisper.bin", "not a model");
+        touch(dir + "/llama.gguf", "not a model");
+        EngineConfig config;
+        config.whisperModelPath = dir + "/whisper.bin";
+        config.llamaModelPath = dir + "/llama.gguf";
+        config.databasePath = dir + "/notes.sqlite";
+        config.recordingsDirectory = recordings;
+        EngineStatus status = EngineStatus::Ok;
+        EngineInterface* engine = EngineInterface::create(config, &status);
+        assert(engine != nullptr && engine->warmUp() == EngineStatus::ModelLoadFailed);
+        return engine;
+    };
+    const std::string here = tempDirectory();
+    EngineInterface* source = install(here);
+    const std::string recording = here + "/recordings/recording-1790000600000.wav";
+    writeUnfinishedWav(recording, 32000);
+    const std::int64_t id = source->importRecording(recording, "Standup", 1790000600);
+    assert(id > 0);
+    // A transcript, a correction, a named speaker and a summary to carry over.
+    {
+        NoteStore store;
+        assert(store.open(here + "/notes.sqlite") == EngineStatus::Ok);
+        assert(store.replaceTranscript(id, {segment(0, 1000, "hello from quick books"), segment(1000, 2000, "bye")}, 1)
+               == EngineStatus::Ok);
+    }
+    NoteDetail note = source->loadNote(id);
+    assert(source->editText(id, {note.segments[0].id}, "Hello from QuickBooks") == EngineStatus::Ok);
+    assert(source->renameSpeaker(id, 0, "Ana") == EngineStatus::Ok);
+    assert(source->setNoteSummary(id, "Ana said hello.") == EngineStatus::Ok);
+
+    const std::string unpacked = tempDirectory();
+    assert(source->writeBackup(unpacked + "/notes.sqlite") == EngineStatus::Ok);
+    ::mkdir((unpacked + "/recordings").c_str(), 0700);
+    std::rename(recording.c_str(), (unpacked + "/recordings/recording-1790000600000.wav").c_str());
+    scribaticEngineRelease(source);
+
+    EngineInterface* target = install(tempDirectory());
+    RestoreResult result = target->restoreBackup(unpacked + "/notes.sqlite", unpacked + "/recordings");
+    assert(result.status == EngineStatus::Ok && result.restored == 1 && result.skipped == 0);
+    const auto notes = target->listNotes();
+    assert(notes.size() == 1 && notes[0].title == "Standup" && notes[0].hasAudio);
+    note = target->loadNote(notes[0].id);
+    assert(note.segments.size() == 2 && note.segments[0].text == "Hello from QuickBooks");
+    assert(note.segments[0].edited && note.segments[0].original == "hello from quick books");
+    assert(note.speakers.size() == 1 && note.speakers[0].name == "Ana");
+    assert(note.summary == "Ana said hello." && !note.summaryStale);
+    assert(exists(note.audioPath) && note.audioPath.find("recording-1790000600000") == std::string::npos);
+    assert(!exists(unpacked + "/recordings/recording-1790000600000.wav") && "moved, not copied");
+    assert(target->exportTranscript(note.id, false, false).find("QuickBooks") != std::string::npos);
+
+    result = target->restoreBackup(unpacked + "/notes.sqlite", unpacked + "/recordings");
+    assert(result.status == EngineStatus::Ok && result.restored == 0 && result.skipped == 1);
+    assert(target->listNotes().size() == 1 && "nothing is duplicated");
+    scribaticEngineRelease(target);
+}
+
 // -- Model catalog --------------------------------------------------------------------
 
 void testCatalogPinsEveryModel() {
@@ -597,6 +701,8 @@ int main() {
     testCorrectingACard();
     testRecordingLifecycle();
     testUnfinishedRecordingIsRecovered();
+    testImportedRecordingBecomesANote();
+    testBackupRestoresElsewhere();
     testCatalogPinsEveryModel();
     testEngineStartsWithoutTheInstructModel();
     std::printf("ok\n");

@@ -19,6 +19,8 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <chrono>
+#include <cstdio>
 #include <cctype>
 #include <cmath>
 #include <cerrno>
@@ -997,6 +999,50 @@ void EngineImpl::recoverRecording(const std::string& name) {
     // from the audio. A failed insert leaves the file for the next sweep.
     (void)store_.insertNote("Recovered recording", recordingStartedAt(path, name), durationMs,
                             name, {}, {}, "auto");
+}
+
+std::int64_t EngineImpl::importRecording(const std::string& audioPath, const std::string& title,
+                                         std::int64_t createdAt) {
+    const std::string name = baseName(audioPath);
+    if (!isRecordingFileName(name) || recordingPath(name) != audioPath) { return 0; }
+    std::int64_t durationMs = 0;
+    {
+        RecordingAudio audio;
+        if (!audio.open(audioPath)) { return 0; }
+        durationMs = static_cast<std::int64_t>(audio.count() * 1000 / kSampleRate);
+    }
+    std::string language;
+    {
+        std::lock_guard<std::mutex> lock(languageMutex_);
+        language = languagePreference_;
+    }
+    return store_.insertNote(title, createdAt, durationMs, name, {}, {}, language.empty() ? "auto" : language);
+}
+
+EngineStatus EngineImpl::writeBackup(const std::string& databasePath) {
+    return store_.snapshot(databasePath);
+}
+
+RestoreResult EngineImpl::restoreBackup(const std::string& databasePath,
+                                        const std::string& recordingsDirectory) {
+    RestoreResult result;
+    std::vector<NoteStore::RestoredNote> restored;
+    result.status = store_.restoreFrom(databasePath, &restored, &result.skipped);
+    if (result.status != EngineStatus::Ok) { return result; }
+    result.restored = static_cast<std::int32_t>(restored.size());
+
+    // Each recording under a name of its own: the backup's may be in use here.
+    const auto stamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    for (const auto& note : restored) {
+        if (note.audioName.empty() || note.audioName.find('/') != std::string::npos) { continue; }
+        const std::string from = recordingsDirectory + "/" + note.audioName;
+        if (!fileExists(from)) { continue; }
+        const std::string name = "recording-" + std::to_string(stamp) + "-" + std::to_string(note.id) + ".wav";
+        if (std::rename(from.c_str(), recordingPath(name).c_str()) != 0) { continue; }
+        (void)store_.setAudio(note.id, name);
+    }
+    return result;
 }
 
 void EngineImpl::requestCancel() noexcept {

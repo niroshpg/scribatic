@@ -70,6 +70,11 @@ public:
     EngineStatus             deleteNote(std::int64_t noteId) override;
     std::string exportTranscript(std::int64_t noteId, bool includeTimestamps,
                                  bool anonymiseSpeakers) override;
+    std::int64_t importRecording(const std::string& audioPath, const std::string& title,
+                                 std::int64_t createdAt) override;
+    EngineStatus writeBackup(const std::string& databasePath) override;
+    RestoreResult restoreBackup(const std::string& databasePath,
+                                const std::string& recordingsDirectory) override;
 
     void requestCancel() noexcept override;
 
