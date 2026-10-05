@@ -228,11 +228,25 @@ final class TranscriptionModel {
         // Required pack first: the app can start as soon as it lands, and the
         // 1.2 GB optional one must not keep it waiting.
         for id in missing.sorted(by: { a, _ in a == "models-core" }) {
-            let progress = Task { [weak self] in
+            // Never cancelled: it ends itself on the pack's last update. On
+            // cancellation the system's sequence throws CancellationError
+            // though its Failure is Never, and the standard library's
+            // next(isolation:) aborts the app casting it (seen on iOS 26.3,
+            // on the first install, the only time packs download).
+            Task { [weak self] in
                 for await update in AssetPackManager.shared.statusUpdates(forAssetPackWithID: id) {
-                    if case let .downloading(_, fraction) = update {
+                    switch update {
+                    case let .downloading(_, fraction):
                         let percent = Int(fraction.fractionCompleted * 100)
-                        await MainActor.run { self?.packStatus = "Downloading models — \(percent)%" }
+                        await MainActor.run {
+                            // A late update must not bring back a finished download.
+                            guard let self, self.packDownload?.id == id else { return }
+                            self.packStatus = "Downloading models — \(percent)%"
+                        }
+                    case .finished, .failed:
+                        return
+                    default:
+                        break
                     }
                 }
             }
@@ -248,7 +262,6 @@ final class TranscriptionModel {
                 if !download.isCancelled { packsUnavailable = true }
             }
             packDownload = nil
-            progress.cancel()
             refreshModels()
             // First run, blocked only on the required pack: carry on the
             // moment it lands, without waiting for the optional one.
