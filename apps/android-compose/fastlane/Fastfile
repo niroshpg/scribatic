@@ -122,6 +122,32 @@ platform :android do
     UI.success("Listing for #{name} (#{code}) uploaded")
   end
 
+  desc "Promote the Internal build in build.gradle.kts to Closed testing"
+  desc "Dry run first:  bundle exec fastlane closed validate_only:true [status:draft]"
+  lane :closed do |options|
+    # A promotion, not an upload: the very AAB testers already ran on
+    # Internal, so the archived mapping still matches it.
+    name, code = app_version
+    UI.message("Promoting #{name} (#{code}) from Internal to Closed testing")
+    upload_to_play_store(
+      track: "internal",
+      track_promote_to: "alpha",   # Closed testing's id in the Play API
+      # status:draft while the app itself is a draft (never published): Play
+      # then takes only draft releases outside Internal testing, which are sent
+      # for review from Play Console once its setup checklist is complete.
+      track_promote_release_status: options.fetch(:status, "completed"),
+      version_code: code.to_i,
+      metadata_path: "playstore/metadata/android",
+      skip_upload_aab: true,
+      skip_upload_apk: true,
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true,
+      skip_upload_changelogs: false,
+      validate_only: options.fetch(:validate_only, false)
+    )
+  end
+
   desc "Promote the latest Internal build to Production (staged 20%)"
   lane :promote do
     upload_to_play_store(

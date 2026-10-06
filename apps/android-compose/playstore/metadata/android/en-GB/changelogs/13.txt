@@ -1,0 +1,8 @@
+New:
+• Correct the transcript: tap any part to fix a word, play just that part, undo, or restore the original
+• Fix speakers in one tap: "Everything Speaker 2 said is Speaker 1"
+• Import audio you already have (M4A, MP3, WAV) and transcribe it
+• Encrypted backup to a place you choose, and restore
+• See free storage as recording time, with a warning before it runs low
+• A recording cut short is kept as "Recovered recording"
+Everything still runs on your phone. Nothing is uploaded.
