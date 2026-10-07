@@ -14,19 +14,7 @@ struct NotesListView: View {
             .frame(maxWidth: .infinity)
             .background(Color.paper)
             .navigationTitle("Notes")
-            .toolbar {
-                ToolbarItem(placement: .secondaryAction) {
-                    Button("Import audio…", systemImage: "square.and.arrow.down") { choosingAudio = true }
-                        .disabled(model.phase != .ready || model.importingAudio != nil)
-                }
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        model.showingModels = true
-                    } label: {
-                        Label("Models", systemImage: "cpu")
-                    }
-                }
-            }
+            .toolbar { toolbar }
             .safeAreaInset(edge: .bottom) {
                 if !engineStopped {
                     // One tap: pushing the recorder starts capture.
@@ -65,6 +53,33 @@ struct NotesListView: View {
                 Text("The transcript, the speaker names and the recording are all removed from this device.")
             }
     }
+
+    @ToolbarContentBuilder
+    private var toolbar: some ToolbarContent {
+        ToolbarItem(placement: .secondaryAction) {
+            Button("Import audio…", systemImage: "square.and.arrow.down") { choosingAudio = true }
+                .disabled(model.phase != .ready || model.importingAudio != nil)
+        }
+        // Add-ons' screens (Search), each a button of its own.
+        ToolbarItemGroup(placement: .primaryAction) {
+            ForEach(Extensions.screens.indices, id: \.self) { index in
+                let screen = Extensions.screens[index]
+                Button(screen.title, systemImage: screen.systemImage) {
+                    model.path.append(.extensionScreen(index))
+                }
+                .disabled(!engineReady)
+            }
+        }
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                model.showingModels = true
+            } label: {
+                Label("Models", systemImage: "cpu")
+            }
+        }
+    }
+
+    private var engineReady: Bool { model.phase != .starting && !engineStopped }
 
     private var cautionBinding: Binding<Bool> {
         Binding(get: { model.recordingCaution != nil }, set: { if !$0 { model.recordingCaution = nil } })

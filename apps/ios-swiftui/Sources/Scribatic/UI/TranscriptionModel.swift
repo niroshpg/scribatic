@@ -46,6 +46,14 @@ final class TranscriptionModel {
     enum Route: Hashable {
         case recorder
         case note(Int64)
+        /// An add-on's screen: its index in `Extensions.screens`.
+        case extensionScreen(Int)
+    }
+
+    /// A moment in a note to scroll to and mark once, e.g. from a search result.
+    struct NoteFocus: Equatable {
+        let noteID: Int64
+        let atMs: Int64
     }
 
     // MARK: - Published state
@@ -79,6 +87,8 @@ final class TranscriptionModel {
     var noteError: String?
 
     var path: [Route] = []
+    /// Set by `openNote(_:atMs:)`; the note screen clears it once shown.
+    var focus: NoteFocus?
 
     /// One row of the model setup screen.
     struct ModelRow: Identifiable, Equatable {
@@ -189,14 +199,13 @@ final class TranscriptionModel {
 
     // MARK: - Models
 
-    /// Optional models an installed add-on uses, by file name; the others are
-    /// not offered, since nothing would use them. iOS has no add-ons yet, so
-    /// none: the summaries model would be a 1.2 GB download that does nothing.
-    static var optionalModelsInUse: Set<String> = []
-
+    /// Optional models are offered only when an installed add-on uses them
+    /// (`Extensions.optionalModels`): otherwise the summaries model would be
+    /// a 1.2 GB download that does nothing.
     func refreshModels() {
+        Extensions.install()
         models = installer.catalog
-            .filter { $0.required || Self.optionalModelsInUse.contains($0.fileName) }
+            .filter { $0.required || Extensions.optionalModels.contains($0.fileName) }
             .map { ModelRow(spec: $0, installed: installer.isInstalled($0), wanted: installer.isWanted($0)) }
     }
 
@@ -888,6 +897,34 @@ final class TranscriptionModel {
         }
         stopPlayback()
         await engine?.hibernate()
+    }
+}
+
+// MARK: - Add-ons
+
+extension TranscriptionModel: ExtensionHost {
+    var runningEngine: ScribaticEngine? { engine }
+
+    func modelURL(_ fileName: String) -> URL? {
+        installer.catalog.first { $0.fileName == fileName }.flatMap(installer.fileURL(for:))
+    }
+
+    func requestModel(_ fileName: String) {
+        guard let spec = installer.catalog.first(where: { $0.fileName == fileName }) else { return }
+        setModelWanted(spec, true)
+    }
+
+    func reloadNotes() {
+        Task { await noteChanged() }
+    }
+
+    func openNote(_ id: Int64, atMs: Int64) {
+        focus = atMs > 0 ? NoteFocus(noteID: id, atMs: atMs) : nil
+        path.append(.note(id))
+    }
+
+    func showError(_ text: String) {
+        noteError = text
     }
 }
 

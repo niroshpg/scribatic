@@ -127,7 +127,9 @@ setup-ios:
 	# The team id comes from the gitignored fastlane/.env, not project.yml.
 	# Always defined, empty when there is no .env: XcodeGen leaves an UNSET
 	# variable in the project as a literal "$${DEVELOPMENT_TEAM}".
+	# Pro when pro/ is cloned, unless SCRIBATIC_WITH_PRO=0 asks for the free app.
 	cd $(IOS_DIR) && export DEVELOPMENT_TEAM="$${DEVELOPMENT_TEAM:-}" && \
+	    if [ -f $(ROOT)/pro/ios/pro.yml ] && [ "$${SCRIBATIC_WITH_PRO:-1}" != 0 ]; then export SCRIBATIC_PRO=true; fi && \
 	    set -a && { [ ! -f fastlane/.env ] || . fastlane/.env; } && set +a && \
 	    xcodegen generate
 

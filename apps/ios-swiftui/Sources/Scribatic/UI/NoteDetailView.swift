@@ -29,6 +29,8 @@ struct NoteDetailView: View {
     /// Speaker identification or the accurate pass, waiting on the user's OK
     /// to drop their corrections.
     @State private var pendingRebuild: Rebuild?
+    /// The card opened at (from a search result), outlined for a moment.
+    @State private var marked: Int64?
 
     private struct Correction: Equatable {
         let segmentIds: [Int64]
@@ -339,6 +341,38 @@ struct NoteDetailView: View {
     // MARK: - Transcript
 
     private func transcript(_ note: NoteDetailValue) -> some View {
+        // A discussion is a card per turn, with whose turn it is; a lecture,
+        // one voice throughout, is a card per paragraph.
+        let blocks = note.isLecture ? lectureBlocks(note.segments) : discussionBlocks(note.segments)
+        // Read here, in the body, so a change to it redraws the cards: a
+        // read inside the List's lazily built rows alone isn't tracked.
+        let marked = marked
+        return ScrollViewReader { proxy in
+            cards(note, blocks, marked: marked)
+                .task(id: model.focus) {
+                    guard let focus = model.focus, focus.noteID == noteID, !blocks.isEmpty else { return }
+                    let card = (blocks.last { $0.startMs <= focus.atMs } ?? blocks[0]).id
+                    model.focus = nil
+                    // Not in this task: the list appears more than once as the
+                    // note loads, and each time cancels the tasks attached to
+                    // it, which would cut the scroll and the mark short.
+                    Task { await showFocus(card, proxy) }
+                }
+        }
+    }
+
+    /// Scrolls to the card holding the moment the note was opened at, and
+    /// outlines it for a moment.
+    private func showFocus(_ card: Int64, _ proxy: ScrollViewProxy) async {
+        // After the list has laid out its first rows; scrolling sooner is lost.
+        try? await Task.sleep(for: .milliseconds(150))
+        withAnimation { proxy.scrollTo(card, anchor: .top) }
+        marked = card
+        try? await Task.sleep(for: .seconds(2.5))
+        withAnimation { if marked == card { marked = nil } }
+    }
+
+    private func cards(_ note: NoteDetailValue, _ blocks: [TranscriptBlock], marked: Int64?) -> some View {
         List {
             header(note)
                 .listRowBackground(Color.paper)
@@ -346,6 +380,12 @@ struct NoteDetailView: View {
 
             if note.audioURL != nil {
                 player(note)
+                    .listRowBackground(Color.paper)
+                    .listRowSeparator(.hidden)
+            }
+
+            ForEach(Extensions.noteSections.indices, id: \.self) { index in
+                Extensions.noteSections[index].content(note: note, host: model)
                     .listRowBackground(Color.paper)
                     .listRowSeparator(.hidden)
             }
@@ -369,9 +409,7 @@ struct NoteDetailView: View {
                     .listRowBackground(Color.paper)
                     .listRowSeparator(.hidden)
             }
-            // A discussion is a card per turn, with whose turn it is; a
-            // lecture, one voice throughout, is a card per paragraph.
-            ForEach(note.isLecture ? lectureBlocks(note.segments) : discussionBlocks(note.segments)) { block in
+            ForEach(blocks) { block in
                 let playing = model.playingSpan == block.startMs
                 let onPlay: (() -> Void)? = note.audioURL != nil ? { toggleCardPlayback(block) } : nil
                 Group {
@@ -385,6 +423,12 @@ struct NoteDetailView: View {
                         }
                     }
                 }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(Color.accent, lineWidth: 2)
+                        .opacity(marked == block.id ? 1 : 0)
+                }
+                .id(block.id)
                 .contextMenu {
                     Button("Edit text", systemImage: "pencil") { editing = block }
                         .disabled(finishing)

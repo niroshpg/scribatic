@@ -274,6 +274,12 @@ actor ScribaticEngine {
         engine.search(std.string(query), topK).map(RetrievalHitValue.init)
     }
 
+    /// For add-ons (`Extensions`): the engine itself, for their own C++ to
+    /// work on through its public interface, on threads of their own as
+    /// `identifySpeakers` does. The store behind it is lock-guarded; an
+    /// add-on's work holds no engine state that a recording uses.
+    nonisolated var core: EngineInterface { engine }
+
     /// Cooperative cancellation, observed by the ggml abort callback.
     nonisolated func requestCancel() {
         engine.requestCancel()

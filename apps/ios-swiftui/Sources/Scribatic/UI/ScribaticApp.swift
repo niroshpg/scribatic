@@ -43,6 +43,10 @@ struct RootView: View {
                                 RecorderView(model: model)
                             case let .note(id):
                                 NoteDetailView(model: model, noteID: id)
+                            case let .extensionScreen(index):
+                                if Extensions.screens.indices.contains(index) {
+                                    Extensions.screens[index].content(host: model)
+                                }
                             }
                         }
                 }
