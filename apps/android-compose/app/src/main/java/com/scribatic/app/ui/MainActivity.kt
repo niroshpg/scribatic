@@ -1476,19 +1476,28 @@ private fun NoteBody(
     // one voice throughout, is a card per paragraph with no one named.
     val blocks = if (note.isLecture) lectureBlocks(note.segments) else discussionBlocks(note.segments)
     var marked by remember { mutableStateOf<Long?>(null) }
+    // The card to scroll to, and its key. Taken from focusMs in one effect and
+    // shown in another: onFocused() clears focusMs, which restarts the first,
+    // and would cancel a scroll still running in it.
+    var focus by remember { mutableStateOf<Pair<Int, Long>?>(null) }
     LaunchedEffect(focusMs, blocks.size) {
         val at = focusMs ?: return@LaunchedEffect
         if (blocks.isEmpty()) return@LaunchedEffect
         val index = blocks.indexOfLast { it.startMs <= at }.coerceAtLeast(0)
+        focus = index to blocks[index].key
+        onFocused()
+    }
+    LaunchedEffect(focus) {
+        val (index, key) = focus ?: return@LaunchedEffect
         // Rows before the cards: header, player, add-on sections, the
         // Transcript heading and the line under it.
         val before = 1 + (if (note.audioPath != null) 1 else 0) +
             (if (Extensions.noteSections.isNotEmpty()) 1 else 0) + 2
-        onFocused()
         listState.animateScrollToItem(before + index)
-        marked = blocks[index].key
+        marked = key
         kotlinx.coroutines.delay(2500)
         marked = null
+        focus = null
     }
     LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = 24.dp)) {
         item {
