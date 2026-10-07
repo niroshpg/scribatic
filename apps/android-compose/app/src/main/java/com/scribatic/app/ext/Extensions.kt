@@ -2,6 +2,7 @@ package com.scribatic.app.ext
 
 import android.content.Context
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.vector.ImageVector
 import com.scribatic.app.engine.NoteDetail
 import com.scribatic.app.engine.TranscriptionEngine
 import com.scribatic.app.ui.TranscriptUiState
@@ -20,6 +21,9 @@ import java.io.File
 object Extensions {
     /** Sections add-ons put on the note screen, under the player. */
     val noteSections: MutableList<NoteSection> = mutableListOf()
+
+    /** Screens add-ons offer from the notes list, each behind an icon in its top bar. */
+    val screens: MutableList<ExtensionScreen> = mutableListOf()
 
     /**
      * Optional models an installed add-on uses, by file name. Only these are
@@ -49,6 +53,17 @@ interface NoteSection {
     fun Content(note: NoteDetail, host: ExtensionHost)
 }
 
+/** A screen of an add-on's own, opened from the notes list. */
+interface ExtensionScreen {
+    /** For the icon's description and the screen's title. */
+    val title: String
+    val icon: ImageVector
+
+    /** [onBack] returns to the notes list. */
+    @Composable
+    fun Content(host: ExtensionHost, onBack: () -> Unit)
+}
+
 /** What an add-on can see of the app and ask of it. The view model implements it. */
 interface ExtensionHost {
     val uiState: StateFlow<TranscriptUiState>
@@ -64,6 +79,12 @@ interface ExtensionHost {
 
     /** Re-reads a note, e.g. after an add-on changed it through the engine. */
     fun reloadNote(id: Long)
+
+    /**
+     * Opens a note, scrolled to the part at [atMs] in its recording and
+     * marked for a moment. Back returns to the screen that opened it.
+     */
+    fun openNote(id: Long, atMs: Long = 0)
 
     /** A one-off message at the bottom of the screen. */
     fun showMessage(text: String)

@@ -39,6 +39,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.ui.graphics.Color
 import com.scribatic.app.engine.Backup
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
@@ -195,6 +196,7 @@ private fun ScribaticApp(viewModel: TranscriptionViewModel = viewModel()) {
             Screen.Notes -> NotesScreen(state, viewModel)
             Screen.Recorder -> RecorderScreen(state, viewModel)
             is Screen.Note -> NoteScreen(screen.id, state, viewModel)
+            is Screen.Extension -> Extensions.screens.getOrNull(screen.index)?.Content(viewModel) { viewModel.back() }
         }
     }
 }
@@ -281,6 +283,11 @@ private fun NotesScreen(state: TranscriptUiState, viewModel: TranscriptionViewMo
             LargeTopAppBar(
                 title = { Text("Notes") },
                 actions = {
+                    Extensions.screens.forEachIndexed { index, screen ->
+                        IconButton(onClick = { viewModel.openExtension(index) }) {
+                            Icon(screen.icon, contentDescription = screen.title)
+                        }
+                    }
                     IconButton(
                         enabled = state.phase == Phase.READY && state.importingAudio == null,
                         onClick = { importPicker.launch(arrayOf("audio/*")) },
@@ -1082,6 +1089,8 @@ private fun NoteScreen(id: Long, state: TranscriptUiState, viewModel: Transcript
                     playingSpan = if (state.playingNoteId == id) state.playingSpan else null,
                     onPlayCard = { togglePlay(it) },
                     onCard = { cardMenu = it },
+                    focusMs = state.focusMs,
+                    onFocused = viewModel::focusShown,
                 )
             }
         }
@@ -1457,9 +1466,31 @@ private fun NoteBody(
     onPlayCard: (TranscriptBlock) -> Unit,
     /** A card was tapped: correct it, play it, or change its speaker. */
     onCard: (TranscriptBlock) -> Unit,
+    /** A moment to scroll to and mark once, e.g. from a search result. */
+    focusMs: Long? = null,
+    onFocused: () -> Unit = {},
 ) {
     val c = Scribatic.colors
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+    val listState = rememberLazyListState()
+    // A discussion is a card per turn, with whose turn it is; a lecture,
+    // one voice throughout, is a card per paragraph with no one named.
+    val blocks = if (note.isLecture) lectureBlocks(note.segments) else discussionBlocks(note.segments)
+    var marked by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(focusMs, blocks.size) {
+        val at = focusMs ?: return@LaunchedEffect
+        if (blocks.isEmpty()) return@LaunchedEffect
+        val index = blocks.indexOfLast { it.startMs <= at }.coerceAtLeast(0)
+        // Rows before the cards: header, player, add-on sections, the
+        // Transcript heading and the line under it.
+        val before = 1 + (if (note.audioPath != null) 1 else 0) +
+            (if (Extensions.noteSections.isNotEmpty()) 1 else 0) + 2
+        onFocused()
+        listState.animateScrollToItem(before + index)
+        marked = blocks[index].key
+        kotlinx.coroutines.delay(2500)
+        marked = null
+    }
+    LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = 24.dp)) {
         item {
             Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
@@ -1580,12 +1611,10 @@ private fun NoteBody(
                 )
             }
         }
-        // A discussion is a card per turn, with whose turn it is; a lecture,
-        // one voice throughout, is a card per paragraph with no one named.
-        val blocks = if (note.isLecture) lectureBlocks(note.segments) else discussionBlocks(note.segments)
         items(blocks, key = { it.key }) { block ->
             val playing = playingSpan == block.startMs
             val onPlay: (() -> Unit)? = if (note.audioPath != null) ({ onPlayCard(block) }) else null
+            Box(Modifier.background(if (marked == block.key) c.accent.copy(alpha = 0.12f) else Color.Transparent)) {
             if (note.isLecture) {
                 LectureCard(block, playing, onPlay) { onCard(block) }
             } else {
@@ -1596,6 +1625,7 @@ private fun NoteBody(
                     onPlay = onPlay,
                     onCard = { onCard(block) },
                 ) { onBlockSpeaker(block) }
+            }
             }
         }
     }

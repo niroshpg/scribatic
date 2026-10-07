@@ -54,6 +54,8 @@ sealed interface Screen {
     data object Notes : Screen
     data object Recorder : Screen
     data class Note(val id: Long) : Screen
+    /** An add-on's screen: Extensions.screens[index]. */
+    data class Extension(val index: Int) : Screen
 }
 
 /** One row of the model setup screen. */
@@ -81,6 +83,10 @@ data class TranscriptUiState(
     val playingNoteId: Long? = null,
     /** The start of the card being played; null for the whole recording. */
     val playingSpan: Long? = null,
+    /** The moment the open note should scroll to and mark, once. */
+    val focusMs: Long? = null,
+    /** Where back from the open note goes, when not the notes list. */
+    val noteFrom: Screen? = null,
     /** The last text correction, offered for Undo until it is replaced or dismissed. */
     val lastCorrection: Correction? = null,
     /** Why recording might not go well, for the user to confirm before it starts. */
@@ -607,9 +613,18 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
         _uiState.update { it.copy(message = message) }
     }
 
-    fun openNote(id: Long) {
-        _uiState.update { it.copy(screen = Screen.Note(id), note = null) }
+    override fun openNote(id: Long, atMs: Long) {
+        _uiState.update {
+            val from = it.screen.takeIf { screen -> screen is Screen.Extension }
+            it.copy(screen = Screen.Note(id), note = null, focusMs = atMs.takeIf { atMs > 0 }, noteFrom = from)
+        }
         reloadNote(id)
+    }
+
+    fun focusShown() = _uiState.update { it.copy(focusMs = null) }
+
+    fun openExtension(index: Int) {
+        if (index in Extensions.screens.indices) _uiState.update { it.copy(screen = Screen.Extension(index)) }
     }
 
     /** Back from any screen returns to the list; mid-recording, back is ignored. */
@@ -630,7 +645,7 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
             return true
         }
         stopPlayback()
-        _uiState.update { it.copy(screen = Screen.Notes, note = null) }
+        _uiState.update { it.copy(screen = it.noteFrom ?: Screen.Notes, note = null, noteFrom = null, focusMs = null) }
         return true
     }
 
