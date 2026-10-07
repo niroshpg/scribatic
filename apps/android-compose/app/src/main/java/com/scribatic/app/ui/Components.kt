@@ -5,7 +5,6 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -282,28 +281,5 @@ fun EmptyState(
             Text(aside, style = com.scribatic.app.ui.theme.DisplayItalic, color = c.inkSoft)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) { actions() }
-    }
-}
-
-/** One speaker: dot, name, pencil. Tapping renames. */
-@Composable
-fun SpeakerChip(name: String, color: Color, onClick: () -> Unit) {
-    val c = Scribatic.colors
-    Surface(
-        onClick = onClick,
-        shape = CircleShape,
-        color = c.surfaceRaised,
-        border = BorderStroke(1.dp, c.lineStrong),
-        modifier = Modifier.heightIn(min = 40.dp),
-    ) {
-        Row(
-            modifier = Modifier.padding(start = 12.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Box(Modifier.size(10.dp).clip(CircleShape).background(color))
-            Text(name, style = MaterialTheme.typography.labelLarge, color = c.ink)
-            Icon(Icons.edit, contentDescription = null, tint = c.inkMuted, modifier = Modifier.size(16.dp))
-        }
     }
 }

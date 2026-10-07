@@ -2,6 +2,7 @@ package com.scribatic.app.ui
 
 import androidx.compose.material.icons.Icons as MaterialIcons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.AudioFile
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ContentCopy
@@ -51,6 +52,7 @@ object Icons {
     val delete = MaterialIcons.Rounded.Delete
     val models = MaterialIcons.Rounded.Memory
     val importAudio = MaterialIcons.Rounded.AudioFile
+    val chevronRight = MaterialIcons.AutoMirrored.Rounded.KeyboardArrowRight
     val folder = MaterialIcons.Rounded.FolderOpen
     val openInBrowser = MaterialIcons.Rounded.OpenInBrowser
     val installed = MaterialIcons.Rounded.CheckCircle

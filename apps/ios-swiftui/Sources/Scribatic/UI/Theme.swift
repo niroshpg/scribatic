@@ -348,29 +348,6 @@ extension EmptyStateView where Actions == EmptyView {
     }
 }
 
-/// One speaker: dot, name, pencil. Tapping renames.
-struct SpeakerChip: View {
-    let speaker: SpeakerLabelValue
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Circle().fill(Color.speaker(speaker.index)).frame(width: 10, height: 10)
-                Text(speaker.displayName).font(.uiLabel).foregroundStyle(Color.ink)
-                Image(systemName: "pencil").font(.system(size: 12, weight: .medium)).foregroundStyle(Color.inkMuted)
-            }
-            .padding(.leading, 12)
-            .padding(.trailing, 10)
-            .frame(minHeight: 40)
-            .background(Color.surfaceRaised, in: Capsule())
-            .overlay(Capsule().stroke(Color.lineStrong, lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-        .accessibilityHint("Gives this speaker a name")
-    }
-}
-
 /// Wraps its children onto as many rows as they need.
 struct FlowLayout: Layout {
     var spacing: CGFloat = 8

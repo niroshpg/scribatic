@@ -927,6 +927,7 @@ private fun NoteScreen(id: Long, state: TranscriptUiState, viewModel: Transcript
     var identifyMenu by remember { mutableStateOf(false) }
     var blockMenu by remember { mutableStateOf<TranscriptBlock?>(null) }
     var merging by remember { mutableStateOf(false) }
+    var speakersPanel by remember { mutableStateOf(false) }
     /** The card whose actions are showing, and the one being corrected. */
     var cardMenu by remember { mutableStateOf<TranscriptBlock?>(null) }
     var editing by remember { mutableStateOf<TranscriptBlock?>(null) }
@@ -1072,13 +1073,11 @@ private fun NoteScreen(id: Long, state: TranscriptUiState, viewModel: Transcript
                     busy = if (state.busy) state.busyStep ?: "Working…" else null,
                     playing = state.playingNoteId == id,
                     onPlay = { if (state.playingNoteId == id) viewModel.stopPlayback() else viewModel.play(note) },
-                    onRename = { renaming = it },
+                    onSpeakers = { speakersPanel = true },
                     extras = { Extensions.noteSections.forEach { section -> section.Content(note, viewModel) } },
                     finishing = if (state.finishingNoteId == id) state.finishingStep to state.finishingProgress else null,
                     canImprove = state.canRefine && !note.refined && note.audioPath != null && state.finishingNoteId != id,
                     onImprove = { rebuild("Improve transcript") { viewModel.finishNote(id) } },
-                    onSetCount = { identifyMenu = true },
-                    onMerge = { merging = true },
                     onBlockSpeaker = { blockMenu = it },
                     playingSpan = if (state.playingNoteId == id) state.playingSpan else null,
                     onPlayCard = { togglePlay(it) },
@@ -1178,6 +1177,53 @@ private fun NoteScreen(id: Long, state: TranscriptUiState, viewModel: Transcript
             },
             confirmButton = {},
             dismissButton = { TextButton(onClick = { blockMenu = null }) { Text("Cancel") } },
+        )
+    }
+
+    if (speakersPanel && note != null) {
+        AlertDialog(
+            onDismissRequest = { speakersPanel = false },
+            title = { Text("Speakers") },
+            text = {
+                Column {
+                    note.speakers.forEach { speaker ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable(onClickLabel = "Rename") {
+                                    speakersPanel = false
+                                    renaming = speaker
+                                }
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            SpeakerAvatar(speakerInitials(speaker, speaker.index), speaker.index, Modifier.size(28.dp))
+                            Text(speaker.displayName, modifier = Modifier.padding(start = 12.dp).weight(1f), color = c.ink)
+                            Icon(Icons.edit, contentDescription = null, tint = c.inkMuted, modifier = Modifier.size(18.dp))
+                        }
+                    }
+                    Text(
+                        "Tap a name to change it. To change who said one part, tap that part's speaker icon.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = c.inkMuted,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                    if (note.audioPath != null && state.canIdentifySpeakers) {
+                        TextButton(onClick = {
+                            speakersPanel = false
+                            identifyMenu = true
+                        }) { Text("Set how many people were talking…") }
+                    }
+                    if (note.speakers.size >= 2) {
+                        TextButton(onClick = {
+                            speakersPanel = false
+                            merging = true
+                        }) { Text("Merge speakers…") }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { speakersPanel = false }) { Text("Done") } },
         )
     }
 
@@ -1396,7 +1442,8 @@ private fun NoteBody(
     busy: String?,
     playing: Boolean,
     onPlay: () -> Unit,
-    onRename: (SpeakerLabel) -> Unit,
+    /** The header's "2 speakers": opens the speakers panel. */
+    onSpeakers: () -> Unit,
     /** Add-on sections (ext/Extensions.kt), under the player. */
     extras: @Composable () -> Unit,
     /** The step and progress (-1: unknown) while the note is finished after Stop. */
@@ -1404,8 +1451,6 @@ private fun NoteBody(
     /** Only the live preview is here, and it can be improved. */
     canImprove: Boolean,
     onImprove: () -> Unit,
-    onSetCount: () -> Unit,
-    onMerge: () -> Unit,
     onBlockSpeaker: (TranscriptBlock) -> Unit,
     /** The start of the card playing, if one is. */
     playingSpan: Long?,
@@ -1429,7 +1474,18 @@ private fun NoteBody(
                 ) {
                     MetaChip(Icons.duration, clock(note.durationMs))
                     MetaChip(Icons.language, languageName(note.language))
-                    if (note.speakerCount > 0) MetaChip(Icons.speakers, speakersLabel(note.speakerCount))
+                    // The way into the speakers: out of the transcript's way until wanted.
+                    if (note.speakerCount > 0) {
+                        Row(
+                            Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable(onClickLabel = "Name the speakers, set how many there were, or merge them", onClick = onSpeakers),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            MetaChip(Icons.speakers, speakersLabel(note.speakerCount), color = c.accent)
+                            Icon(Icons.chevronRight, contentDescription = null, tint = c.accent, modifier = Modifier.size(16.dp))
+                        }
+                    }
                     if (note.audioPath != null) {
                         MetaBadge(Icons.lock, "On this phone")
                     } else {
@@ -1501,40 +1557,6 @@ private fun NoteBody(
 
         if (Extensions.noteSections.isNotEmpty()) {
             item { extras() }
-        }
-
-        if (note.speakers.isNotEmpty() && !note.isLecture) {
-            item {
-                SectionHeader("Speakers")
-                FlowRow(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    note.speakers.forEach { speaker ->
-                        SpeakerChip(speaker.displayName, c.speaker(speaker.index)) { onRename(speaker) }
-                    }
-                }
-                Row(
-                    modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        speakersLabel(note.speakerCount) + " · not right?",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = c.inkMuted,
-                        modifier = Modifier.weight(1f),
-                    )
-                    TextButton(onClick = onSetCount, enabled = note.audioPath != null) { Text("Set how many") }
-                    if (note.speakerCount >= 2) TextButton(onClick = onMerge) { Text("Merge") }
-                }
-                Text(
-                    "Tap a name to rename. Tap a speaker's icon in the transcript to move that part to someone else.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = c.inkSoft,
-                    modifier = Modifier.padding(start = 16.dp, end = 16.dp),
-                )
-            }
         }
 
         item { SectionHeader("Transcript") }
