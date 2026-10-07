@@ -112,6 +112,13 @@ public:
 
     EngineStatus setAudio(std::int64_t noteId, const std::string& audioName);
 
+    /// Every note's passages, or only those with no embedding yet.
+    [[nodiscard]] std::vector<Passage> passages(bool withoutEmbeddingOnly);
+    EngineStatus setPassageEmbedding(std::int64_t passageId, const Embedding& embedding);
+
+    /// Passages containing the query's words, best first (FTS5, bm25).
+    [[nodiscard]] std::vector<RetrievalHit> searchWords(const std::string& query, std::int32_t topK);
+
     /// File name of the note's recording; empty if it has none.
     [[nodiscard]] std::string audioName(std::int64_t noteId);
     EngineStatus clearAudio(std::int64_t noteId);

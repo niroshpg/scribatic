@@ -6,6 +6,8 @@
 #include "scribatic/db/Schema.hpp"
 #include "sqlite3.h"
 
+#include <cctype>
+#include <cstring>
 #include <utility>
 
 namespace scribatic::core {
@@ -50,6 +52,12 @@ public:
         sqlite3_bind_null(stmt_, index);
         return *this;
     }
+    /// Packed float32, as stored in chunks.embedding.
+    Statement& bind(int index, const Embedding& value) {
+        sqlite3_bind_blob(stmt_, index, value.data(), static_cast<int>(value.size() * sizeof(float)),
+                          SQLITE_TRANSIENT);
+        return *this;
+    }
 
     /// SQLITE_ROW, SQLITE_DONE, or an error code.
     int step() { return ok() ? sqlite3_step(stmt_) : SQLITE_ERROR; }
@@ -75,6 +83,13 @@ public:
     [[nodiscard]] std::string text(int column) const {
         const auto* bytes = sqlite3_column_text(stmt_, column);
         return bytes != nullptr ? reinterpret_cast<const char*>(bytes) : std::string();
+    }
+    [[nodiscard]] Embedding floats(int column) const {
+        const auto* bytes = sqlite3_column_blob(stmt_, column);
+        const int size = sqlite3_column_bytes(stmt_, column);
+        Embedding out(static_cast<std::size_t>(size) / sizeof(float));
+        if (bytes != nullptr && !out.empty()) { std::memcpy(out.data(), bytes, out.size() * sizeof(float)); }
+        return out;
     }
 
 private:
@@ -150,6 +165,7 @@ EngineStatus NoteStore::migrate() {
 
     std::int32_t version = userVersion(db_);
     if (version < 0) { return EngineStatus::DatabaseFailed; }
+    const std::int32_t opened = version;
 
     if (version == 0) {
         for (const auto statement : db::kBootstrapStatements) {
@@ -165,6 +181,16 @@ EngineStatus NoteStore::migrate() {
         version = migration.fromVersion + 1;
     }
     if (version != db::kSchemaVersion) { return EngineStatus::DatabaseFailed; }
+
+    // Schema 5 gave chunks their times; ones written before have none.
+    if (opened >= 1 && opened < 5) {
+        std::vector<std::int64_t> ids;
+        Statement notes(db_, "SELECT id FROM notes;");
+        while (notes.step() == SQLITE_ROW) { ids.push_back(notes.int64(0)); }
+        for (const std::int64_t id : ids) {
+            if (rebuildChunks(id) != EngineStatus::Ok) { return EngineStatus::DatabaseFailed; }
+        }
+    }
 
     // PRAGMA takes no bound parameters; the value is a compile-time integer.
     const std::string setVersion = "PRAGMA user_version = " + std::to_string(version) + ";";
@@ -631,6 +657,70 @@ EngineStatus NoteStore::setAudio(std::int64_t noteId, const std::string& audioNa
                ? EngineStatus::Ok : EngineStatus::DatabaseFailed;
 }
 
+std::vector<Passage> NoteStore::passages(bool withoutEmbeddingOnly) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<Passage> out;
+    if (db_ == nullptr) { return out; }
+    Statement rows(db_, withoutEmbeddingOnly ? q::kLoadPassagesWithoutEmbedding : q::kLoadPassages);
+    while (rows.step() == SQLITE_ROW) {
+        Passage passage;
+        passage.id = rows.int64(0);
+        passage.noteId = rows.int64(1);
+        passage.startMs = rows.int64(2);
+        passage.endMs = rows.int64(3);
+        passage.text = rows.text(4);
+        if (!rows.isNull(5)) { passage.embedding = rows.floats(5); }
+        out.push_back(std::move(passage));
+    }
+    return out;
+}
+
+EngineStatus NoteStore::setPassageEmbedding(std::int64_t passageId, const Embedding& embedding) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (db_ == nullptr || embedding.empty()) { return EngineStatus::DatabaseFailed; }
+    Statement update(db_, q::kSetChunkEmbedding);
+    // No row changed is not an error: the passage was rebuilt meanwhile, and
+    // its replacement will be embedded in turn.
+    return update.bind(1, embedding).bind(2, passageId).run() ? EngineStatus::Ok : EngineStatus::DatabaseFailed;
+}
+
+std::vector<RetrievalHit> NoteStore::searchWords(const std::string& query, std::int32_t topK) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<RetrievalHit> out;
+    if (db_ == nullptr || topK <= 0) { return out; }
+    // Each word quoted, so what the user typed is only ever words, never FTS5
+    // syntax; a prefix match on each, and OR between them, so bm25 ranks the
+    // passages with more of the words first.
+    std::string match;
+    std::string word;
+    const auto flush = [&] {
+        if (word.empty()) { return; }
+        if (!match.empty()) { match += " OR "; }
+        match += "\"" + word + "\"*";
+        word.clear();
+    };
+    for (const char c : query) {
+        const auto byte = static_cast<unsigned char>(c);
+        if (byte >= 0x80 || std::isalnum(byte) != 0) { word += c; } else { flush(); }
+    }
+    flush();
+    if (match.empty()) { return out; }
+
+    Statement rows(db_, q::kLexicalSearch);
+    rows.bind(1, match).bind(2, topK);
+    while (rows.step() == SQLITE_ROW) {
+        RetrievalHit hit;
+        hit.noteId = rows.int64(0);
+        hit.chunkId = rows.int64(1);
+        hit.startMs = rows.int64(2);
+        hit.endMs = rows.int64(3);
+        hit.snippet = rows.text(4);
+        hit.score = static_cast<float>(-rows.real(5));   // bm25: lower is better
+        out.push_back(std::move(hit));
+    }
+    return out;
+}
+
 std::string NoteStore::audioName(std::int64_t noteId) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (db_ == nullptr) { return {}; }
@@ -683,8 +773,9 @@ EngineStatus NoteStore::rebuildChunks(std::int64_t noteId) {
     const NoteDetail detail = loadLocked(noteId, {});
     Statement insert(db_, q::kInsertChunk);
     std::int32_t ordinal = 0;
-    for (const auto& chunk : buildChunks(detail)) {
-        if (!insert.bind(1, noteId).bind(2, ordinal++).bind(3, chunk).run()) {
+    for (const auto& passage : buildPassages(detail)) {
+        if (!insert.bind(1, noteId).bind(2, ordinal++).bind(3, passage.text)
+                 .bind(4, passage.startMs).bind(5, passage.endMs).run()) {
             return EngineStatus::DatabaseFailed;
         }
     }

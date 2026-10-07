@@ -143,14 +143,20 @@ struct RetrievalHitValue: Identifiable, Sendable {
     var id: Int64 { chunkId }
     let noteId: Int64
     let chunkId: Int64
+    /// Where in the recording the passage is, to open the note there.
+    let startMs: Int64
+    let endMs: Int64
     let snippet: String
-    let distance: Float
+    /// Higher matches better, within one search.
+    let score: Float
 
     init(_ cxx: scribatic.core.RetrievalHit) {
         self.noteId = cxx.noteId
         self.chunkId = cxx.chunkId
+        self.startMs = cxx.startMs
+        self.endMs = cxx.endMs
         self.snippet = String(cxx.snippet)
-        self.distance = cxx.distance
+        self.score = cxx.score
     }
 }
 

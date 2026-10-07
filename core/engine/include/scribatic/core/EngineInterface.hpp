@@ -193,13 +193,23 @@ public:
     /// or empty while it is still being detected.
     [[nodiscard]] virtual std::string sessionLanguage() = 0;
 
-    // -- Retrieval-augmented history ---------------------------------------
-    /// Embeds `text` and upserts it into the SQLite-VSS index.
-    virtual EngineStatus indexNote(std::int64_t noteId, const std::string& text) = 0;
-
-    /// Approximate k-NN search across every note ever transcribed on-device.
+    // -- Search ----------------------------------------------------------------
+    /// Passages containing the query's words, across every note, best first:
+    /// the word half of search. Matches word beginnings ("budg" finds
+    /// "budget") and speaker names. Each hit says where in its recording it
+    /// is, to open the note there.
     [[nodiscard]] virtual std::vector<RetrievalHit> search(const std::string& query,
                                                            std::int32_t topK) = 0;
+
+    /// Every note's passages, or only those whose meaning vector has not been
+    /// stored yet: the meaning half of search is computed outside the engine
+    /// and stored with them. A passage is rebuilt, losing its vector, whenever
+    /// its note's text or speakers change, and deleted with the note.
+    [[nodiscard]] virtual std::vector<Passage> passages(bool withoutEmbeddingOnly) = 0;
+
+    /// Stores a passage's meaning vector. A passage rebuilt meanwhile is no
+    /// longer there to store it for; that is not an error.
+    virtual EngineStatus setPassageEmbedding(std::int64_t passageId, const Embedding& embedding) = 0;
 
     // -- Speakers (background threads only) --------------------------------
     /// True when the diarization library is linked and both of its models

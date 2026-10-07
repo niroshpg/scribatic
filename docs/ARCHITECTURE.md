@@ -436,3 +436,21 @@ Consequences: a Play bundle is 1.5 GB and a local build of one needs about
 4.5 GB of scratch space (`-Pscribatic.skipAnswersPack=true` leaves the big pack
 out for local testing). Apple-hosted packs can only be exercised through
 TestFlight or the App Store, not from Xcode.
+
+## ADR-012 — Meaning search without sqlite-vss
+
+Dated 2026-10-07. Supersedes the sqlite-vss plan in the overview and ADR-006.
+
+Each chunk (now a passage of about 700 characters, built from segments so it
+carries the start and end of its place in the recording) stores its meaning
+vector in `chunks.embedding` as packed float32. Ranking by meaning compares a
+query's vector with every stored one. A phone holds a few thousand passages at
+most, so a linear scan takes milliseconds, and no extension, bundled SQLite
+build or faiss is needed.
+
+The core stores and rebuilds passages, keeps the FTS5 word index, and answers
+word searches. It does not compute vectors: whatever does (the embedding
+model) reads passages without one through `EngineInterface::passages` and
+stores them with `setPassageEmbedding`. A passage is rebuilt, losing its
+vector, whenever its note's text or speakers change, and is deleted with the
+note, so the meaning index can never keep a deleted note's text.

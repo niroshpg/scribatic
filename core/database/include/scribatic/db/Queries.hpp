@@ -104,23 +104,19 @@ inline constexpr std::string_view kReferencedAudio =
     "SELECT id, audio_path FROM notes WHERE audio_path IS NOT NULL;";
 
 inline constexpr std::string_view kInsertChunk =
-    "INSERT INTO chunks(note_id, ordinal, text) VALUES(?, ?, ?);";
+    "INSERT INTO chunks(note_id, ordinal, text, start_ms, end_ms) VALUES(?, ?, ?, ?, ?);";
 
-/// Vector upsert — rowid is bound to the owning chunks.id.
-inline constexpr std::string_view kUpsertEmbedding =
-    "INSERT OR REPLACE INTO vss_chunks(rowid, embedding) VALUES(?, ?);";
-
-/// Approximate nearest neighbour. `?1` is the packed float32 query vector.
-inline constexpr std::string_view kVectorSearch =
-    "SELECT c.note_id, c.id, c.text, v.distance "
-    "FROM vss_chunks v "
-    "JOIN chunks c ON c.id = v.rowid "
-    "WHERE vss_search(v.embedding, ?1) "
-    "LIMIT ?2;";
+inline constexpr std::string_view kLoadPassages =
+    "SELECT id, note_id, start_ms, end_ms, text, embedding FROM chunks ORDER BY note_id, ordinal;";
+inline constexpr std::string_view kLoadPassagesWithoutEmbedding =
+    "SELECT id, note_id, start_ms, end_ms, text, embedding FROM chunks "
+    "WHERE embedding IS NULL ORDER BY note_id, ordinal;";
+inline constexpr std::string_view kSetChunkEmbedding =
+    "UPDATE chunks SET embedding = ? WHERE id = ?;";
 
 /// Lexical arm of the hybrid retriever.
 inline constexpr std::string_view kLexicalSearch =
-    "SELECT c.note_id, c.id, c.text, bm25(chunks_fts) AS score "
+    "SELECT c.note_id, c.id, c.start_ms, c.end_ms, c.text, bm25(chunks_fts) AS score "
     "FROM chunks_fts f JOIN chunks c ON c.id = f.rowid "
     "WHERE chunks_fts MATCH ?1 ORDER BY score LIMIT ?2;";
 

@@ -607,21 +607,18 @@ EngineStatus EngineImpl::setNoteSummary(std::int64_t noteId, const std::string& 
     return store_.setSummary(noteId, summary);
 }
 
-// -- Retrieval ----------------------------------------------------------------
-
-EngineStatus EngineImpl::indexNote(std::int64_t noteId, const std::string& text) {
-    // TODO(backend): chunk -> embed (kEmbeddingDims) -> INSERT into vss_chunks.
-    (void)noteId;
-    (void)text;
-    return EngineStatus::Ok;
-}
+// -- Search -------------------------------------------------------------------
 
 std::vector<RetrievalHit> EngineImpl::search(const std::string& query, std::int32_t topK) {
-    // TODO(backend): embed query, then `SELECT ... FROM vss_chunks
-    // WHERE vss_search(embedding, ?) LIMIT ?`.
-    (void)query;
-    (void)topK;
-    return {};
+    return store_.searchWords(query, topK);
+}
+
+std::vector<Passage> EngineImpl::passages(bool withoutEmbeddingOnly) {
+    return store_.passages(withoutEmbeddingOnly);
+}
+
+EngineStatus EngineImpl::setPassageEmbedding(std::int64_t passageId, const Embedding& embedding) {
+    return store_.setPassageEmbedding(passageId, embedding);
 }
 
 // -- Speakers -----------------------------------------------------------------

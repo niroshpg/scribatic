@@ -32,10 +32,20 @@ struct ExportOptions {
 /// intended way to repair a person the diarizer split in two.
 [[nodiscard]] std::string formatTranscript(const NoteDetail& note, const ExportOptions& options);
 
-/// Text for the lexical and vector indexes, "Name: words" per turn, packed into
-/// chunks of roughly `targetChars`. Speaker names are in the indexed text so a
-/// question like "what did Sam say about the excursion" can match on both.
-[[nodiscard]] std::vector<std::string> buildChunks(const NoteDetail& note,
-                                                   std::size_t targetChars = 1000);
+/// One passage of a note for the search index, and where it is in the recording.
+struct PassageText {
+    std::string  text;
+    std::int64_t startMs = 0;
+    std::int64_t endMs   = 0;
+};
+
+/// The note as passages for the word and meaning indexes: "Name: words" per
+/// turn, packed into runs of roughly `targetChars`. Speaker names are in the
+/// text so "what did Sam say about the excursion" can match on both, and each
+/// passage names its speakers even where a turn continues from the last one.
+/// Built from segments, so a long turn is split instead of becoming a passage
+/// too long to embed (MiniLM reads about 1000 characters).
+[[nodiscard]] std::vector<PassageText> buildPassages(const NoteDetail& note,
+                                                     std::size_t targetChars = 700);
 
 } // namespace scribatic::core

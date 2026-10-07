@@ -268,10 +268,6 @@ class TranscriptionEngine private constructor(
             EngineStatus.from(nativeRenameSpeaker(nativeHandle.get(), noteId, speaker, name))
         }
 
-    suspend fun indexNote(noteId: Long, text: String): EngineStatus = withContext(dispatcher) {
-        EngineStatus.from(nativeIndexNote(nativeHandle.get(), noteId, text))
-    }
-
     /** Thread-safe; observed by the ggml abort callback between graph nodes. */
     fun requestCancel() = nativeRequestCancel(nativeHandle.get())
 
@@ -387,7 +383,6 @@ class TranscriptionEngine private constructor(
     private external fun nativeRunTranscriptionPass(handle: Long): Int
     private external fun nativeFlush(handle: Long): Int
     private external fun nativeDrainSegments(handle: Long): Array<String>
-    private external fun nativeIndexNote(handle: Long, noteId: Long, text: String): Int
     private external fun nativeRequestCancel(handle: Long)
     private external fun nativeBeginSession(handle: Long)
     private external fun nativeCanRefine(handle: Long): Boolean

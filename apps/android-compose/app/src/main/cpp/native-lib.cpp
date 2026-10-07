@@ -189,17 +189,6 @@ Java_com_scribatic_app_engine_TranscriptionEngine_nativeDrainSegments(
     return toStringArray(env, flat);
 }
 
-JNIEXPORT jint JNICALL
-Java_com_scribatic_app_engine_TranscriptionEngine_nativeIndexNote(
-        JNIEnv* env, jobject /*thiz*/, jlong handle, jlong noteId, jstring text) {
-    if (handle == 0) {
-        return static_cast<jint>(scribatic::core::EngineStatus::NotInitialized);
-    }
-    return static_cast<jint>(
-        asEngine(handle)->indexNote(static_cast<std::int64_t>(noteId),
-                                    toStdString(env, text)));
-}
-
 JNIEXPORT void JNICALL
 Java_com_scribatic_app_engine_TranscriptionEngine_nativeRequestCancel(
         JNIEnv* /*env*/, jobject /*thiz*/, jlong handle) {

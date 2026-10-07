@@ -6,8 +6,10 @@
 //  same page size, and a database produced on one is byte-compatible with the
 //  other — which keeps an eventual encrypted local export/import path honest.
 //
-//  Vector search is provided by sqlite-vss (faiss-backed). Chunk embeddings are
-//  384-dimensional (MiniLM-class), quantised to float32 on write.
+//  Search: chunks (passages) are indexed by FTS5 for words, and carry their
+//  meaning vector (384 float32, MiniLM-class) in chunks.embedding. Ranking by
+//  meaning compares those directly; a phone's notes are a few thousand
+//  passages at most, well within a linear scan. sqlite-vss is not used.
 // =============================================================================
 #pragma once
 
@@ -18,7 +20,7 @@
 namespace scribatic::db {
 
 /// Bumped on every migration; compared against `PRAGMA user_version`.
-inline constexpr std::int32_t kSchemaVersion   = 4;
+inline constexpr std::int32_t kSchemaVersion   = 5;
 inline constexpr std::int32_t kEmbeddingDims   = 384;
 inline constexpr std::int32_t kChunkTokenSize  = 256;
 inline constexpr std::int32_t kChunkTokenStride= 64;   ///< overlap for recall
@@ -66,20 +68,7 @@ CREATE TABLE IF NOT EXISTS chunks (
 CREATE INDEX IF NOT EXISTS idx_chunks_note ON chunks(note_id, ordinal);
 )SQL";
 
-/// Virtual table backing approximate k-NN retrieval. `rowid` is joined back to
-/// `chunks.id`, so the index stores vectors only — never plaintext.
-///
-/// NOT part of the bootstrap. `vss0` is a loadable extension, and nothing
-/// loads it yet: executing this without it fails with "no such module" and
-/// takes the whole bootstrap transaction down with it. It is created, along
-/// with a delete trigger mirroring kCreateFtsTriggers, when embedding lands.
-inline constexpr std::string_view kCreateVectorIndex = R"SQL(
-CREATE VIRTUAL TABLE IF NOT EXISTS vss_chunks USING vss0(
-    embedding(384)
-);
-)SQL";
-
-/// Lexical fallback. Hybrid retrieval (FTS5 BM25 + VSS distance, reciprocal
+/// The word index. Hybrid retrieval (FTS5 BM25 + cosine on embeddings, reciprocal
 /// rank fusion) beats either signal alone on short, keyword-heavy queries.
 inline constexpr std::string_view kCreateFts = R"SQL(
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
@@ -181,5 +170,16 @@ inline constexpr std::string_view kAddSegmentOriginal =
 /// no longer matches it until it is written again.
 inline constexpr std::string_view kAddNoteSummaryStale =
     "ALTER TABLE notes ADD COLUMN summary_stale INTEGER NOT NULL DEFAULT 0;";
+
+// -- Version 5 ---------------------------------------------------------------
+
+/// Where a chunk sits in the recording, so a search result opens the note at
+/// that moment; and its meaning vector, packed float32, NULL until computed.
+/// Chunks are rebuilt from the note on migration to fill the times in.
+inline constexpr std::string_view kAddChunkTimes =
+    "ALTER TABLE chunks ADD COLUMN start_ms INTEGER NOT NULL DEFAULT 0;\n"
+    "ALTER TABLE chunks ADD COLUMN end_ms INTEGER NOT NULL DEFAULT 0;";
+inline constexpr std::string_view kAddChunkEmbedding =
+    "ALTER TABLE chunks ADD COLUMN embedding BLOB;";
 
 } // namespace scribatic::db

@@ -41,8 +41,9 @@ public:
 
     std::vector<TranscriptSegment> drainSegments() override;
 
-    EngineStatus              indexNote(std::int64_t noteId, const std::string& text) override;
     std::vector<RetrievalHit> search(const std::string& query, std::int32_t topK) override;
+    std::vector<Passage>      passages(bool withoutEmbeddingOnly) override;
+    EngineStatus              setPassageEmbedding(std::int64_t passageId, const Embedding& embedding) override;
 
     bool         canIdentifySpeakers() const noexcept override;
     EngineStatus identifySpeakers(std::int64_t noteId, std::int32_t expectedSpeakers) override;

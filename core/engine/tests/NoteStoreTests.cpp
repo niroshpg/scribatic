@@ -10,6 +10,7 @@
 #include "SpeakerAttribution.hpp"
 #include "TranscriptFormat.hpp"
 #include "scribatic/core/EngineInterface.hpp"
+#include "scribatic/db/Migrations.hpp"
 #include "scribatic/db/Schema.hpp"
 #include "sqlite3.h"
 
@@ -219,6 +220,85 @@ void testSchemaMigratesToCurrentVersion() {
     assert(scalar(db, "PRAGMA user_version;") == scribatic::db::kSchemaVersion);
     // Reopening an up-to-date file must be a no-op, not a second migration.
     assert(store.open(db) == EngineStatus::Ok);
+}
+
+/// A store from before schema 5: its chunks get times when it is opened.
+void testUpgradeGivesChunksTheirTimes() {
+    const std::string dir = tempDirectory();
+    const std::string db = dir + "/notes.sqlite";
+    {
+        sqlite3* raw = nullptr;
+        assert(sqlite3_open(db.c_str(), &raw) == SQLITE_OK);
+        for (const auto statement : scribatic::db::kBootstrapStatements) {
+            assert(sqlite3_exec(raw, std::string(statement).c_str(), nullptr, nullptr, nullptr) == SQLITE_OK);
+        }
+        for (const auto& migration : scribatic::db::migrations()) {
+            if (migration.fromVersion >= 4) { break; }
+            assert(sqlite3_exec(raw, std::string(migration.statements).c_str(), nullptr, nullptr, nullptr) == SQLITE_OK);
+        }
+        const char* rows =
+            "INSERT INTO notes(id, title, created_at, duration_ms) VALUES (1, 'Old', 1700000000, 9000);"
+            "INSERT INTO segments(note_id, start_ms, end_ms, text) VALUES (1, 1500, 4000, 'kept from before');"
+            "INSERT INTO chunks(note_id, ordinal, text) VALUES (1, 0, 'kept from before');"
+            "PRAGMA user_version = 4;";
+        assert(sqlite3_exec(raw, rows, nullptr, nullptr, nullptr) == SQLITE_OK);
+        sqlite3_close(raw);
+    }
+    NoteStore store;
+    assert(store.open(db) == EngineStatus::Ok);
+    const auto passages = store.passages(false);
+    assert(passages.size() == 1 && passages[0].startMs == 1500 && passages[0].endMs == 4000);
+    assert(passages[0].embedding.empty());
+    assert(store.searchWords("before", 5).size() == 1);
+}
+
+/// The word half of search, and the passages the meaning half is stored on.
+void testSearchingAcrossNotes() {
+    const std::string dir = tempDirectory();
+    NoteStore store;
+    assert(store.open(dir + "/notes.sqlite") == EngineStatus::Ok);
+    TranscriptSegment budget = segment(12000, 15000, "We agreed the budget for the excursion");
+    budget.speaker = 0;
+    const std::int64_t planning = store.insertNote("Planning", 1700000000, 20000, "",
+        {segment(0, 3000, "Welcome everyone"), budget}, {});
+    assert(store.replaceTranscript(planning, {segment(0, 3000, "Welcome everyone"), budget}, 1) == EngineStatus::Ok);
+    assert(store.renameSpeaker(planning, 0, "Sam") == EngineStatus::Ok);
+    std::vector<TranscriptSegment> monologue;
+    for (int k = 0; k < 30; ++k) {
+        monologue.push_back(segment(k * 4000, k * 4000 + 4000,
+            "A sentence of about a hundred characters, which is roughly how long a whisper segment runs on."));
+    }
+    const std::int64_t lecture = store.insertNote("Lecture", 1700001000, 120000, "", monologue, {});
+
+    // Passages: each with its times and speakers; a long turn split into several.
+    auto passages = store.passages(false);
+    const auto ofNote = [&](std::int64_t id) {
+        std::vector<Passage> out;
+        for (const auto& p : passages) { if (p.noteId == id) { out.push_back(p); } }
+        return out;
+    };
+    assert(ofNote(planning).size() == 1);
+    assert(ofNote(planning)[0].text.find("Sam: We agreed the budget") != std::string::npos);
+    assert(ofNote(lecture).size() > 3 && "a long monologue becomes several passages");
+    for (const auto& p : ofNote(lecture)) { assert(p.text.size() <= 800 && p.endMs > p.startMs); }
+    assert(ofNote(lecture)[1].startMs > 0);
+
+    // Words: prefixes, speaker names, and what the user typed is never FTS5 syntax.
+    auto hits = store.searchWords("budg", 5);
+    assert(hits.size() == 1 && hits[0].noteId == planning && hits[0].startMs == 0);
+    assert(store.searchWords("Sam excursion", 5).front().noteId == planning);
+    assert(store.searchWords("\"budget OR * NEAR(", 5).size() == 1);
+    assert(store.searchWords("   ", 5).empty());
+
+    // Meaning vectors are stored with passages and cleared when the note changes.
+    const auto pending = store.passages(true);
+    assert(pending.size() == passages.size());
+    assert(store.setPassageEmbedding(ofNote(planning)[0].id, {0.5F, -0.25F, 1.0F}) == EngineStatus::Ok);
+    assert(store.passages(true).size() == passages.size() - 1);
+    passages = store.passages(false);
+    assert((ofNote(planning)[0].embedding == Embedding{0.5F, -0.25F, 1.0F}));
+    assert(store.renameSpeaker(planning, 0, "Samira") == EngineStatus::Ok);
+    assert(store.passages(true).size() == passages.size() && "a changed note is embedded again");
 }
 
 void testDeletingANoteLeavesNothingSearchable() {
@@ -694,6 +774,8 @@ int main() {
     testExportMergesTurnsAndNamesSpeakers();
     testAnonymisedExportCarriesNoNames();
     testSchemaMigratesToCurrentVersion();
+    testUpgradeGivesChunksTheirTimes();
+    testSearchingAcrossNotes();
     testDeletingANoteLeavesNothingSearchable();
     testSpeakerNamesAreIndexedAndRenamable();
     testSpeakersCanBeCorrected();

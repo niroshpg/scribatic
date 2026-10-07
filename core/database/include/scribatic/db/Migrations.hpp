@@ -35,10 +35,12 @@ inline const std::vector<Migration>& migrations() {
     }();
     static const std::string kToV3 = std::string(kAddNoteLayout) + "\n" + std::string(kAddNoteRefined) + "\n";
     static const std::string kToV4 = std::string(kAddSegmentOriginal) + "\n" + std::string(kAddNoteSummaryStale) + "\n";
+    static const std::string kToV5 = std::string(kAddChunkTimes) + "\n" + std::string(kAddChunkEmbedding) + "\n";
     static const std::vector<Migration> kMigrations{
         {1, kToV2},
         {2, kToV3},
         {3, kToV4},
+        {4, kToV5},
     };
     return kMigrations;
 }

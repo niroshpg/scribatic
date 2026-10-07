@@ -120,21 +120,32 @@ std::string formatTranscript(const NoteDetail& note, const ExportOptions& option
     return out;
 }
 
-std::vector<std::string> buildChunks(const NoteDetail& note, std::size_t targetChars) {
-    std::vector<std::string> chunks;
-    std::string current;
-    for (const auto& paragraph : paragraphs(note, /*anonymise=*/false)) {
-        std::string line = paragraph.speaker.empty() ? paragraph.text
-                                                     : paragraph.speaker + ": " + paragraph.text;
-        if (!current.empty() && current.size() + line.size() > targetChars) {
-            chunks.push_back(std::move(current));
-            current.clear();
+std::vector<PassageText> buildPassages(const NoteDetail& note, std::size_t targetChars) {
+    std::vector<PassageText> passages;
+    PassageText current;
+    std::string speaker;   // whose turn the current passage's last line is
+    for (const auto& segment : note.segments) {
+        if (segment.text.empty()) { continue; }   // emptied by a correction
+        if (!current.text.empty() && current.text.size() + segment.text.size() > targetChars) {
+            passages.push_back(std::move(current));
+            current = {};
         }
-        if (!current.empty()) { current += "\n"; }
-        current += line;
+        std::string name = speakerNameFor(note, segment.speaker, /*anonymise=*/false);
+        if (current.text.empty()) {
+            current.startMs = segment.startMs;
+            if (!name.empty()) { current.text = name + ": "; }
+        } else if (name != speaker) {
+            current.text += "\n";
+            if (!name.empty()) { current.text += name + ": "; }
+        } else {
+            current.text += ' ';
+        }
+        current.text += segment.text;
+        current.endMs = segment.endMs;
+        speaker = std::move(name);
     }
-    if (!current.empty()) { chunks.push_back(std::move(current)); }
-    return chunks;
+    if (!current.text.empty()) { passages.push_back(std::move(current)); }
+    return passages;
 }
 
 } // namespace scribatic::core

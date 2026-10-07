@@ -121,12 +121,29 @@ struct RestoreResult {
     std::int32_t skipped  = 0;
 };
 
-/// A row returned from the SQLite-VSS approximate nearest-neighbour index.
+/// A meaning vector for a passage, written by whatever computes them.
+using Embedding = std::vector<float>;
+
+/// A note's text for search: a run of turns about a paragraph long, "Name:
+/// words" per turn, and where it sits in the recording. Rebuilt whenever the
+/// note's text or speakers change, which clears `embedding`.
+struct Passage {
+    std::int64_t id      = 0;
+    std::int64_t noteId  = 0;
+    std::int64_t startMs = 0;
+    std::int64_t endMs   = 0;
+    std::string  text;
+    Embedding    embedding;   ///< empty until one is stored
+};
+
+/// A passage that matched a search.
 struct RetrievalHit {
-    std::int64_t noteId   = 0;
-    std::int64_t chunkId  = 0;
+    std::int64_t noteId  = 0;
+    std::int64_t chunkId = 0;
+    std::int64_t startMs = 0;
+    std::int64_t endMs   = 0;
     std::string  snippet;
-    float        distance = 0.0F;     ///< L2 distance; lower is closer
+    float        score   = 0.0F;   ///< higher matches better; comparable within one search only
 };
 
 /// One model file the app can use. The catalog (`modelCatalog()`) is the one
@@ -153,10 +170,10 @@ struct EngineConfig {
     std::string  whisperModelPath;    ///< ggml/GGUF acoustic model
     std::string  llamaModelPath;      ///< GGUF instruct model for local insight
     /// GGUF embedding model. Separate from the instruct model on purpose: an
-    /// instruct model is a poor embedder and does not emit the 384 dimensions
-    /// the vss0 table is declared with. See ADR-007.
+    /// instruct model is a poor embedder. Its vectors are stored with each
+    /// passage (Passage::embedding). See ADR-007.
     std::string  embedModelPath;
-    std::string  databasePath;        ///< SQLite file hosting the VSS index
+    std::string  databasePath;        ///< SQLite file: notes, transcripts, search index
     /// Directory the platform writes recordings into. Notes store a file name
     /// relative to it, never an absolute path: an iOS app container moves on
     /// every reinstall, and an absolute path would dangle after the first one.
