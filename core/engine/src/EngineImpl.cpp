@@ -913,7 +913,11 @@ EngineStatus EngineImpl::refineTranscript(std::int64_t noteId, const std::string
             }
         }
         std::string chosen;
-        if (speech.size() >= kSampleRate * 3 &&
+        // With the live pass's language to fall back on, 3 s of speech are
+        // needed to overrule it. An imported or recovered recording has
+        // none, so whatever speech there is decides, down to 1 s.
+        const std::size_t needed = known ? kSampleRate * 3 : kSampleRate;
+        if (speech.size() >= needed &&
             whisper_pcm_to_mel(ctx, speech.data(), static_cast<int>(speech.size()), threads) == 0) {
             std::vector<float> probs(static_cast<std::size_t>(whisper_lang_max_id() + 1), 0.0F);
             const int id = whisper_lang_auto_detect(ctx, 0, threads, probs.data());
@@ -925,7 +929,11 @@ EngineStatus EngineImpl::refineTranscript(std::int64_t noteId, const std::string
             }
         }
         if (chosen.empty() && known) { chosen = note.language; }
-        if (!chosen.empty()) { language = chosen; }
+        // Nothing to go on at all: English, rather than whisper's own guess
+        // from the whole window, which over near-silence is anything (an
+        // imported 9 s note with one phrase in it came back as Norwegian).
+        if (chosen.empty()) { chosen = "en"; }
+        language = chosen;
     }
     params.language         = language.c_str();
     params.no_timestamps    = false;

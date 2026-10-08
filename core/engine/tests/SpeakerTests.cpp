@@ -311,6 +311,70 @@ void testRefineThenIdentify(const Models& models) {
     scribaticEngineRelease(engine);
 }
 
+/// A short phrase in 9 s of quiet room noise, imported: no live pass, so no
+/// language to fall back on. Decided over the whole window, the language
+/// came back as Norwegian and the phrase as phonetic symbols in four
+/// scripts (a tester's note holding "How are you doing?"). Built here from
+/// a fixture: 1.7 s of "A pencil with black lead...", in noise at -55 dBFS.
+void testShortPhraseImported(const Models& models) {
+    const std::string fixture = repoPath("models/fixtures/two-speakers-en-1.wav");
+    if (!exists(fixture) || !exists(models.accurate)) {
+        std::printf("  skip: needs the fixture and %s\n", models.accurate.c_str());
+        return;
+    }
+    std::printf("  short phrase in noise, imported\n");
+    char pattern[] = "/tmp/scribatic-short-XXXXXX";
+    const std::string dir = ::mkdtemp(pattern);
+    const std::string recordings = dir + "/recordings";
+    assert(::mkdir(recordings.c_str(), 0700) == 0);
+    EngineConfig config;
+    config.whisperModelPath = models.whisper;
+    config.llamaModelPath = models.llama;
+    config.segmentationModelPath = models.segmentation;
+    config.speakerEmbeddingModelPath = models.embedding;
+    config.accurateModelPath = models.accurate;
+    config.databasePath = dir + "/notes.sqlite";
+    config.recordingsDirectory = recordings;
+    config.threadCount = 4;
+    EngineStatus status = EngineStatus::Ok;
+    EngineInterface* engine = EngineInterface::create(config, &status);
+    assert(engine != nullptr && engine->warmUp() == EngineStatus::Ok);
+
+    RecordingAudio phrase;
+    assert(phrase.open(fixture));
+    std::vector<float> samples(16000 * 9);
+    std::uint32_t seed = 12345;
+    for (auto& sample : samples) {   // white noise, about -55 dBFS RMS
+        seed = seed * 1664525U + 1013904223U;
+        sample = (static_cast<float>(seed >> 8) / 16777216.0F - 0.5F) * 0.006F;
+    }
+    const std::size_t from = 16000 * 3 / 2, length = 16000 * 17 / 10, at = 16000 * 34 / 10;
+    for (std::size_t i = 0; i < length; ++i) { samples[at + i] += phrase.samples()[from + i]; }
+
+    const std::string recording = recordings + "/recording-1.wav";
+    {
+        std::ofstream out(recording, std::ios::binary);
+        const auto put32 = [&](std::uint32_t v) { out.write(reinterpret_cast<const char*>(&v), 4); };
+        const auto put16 = [&](std::uint16_t v) { out.write(reinterpret_cast<const char*>(&v), 2); };
+        const auto bytes = static_cast<std::uint32_t>(samples.size() * 4);
+        out.write("RIFF", 4); put32(36 + bytes); out.write("WAVE", 4);
+        out.write("fmt ", 4); put32(16); put16(3); put16(1); put32(16000); put32(64000); put16(4); put16(32);
+        out.write("data", 4); put32(bytes);
+        out.write(reinterpret_cast<const char*>(samples.data()), bytes);
+    }
+    const std::int64_t id = engine->importRecording(recording, "Short", 1700000000);
+    assert(id > 0);
+    assert(engine->refineTranscript(id, "") == EngineStatus::Ok);
+    const NoteDetail note = engine->loadNote(id);
+    std::printf("    language %s\n", note.language.c_str());
+    for (const auto& s : note.segments) { std::printf("    %s\n", s.text.c_str()); }
+    assert(note.language == "en");
+    for (const auto& s : note.segments) {
+        for (const char c : s.text) { assert(static_cast<unsigned char>(c) < 0x80 && "no other scripts"); }
+    }
+    scribaticEngineRelease(engine);
+}
+
 /// Detecting automatically, the accurate pass decides the language itself and
 /// saves it: here the live session was pinned to the wrong one (English, for
 /// Spanish speech), as a misheard first window would leave it.
@@ -491,6 +555,7 @@ int main() {
         testFourVoicesStayApart(models);
         testRefineThenIdentify(models);
         testRefineSettlesTheLanguage(models);
+        testShortPhraseImported(models);
         // A recording to look at, not to assert on: SCRIBATIC_SPEAKERS_WAV=/path.wav
         if (const char* extra = std::getenv("SCRIBATIC_SPEAKERS_WAV"); extra != nullptr) {
             diagnoseRecording(models, extra);
