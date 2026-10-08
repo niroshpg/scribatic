@@ -1,0 +1,4 @@
+• Recordings now take about 10 times less space: once a note is finished, its recording is kept compressed (about 21 MB an hour).
+• New "Keep recordings" setting: always, 30 days, or until transcribed. Transcripts are always kept.
+• Quiet recordings (e.g. across a room) transcribe much better.
+• The language of a recording is detected more reliably.
