@@ -147,6 +147,28 @@ std::int64_t recordingStartedAt(const std::string& path, const std::string& name
 /// Turns what whisper decoded into segments and their words, `offsetMs` being
 /// where the decoded audio starts in the recording. Shared by the live
 /// windows and the accurate pass after Stop.
+/// `text` with anything that is not well-formed UTF-8 removed, U+FFFD
+/// included. whisper's tokens are byte pieces, and a segment can end on half
+/// of a character; shown, that is a replacement mark in the transcript, and fed to a
+/// summary it reads as noise the model then explains.
+std::string wellFormedUtf8(const std::string& text) {
+    std::string out;
+    out.reserve(text.size());
+    std::size_t i = 0;
+    while (i < text.size()) {
+        const auto lead = static_cast<unsigned char>(text[i]);
+        std::size_t length = lead < 0x80 ? 1 : (lead >> 5) == 0x6 ? 2 : (lead >> 4) == 0xE ? 3 : (lead >> 3) == 0x1E ? 4 : 0;
+        bool ok = length > 0 && i + length <= text.size();
+        for (std::size_t k = 1; ok && k < length; ++k) {
+            ok = (static_cast<unsigned char>(text[i + k]) & 0xC0) == 0x80;
+        }
+        // U+FFFD (EF BF BD) is well formed, but it only ever marks a lost character.
+        if (ok && length == 3 && text.compare(i, 3, "\xEF\xBF\xBD") == 0) { ok = false; }
+        if (ok) { out.append(text, i, length); i += length; } else { ++i; }
+    }
+    return out;
+}
+
 void collectSegments(whisper_context* ctx, std::int64_t offsetMs,
                      std::vector<TranscriptSegment>& decoded,
                      std::vector<std::vector<WordTiming>>& decodedWords) {
@@ -159,7 +181,7 @@ void collectSegments(whisper_context* ctx, std::int64_t offsetMs,
         const char* text = whisper_full_get_segment_text(ctx, i);
         if (text == nullptr) { continue; }
 
-        std::string trimmed(text);
+        std::string trimmed = wellFormedUtf8(text);
         const auto first = trimmed.find_first_not_of(" \t\n");
         if (first == std::string::npos) { continue; }   // silence decodes to blanks
         trimmed.erase(0, first);
@@ -808,6 +830,33 @@ EngineStatus EngineImpl::refineTranscript(std::int64_t noteId) {
     if (whisper_is_multilingual(ctx) != 0) {
         language = redetect || note.language.empty() || note.language == "auto" ? "auto" : note.language;
     }
+    // Deciding: from the stretches that are speech, not the whole first 30 s.
+    // Mostly silence detects as anything (a 9 s note with one short phrase in
+    // it came back as Norwegian, and the phrase as noise in four scripts).
+    // Under 3 s of speech, or unsure, the live pass's language stands.
+    const bool detecting = language == "auto";
+    if (detecting) {
+        const bool known = !note.language.empty() && note.language != "auto";
+        const int threads = params.n_threads;
+        std::vector<float> speech;
+        constexpr std::size_t kFrame = kSampleRate / 10;
+        for (std::size_t at = 0; at + kFrame <= audio.count() && speech.size() < kSampleRate * 30; at += kFrame) {
+            double energy = 0.0;
+            for (std::size_t i = at; i < at + kFrame; ++i) { energy += static_cast<double>(audio.samples()[i]) * audio.samples()[i]; }
+            if (std::sqrt(energy / kFrame) >= kSpeechRms) {
+                speech.insert(speech.end(), audio.samples() + at, audio.samples() + at + kFrame);
+            }
+        }
+        std::string chosen;
+        if (speech.size() >= kSampleRate * 3 &&
+            whisper_pcm_to_mel(ctx, speech.data(), static_cast<int>(speech.size()), threads) == 0) {
+            std::vector<float> probs(static_cast<std::size_t>(whisper_lang_max_id() + 1), 0.0F);
+            const int id = whisper_lang_auto_detect(ctx, 0, threads, probs.data());
+            if (id >= 0 && (probs[static_cast<std::size_t>(id)] >= 0.6F || !known)) { chosen = whisper_lang_str(id); }
+        }
+        if (chosen.empty() && known) { chosen = note.language; }
+        if (!chosen.empty()) { language = chosen; }
+    }
     params.language         = language.c_str();
     params.no_timestamps    = false;
     params.token_timestamps = true;
@@ -836,7 +885,7 @@ EngineStatus EngineImpl::refineTranscript(std::int64_t noteId) {
     if (language == "auto") {
         const int detected = whisper_full_lang_id(ctx);
         settled = detected >= 0 ? whisper_lang_str(detected) : "en";
-    } else if (note.language == "auto") {
+    } else if (detecting || note.language == "auto") {
         settled = language;
     }
     std::vector<TranscriptSegment> decoded;
@@ -1063,6 +1112,7 @@ std::string describeStatus(EngineStatus status) {
         case EngineStatus::RecordingNotFound:  return "the recording is no longer on this device";
         case EngineStatus::SpeakersUnavailable:return "speaker identification is not available";
         case EngineStatus::FileRemovalFailed:  return "the recording could not be deleted";
+        case EngineStatus::TooLittleSpeech:    return "too little was said to summarise";
     }
     return "unknown";
 }

@@ -37,6 +37,7 @@ enum class EngineStatus : std::int32_t {
     RecordingNotFound   = 10, ///< the note has no audio, or the file is gone
     SpeakersUnavailable = 11, ///< diarization models or library not present
     FileRemovalFailed   = 12, ///< the OS refused to delete a recording
+    TooLittleSpeech     = 13, ///< too little was said to summarise, or to answer from
 };
 
 /// Lifecycle of the engine's inference pipeline, polled by the UI layer.

@@ -106,6 +106,11 @@ private:
     /// transcript with them.
     static constexpr float kSilenceRms = 0.001F;
 
+    /// RMS above which a 100 ms frame counts as speech when deciding a
+    /// recording's language: -40 dBFS. Speech near a phone is -15 to -30;
+    /// a room's background, -50 to -60.
+    static constexpr float kSpeechRms = 0.01F;
+
     /// Runs whisper over `window_`, appending finalised segments. Caller must
     /// not hold segmentMutex_.
     EngineStatus decodeWindow(bool flushing) noexcept;

@@ -18,7 +18,8 @@ enum class EngineStatus(val code: Int) {
     OUT_OF_MEMORY(9),
     RECORDING_NOT_FOUND(10),
     SPEAKERS_UNAVAILABLE(11),
-    FILE_REMOVAL_FAILED(12);
+    FILE_REMOVAL_FAILED(12),
+    TOO_LITTLE_SPEECH(13);
 
     companion object {
         fun from(code: Int): EngineStatus =
