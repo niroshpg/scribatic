@@ -517,7 +517,7 @@ void testRecordingLifecycle() {
     assert(!exists(recordings + "/recording-2.wav") && "unreferenced recording is swept");
     assert(exists(recordings + "/notes-to-self.txt"));
     assert(engine->loadNote(dangling).audioPath.empty() && "missing file is forgotten");
-    assert(engine->identifySpeakers(dangling, 0) == EngineStatus::SpeakersUnavailable);
+    assert(engine->identifySpeakers(dangling, 0, "") == EngineStatus::SpeakersUnavailable);
 
     // Delete the recording, keep the transcript.
     assert(engine->loadNote(kept).audioPath == recordings + "/recording-1.wav");

@@ -6,6 +6,7 @@
 #pragma once
 
 #include "NoteStore.hpp"
+#include "RecordingAudio.hpp"
 #include "SpeakerAttribution.hpp"
 #include "SpeakerDiarizer.hpp"
 #include "scribatic/core/AudioRingBuffer.hpp"
@@ -46,13 +47,14 @@ public:
     EngineStatus              setPassageEmbedding(std::int64_t passageId, const Embedding& embedding) override;
 
     bool         canIdentifySpeakers() const noexcept override;
-    EngineStatus identifySpeakers(std::int64_t noteId, std::int32_t expectedSpeakers) override;
+    EngineStatus identifySpeakers(std::int64_t noteId, std::int32_t expectedSpeakers,
+                                  const std::string& audioPath) override;
     EngineStatus renameSpeaker(std::int64_t noteId, std::int32_t speaker,
                                const std::string& name) override;
     EngineStatus setNoteSummary(std::int64_t noteId, const std::string& summary) override;
     void         setLanguage(const std::string& code) override;
     bool         canRefine() const noexcept override;
-    EngineStatus refineTranscript(std::int64_t noteId) override;
+    EngineStatus refineTranscript(std::int64_t noteId, const std::string& audioPath) override;
     float        refineProgress() const noexcept override;
     void         cancelRefine() noexcept override;
     EngineStatus setSegmentSpeaker(std::int64_t noteId, std::int64_t segmentId,
@@ -69,6 +71,7 @@ public:
     NoteDetail               loadNote(std::int64_t noteId) override;
     EngineStatus             deleteRecording(std::int64_t noteId) override;
     EngineStatus             deleteNote(std::int64_t noteId) override;
+    EngineStatus             replaceRecording(std::int64_t noteId, const std::string& newPath) override;
     std::string exportTranscript(std::int64_t noteId, bool includeTimestamps,
                                  bool anonymiseSpeakers) override;
     std::int64_t importRecording(const std::string& audioPath, const std::string& title,
@@ -105,11 +108,6 @@ private:
     /// phrase ("you", "Thank you."), and a quiet room would fill the
     /// transcript with them.
     static constexpr float kSilenceRms = 0.001F;
-
-    /// RMS above which a 100 ms frame counts as speech when deciding a
-    /// recording's language: -40 dBFS. Speech near a phone is -15 to -30;
-    /// a room's background, -50 to -60.
-    static constexpr float kSpeechRms = 0.01F;
 
     /// Runs whisper over `window_`, appending finalised segments. Caller must
     /// not hold segmentMutex_.
@@ -148,6 +146,10 @@ private:
     std::atomic<float> refineProgress_{0.0F};
 
     [[nodiscard]] std::string recordingPath(const std::string& name) const;
+
+    /// Opens the note's recording for reading: `audioPath` if given (a
+    /// compressed recording the platform decoded), else the note's own WAV.
+    EngineStatus openRecording(std::int64_t noteId, const std::string& audioPath, RecordingAudio& audio);
 
     EngineConfig    config_;
     AudioRingBuffer ring_{kRingCapacity};

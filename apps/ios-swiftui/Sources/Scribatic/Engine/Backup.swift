@@ -90,7 +90,7 @@ enum Backup {
             let target: URL
             if name == "notes.sqlite" {
                 target = folder.appending(path: "notes.sqlite")
-            } else if name == "recordings/\(file)", file.hasPrefix("recording-"), file.hasSuffix(".wav") {
+            } else if name == "recordings/\(file)", file.hasPrefix("recording-"), file.hasSuffix(".wav") || file.hasSuffix(".m4a") {
                 target = folder.appending(path: "recordings").appending(path: file)
             } else {
                 throw BackupError.damaged

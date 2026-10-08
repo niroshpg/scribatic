@@ -326,10 +326,18 @@ Java_com_scribatic_app_engine_TranscriptionEngine_nativeCanIdentifySpeakers(
 
 JNIEXPORT jint JNICALL
 Java_com_scribatic_app_engine_TranscriptionEngine_nativeIdentifySpeakers(
-        JNIEnv* /*env*/, jobject /*thiz*/, jlong handle, jlong noteId, jint expected) {
+        JNIEnv* env, jobject /*thiz*/, jlong handle, jlong noteId, jint expected, jstring audioPath) {
     if (handle == 0) { return static_cast<jint>(scribatic::core::EngineStatus::NotInitialized); }
     return static_cast<jint>(asEngine(handle)->identifySpeakers(
-        static_cast<std::int64_t>(noteId), static_cast<std::int32_t>(expected)));
+        static_cast<std::int64_t>(noteId), static_cast<std::int32_t>(expected), toStdString(env, audioPath)));
+}
+
+JNIEXPORT jint JNICALL
+Java_com_scribatic_app_engine_TranscriptionEngine_nativeReplaceRecording(
+        JNIEnv* env, jobject /*thiz*/, jlong handle, jlong noteId, jstring path) {
+    if (handle == 0) { return static_cast<jint>(scribatic::core::EngineStatus::NotInitialized); }
+    return static_cast<jint>(asEngine(handle)->replaceRecording(
+        static_cast<std::int64_t>(noteId), toStdString(env, path)));
 }
 
 JNIEXPORT jint JNICALL
@@ -364,9 +372,11 @@ Java_com_scribatic_app_engine_TranscriptionEngine_nativeCanRefine(JNIEnv*, jobje
 }
 
 JNIEXPORT jint JNICALL
-Java_com_scribatic_app_engine_TranscriptionEngine_nativeRefineTranscript(JNIEnv*, jobject, jlong handle, jlong noteId) {
+Java_com_scribatic_app_engine_TranscriptionEngine_nativeRefineTranscript(JNIEnv* env, jobject, jlong handle, jlong noteId,
+                                                                          jstring audioPath) {
     if (handle == 0) { return static_cast<jint>(scribatic::core::EngineStatus::NotInitialized); }
-    return static_cast<jint>(asEngine(handle)->refineTranscript(static_cast<std::int64_t>(noteId)));
+    return static_cast<jint>(asEngine(handle)->refineTranscript(static_cast<std::int64_t>(noteId),
+                                                                toStdString(env, audioPath)));
 }
 
 JNIEXPORT jfloat JNICALL

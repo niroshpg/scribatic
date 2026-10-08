@@ -120,26 +120,30 @@ enum ShareFiles {
 
     // MARK: - M4A
 
-    /// Speech at 16 kHz mono needs little more: about 14 MB an hour.
-    private static let aacBitRate = 32_000
-
     /// Encodes one of the app's recordings (WAV, 32-bit float, mono, 16 kHz)
     /// as AAC-LC in an M4A, with the system's own encoder. `progress` gets
     /// 0...1. Blocking: a few seconds per hour of audio.
-    static func encodeM4A(wav: URL, to url: URL, progress: (Double) -> Void = { _ in }) throws {
+    /// `gain` scales every sample on the way: see `RecordingFiles.compress`.
+    static func encodeM4A(wav: URL, to url: URL, gain: Float = 1, progress: (Double) -> Void = { _ in }) throws {
         let input = try AVAudioFile(forReading: wav)
         let format = input.processingFormat
         let output = try AVAudioFile(forWriting: url, settings: [
             AVFormatIDKey: kAudioFormatMPEG4AAC,
             AVSampleRateKey: format.sampleRate,
             AVNumberOfChannelsKey: format.channelCount,
-            AVEncoderBitRateKey: aacBitRate,
+            AVEncoderBitRateKey: RecordingFiles.aacBitRate,
         ], commonFormat: format.commonFormat, interleaved: format.isInterleaved)
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16_384) else { return }
         let total = max(Double(input.length), 1)
         while input.framePosition < input.length {
             try input.read(into: buffer)
             if buffer.frameLength == 0 { break }
+            if gain != 1, let channels = buffer.floatChannelData {
+                for channel in 0..<Int(buffer.format.channelCount) {
+                    let samples = channels[channel]
+                    for i in 0..<Int(buffer.frameLength) { samples[i] *= gain }
+                }
+            }
             try output.write(from: buffer)
             progress(Double(input.framePosition) / total)
         }

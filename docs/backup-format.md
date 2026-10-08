@@ -58,8 +58,10 @@ followed by entries:
 
 - **`notes.sqlite`**, first: the database written by `EngineInterface::writeBackup`.
   It holds every note's transcript, corrections, speakers and summary.
-- **`recordings/<name>.wav`**, if the user included recordings: the files
-  the database refers to, as recorded.
+- **`recordings/<name>.wav`** or **`recordings/<name>.m4a`**, if the user
+  included recordings: the files the database refers to. A finished note's
+  recording is kept as M4A (AAC, 48 kbit/s, mono, 16 kHz); one not yet
+  finished is still the WAV it was recorded as. Restoring accepts both.
 
 Restoring unpacks the archive into a temporary folder and calls
 `EngineInterface::restoreBackup`. That copies in the notes not already on the

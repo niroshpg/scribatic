@@ -318,7 +318,10 @@ struct NoteDetailView: View {
             do {
                 let url = try await Task.detached {
                     let url = try ShareFiles.target(name: note.title, extension: compressed ? "m4a" : "wav")
-                    if compressed {
+                    // A finished note's recording is already the M4A.
+                    if compressed && RecordingFiles.isCompressed(wav) {
+                        try FileManager.default.copyItem(at: wav, to: url)
+                    } else if compressed {
                         var shown = -1
                         try ShareFiles.encodeM4A(wav: wav, to: url) { progress in
                             let percent = Int(progress * 100)
@@ -567,20 +570,23 @@ struct NoteDetailView: View {
                 }
                 if note.audioURL != nil {
                     Divider()
-                    // Sizes from the length: AAC at 32 kbit/s, WAV at 16 kHz × 4 bytes.
+                    // Sizes from the length: AAC at 48 kbit/s, WAV at 16 kHz × 4 bytes.
                     let seconds = Double(note.durationMs) / 1000
                     Menu {
                         Button {
                             shareRecording(note, compressed: true)
                         } label: {
                             Text("Compressed (M4A)")
-                            Text("About \(fileSize(seconds * 4_000)) · plays anywhere")
+                            Text("About \(fileSize(seconds * 6_000)) · plays anywhere")
                         }
-                        Button {
-                            shareRecording(note, compressed: false)
-                        } label: {
-                            Text("Original (WAV)")
-                            Text("About \(fileSize(seconds * 64_000)) · as recorded")
+                        // Kept compressed once finished: the original WAV is gone.
+                        if let audio = note.audioURL, !RecordingFiles.isCompressed(audio) {
+                            Button {
+                                shareRecording(note, compressed: false)
+                            } label: {
+                                Text("Original (WAV)")
+                                Text("About \(fileSize(seconds * 64_000)) · as recorded")
+                            }
                         }
                     } label: {
                         Label("Share recording", systemImage: "waveform")

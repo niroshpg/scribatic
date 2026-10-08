@@ -320,7 +320,7 @@ int main(int argc, char** argv) {
     printUncovered("live", audio, live, floorDb);
 
     const std::int64_t id = engine->saveSession("Replay", 0, copy);
-    const EngineStatus refined = engine->refineTranscript(id);
+    const EngineStatus refined = engine->refineTranscript(id, "");
     const NoteDetail accurate = engine->loadNote(id);
     std::printf("\naccurate pass: %s, language %s\n", describeStatus(refined).c_str(), accurate.language.c_str());
     printSegments("accurate", accurate.segments);
@@ -343,7 +343,7 @@ int main(int argc, char** argv) {
     }
     for (const auto& [cluster, ms] : talk) { std::printf("  cluster %d: %.1f s\n", cluster, ms / 1000.0); }
 
-    const EngineStatus identified = engine->identifySpeakers(id, speakers);
+    const EngineStatus identified = engine->identifySpeakers(id, speakers, "");
     const NoteDetail final = engine->loadNote(id);
     std::printf("\nspeakers: %s, %d identified\n", describeStatus(identified).c_str(), final.speakerCount);
     printSegments("final", final.segments);

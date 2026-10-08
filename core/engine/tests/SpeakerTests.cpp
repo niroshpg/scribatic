@@ -123,7 +123,7 @@ void testConversationIsSplitBetweenTwoSpeakers(const Models& models, const char*
     assert(before.durationMs > 10000);
 
     const auto started = std::chrono::steady_clock::now();
-    assert(engine->identifySpeakers(id, 0) == EngineStatus::Ok);
+    assert(engine->identifySpeakers(id, 0, "") == EngineStatus::Ok);
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - started);
 
@@ -156,7 +156,7 @@ void testConversationIsSplitBetweenTwoSpeakers(const Models& models, const char*
 
     // A known count must be honoured, and re-running replaces rather than adds.
     assert(engine->renameSpeaker(id, 0, "Alex") == EngineStatus::Ok);
-    assert(engine->identifySpeakers(id, 2) == EngineStatus::Ok);
+    assert(engine->identifySpeakers(id, 2, "") == EngineStatus::Ok);
     const NoteDetail again = engine->loadNote(id);
     std::printf("    told there are 2: %d speakers, %zu segments\n", again.speakerCount,
                 again.segments.size());
@@ -170,7 +170,7 @@ void testConversationIsSplitBetweenTwoSpeakers(const Models& models, const char*
     // With the audio gone, identification is no longer possible, but the
     // attributed transcript stays exactly as it was.
     assert(engine->deleteRecording(id) == EngineStatus::Ok);
-    assert(engine->identifySpeakers(id, 0) == EngineStatus::RecordingNotFound);
+    assert(engine->identifySpeakers(id, 0, "") == EngineStatus::RecordingNotFound);
     assert(engine->loadNote(id).segments.size() == again.segments.size());
 
     scribaticEngineRelease(engine);
@@ -217,7 +217,7 @@ void testFourVoicesStayApart(const Models& models) {
     engine->flush();
     (void)engine->drainSegments();
     const std::int64_t id = engine->saveSession("Four", 1700000000, recording);
-    assert(engine->identifySpeakers(id, 0) == EngineStatus::Ok);
+    assert(engine->identifySpeakers(id, 0, "") == EngineStatus::Ok);
     const std::int32_t count = engine->loadNote(id).speakerCount;
     std::printf("    estimated %d speakers\n", count);
     assert(count >= 4 && "four voices must not be merged into fewer");
@@ -264,18 +264,50 @@ void testRefineThenIdentify(const Models& models) {
     const std::int64_t id = engine->saveSession("Refine", 1700000000, recording);
     assert(!engine->loadNote(id).refined);
 
-    assert(engine->refineTranscript(id) == EngineStatus::Ok);
+    assert(engine->refineTranscript(id, "") == EngineStatus::Ok);
     assert(engine->refineProgress() == 1.0F);
     NoteDetail note = engine->loadNote(id);
     assert(note.refined && !note.segments.empty());
     for (const auto& s : note.segments) { std::printf("    refined: %s\n", s.text.c_str()); }
 
     if (engine->canIdentifySpeakers()) {
-        assert(engine->identifySpeakers(id, 0) == EngineStatus::Ok);
+        assert(engine->identifySpeakers(id, 0, "") == EngineStatus::Ok);
         note = engine->loadNote(id);
         std::printf("    %d speakers after refining\n", note.speakerCount);
         assert(note.speakerCount >= 2 && note.refined);
     }
+
+    // Compressed once finished: the platform writes an M4A next to the WAV
+    // and swaps it in. The engine never reads M4A, so its content here is
+    // only something to point at; what it reads is the decoded WAV it is given.
+    const std::string m4a = recordings + "/recording-1.m4a";
+    copyFile(fixture, m4a);
+    assert(engine->replaceRecording(id, dir + "/elsewhere.m4a") == EngineStatus::UnsupportedFormat);
+    assert(engine->replaceRecording(id, m4a) == EngineStatus::Ok);
+    assert(!exists(recording) && "the WAV goes once the M4A is the note's");
+    assert(engine->loadNote(id).audioPath == m4a);
+    assert(engine->refineTranscript(id, "") == EngineStatus::UnsupportedFormat && "M4A only as decoded");
+    const std::string decoded = dir + "/decoded.wav";
+    copyFile(fixture, decoded);
+    assert(engine->refineTranscript(id, decoded) == EngineStatus::Ok);
+    assert(!engine->loadNote(id).segments.empty());
+    if (engine->canIdentifySpeakers()) {
+        assert(engine->identifySpeakers(id, 0, decoded) == EngineStatus::Ok);
+        assert(engine->loadNote(id).speakerCount >= 2);
+    }
+    const std::size_t notes = engine->listNotes().size();
+    scribaticEngineRelease(engine);
+
+    // The app dying mid-swap, either way round: a WAV left after its M4A was
+    // swapped in, and an M4A written but never swapped in. The next launch
+    // deletes both, and recovers neither as a note of its own.
+    copyFile(fixture, recording);
+    copyFile(fixture, recordings + "/recording-2.m4a");
+    engine = EngineInterface::create(config, &status);
+    assert(engine != nullptr && engine->warmUp() == EngineStatus::Ok);
+    assert(!exists(recording) && !exists(recordings + "/recording-2.m4a"));
+    assert(engine->listNotes().size() == notes && "nothing recovered");
+    assert(engine->loadNote(id).audioPath == m4a && exists(m4a));
     scribaticEngineRelease(engine);
 }
 
@@ -319,7 +351,7 @@ void testRefineSettlesTheLanguage(const Models& models) {
     assert(engine->loadNote(id).language == "en");
 
     engine->setLanguage("auto");
-    assert(engine->refineTranscript(id) == EngineStatus::Ok);
+    assert(engine->refineTranscript(id, "") == EngineStatus::Ok);
     const NoteDetail note = engine->loadNote(id);
     std::printf("    language after refining: %s\n", note.language.c_str());
     assert(note.language == "es" && "the accurate pass corrects a wrong live language");
@@ -327,7 +359,7 @@ void testRefineSettlesTheLanguage(const Models& models) {
     // Pinned, the user's choice stands.
     const std::int64_t pinned = engine->saveSession("Pinned", 1700000000, recording);
     engine->setLanguage("en");
-    assert(engine->refineTranscript(pinned) == EngineStatus::Ok);
+    assert(engine->refineTranscript(pinned, "") == EngineStatus::Ok);
     assert(engine->loadNote(pinned).language == "en");
     scribaticEngineRelease(engine);
 }
@@ -369,14 +401,14 @@ void diagnoseRecording(const Models& models, const std::string& wav) {
     std::printf("\n");
     if (engine->canRefine()) {
         const auto started = std::chrono::steady_clock::now();
-        const EngineStatus refined = engine->refineTranscript(id);
+        const EngineStatus refined = engine->refineTranscript(id, "");
         const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
         std::printf("    refined (%d) in %lld ms:", static_cast<int>(refined), static_cast<long long>(ms));
         for (const auto& s : engine->loadNote(id).segments) { std::printf(" %s", s.text.c_str()); }
         std::printf("\n");
     }
     for (const std::int32_t expected : {0, 2}) {
-        engine->identifySpeakers(id, expected);
+        engine->identifySpeakers(id, expected, "");
         const NoteDetail note = engine->loadNote(id);
         std::printf("    %s: %d speakers\n", expected == 0 ? "estimated" : "told 2", note.speakerCount);
         for (const auto& s : note.segments) {
@@ -435,7 +467,7 @@ void testEachSpeakerInTheirLanguage(const Models& models) {
     assert(id > 0);
     std::printf("    recording language: %s\n", engine->loadNote(id).language.c_str());
 
-    assert(engine->identifySpeakers(id, 2) == EngineStatus::Ok);
+    assert(engine->identifySpeakers(id, 2, "") == EngineStatus::Ok);
     const NoteDetail after = engine->loadNote(id);
     std::string spanish, english;
     for (const auto& s : after.segments) {

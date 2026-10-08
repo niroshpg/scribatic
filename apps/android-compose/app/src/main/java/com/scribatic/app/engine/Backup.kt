@@ -89,7 +89,8 @@ object Backup {
                 val file = name.substringAfterLast('/')
                 val target = when {
                     name == "notes.sqlite" -> File(folder, "notes.sqlite")
-                    name == "recordings/$file" && file.startsWith("recording-") && file.endsWith(".wav") -> File(recordings, file)
+                    name == "recordings/$file" && file.startsWith("recording-") &&
+                        (file.endsWith(".wav") || file.endsWith(".m4a")) -> File(recordings, file)
                     else -> throw Damaged()
                 }
                 FileOutputStream(target).use { out ->

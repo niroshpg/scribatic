@@ -168,6 +168,12 @@ actor ScribaticEngine {
         try check(engine.deleteNote(id))
     }
 
+    /// Makes `url` (in the recordings directory) the note's recording and
+    /// deletes the old file: the WAV swapped for its compressed M4A.
+    func replaceRecording(_ id: Int64, with url: URL) throws {
+        try check(engine.replaceRecording(id, std.string(url.path(percentEncoded: false))))
+    }
+
     /// A converted recording from elsewhere, as a note with no transcript yet;
     /// nil if the core refused it.
     func importRecording(_ path: String, title: String, createdAt: Date) -> Int64? {
@@ -204,9 +210,14 @@ actor ScribaticEngine {
     /// this actor: a new recording's transcription passes must not wait for
     /// it. The C++ side uses a model of its own for this. `expected` 0
     /// estimates the count.
-    nonisolated func identifySpeakers(_ id: Int64, expected: Int32 = 0) async throws {
+    /// `audio` is the recording decoded to WAV when the note's own is
+    /// compressed (see `RecordingFiles`); nil reads the note's WAV.
+    nonisolated func identifySpeakers(_ id: Int64, expected: Int32 = 0, audio: URL? = nil) async throws {
         nonisolated(unsafe) let engine = self.engine
-        let status = await Task.detached(priority: .utility) { engine.identifySpeakers(id, expected) }.value
+        let path = audio?.path(percentEncoded: false) ?? ""
+        let status = await Task.detached(priority: .utility) {
+            engine.identifySpeakers(id, expected, std.string(path))
+        }.value
         guard status == .Ok else { throw ScribaticEngineError(status: status) }
     }
 
@@ -218,9 +229,11 @@ actor ScribaticEngine {
     /// The whole recording again with the accurate model, replacing the live
     /// preview. Minutes for a long recording, so off this actor, like
     /// `identifySpeakers`; the engine loads its own model for it.
-    nonisolated func refineTranscript(_ id: Int64) async throws {
+    /// `audio` as for `identifySpeakers`.
+    nonisolated func refineTranscript(_ id: Int64, audio: URL? = nil) async throws {
         nonisolated(unsafe) let engine = self.engine
-        let status = await Task.detached(priority: .utility) { engine.refineTranscript(id) }.value
+        let path = audio?.path(percentEncoded: false) ?? ""
+        let status = await Task.detached(priority: .utility) { engine.refineTranscript(id, std.string(path)) }.value
         guard status == .Ok else { throw ScribaticEngineError(status: status) }
     }
 

@@ -188,6 +188,7 @@ final class TranscriptionModel {
             canRefine = engine.canRefine
             await refreshNotes()
             phase = .ready
+            Task { await settleAllRecordings() }
         } catch {
             // Say which model and why, not only the engine's status: this is
             // what a tester copies into a report.
@@ -395,7 +396,7 @@ final class TranscriptionModel {
             let recordings = includeRecordings
                 ? ((try? FileManager.default.contentsOfDirectory(at: URL(filePath: configuration.recordingsDirectory),
                                                                  includingPropertiesForKeys: nil)) ?? [])
-                    .filter { $0.lastPathComponent.hasPrefix("recording-") && $0.pathExtension == "wav" }
+                    .filter { $0.lastPathComponent.hasPrefix("recording-") && ["wav", "m4a"].contains($0.pathExtension) }
                 : []
             let needed = ([database] + recordings).map(Backup.fileSize).reduce(0, +)
             guard DeviceStatus.freeBytes() >= needed + DeviceStatus.minimumFree else {
@@ -639,13 +640,31 @@ final class TranscriptionModel {
         finishChain = Task { [weak self] in
             await previous?.value
             guard let self, let engine = self.engine else { return }
-            guard let note = await engine.loadNote(id), note.audioURL != nil else { return }
+            guard let note = await engine.loadNote(id), let recording = note.audioURL else { return }
             // Time to finish if the user leaves the app; iOS may still stop
             // it, and the note keeps its preview with "Improve transcript".
             let background = UIApplication.shared.beginBackgroundTask(withName: "Finish transcript")
             defer {
                 if background != .invalid { UIApplication.shared.endBackgroundTask(background) }
             }
+            do {
+                try await RecordingFiles.withEngineAudio(recording) { audio in
+                    await self.finishSteps(id, engine: engine, audio: audio)
+                }
+            } catch {
+                self.noteError = "The recording could not be read: \(error.localizedDescription)"
+            }
+            self.finishingNoteID = nil
+            self.finishingStep = ""
+            await self.settleRecording(id)
+            await self.refreshNotes()
+            await self.noteChanged()
+        }
+    }
+
+    /// Improving the transcript, then identifying speakers: `audio` is the
+    /// recording decoded for the engine, or nil when it reads the WAV itself.
+    private func finishSteps(_ id: Int64, engine: ScribaticEngine, audio: URL?) async {
             if self.canRefine {
                 self.finishing(id, "Improving transcript", 0)
                 let poll = Task { [weak self] in
@@ -656,7 +675,7 @@ final class TranscriptionModel {
                     }
                 }
                 do {
-                    try await engine.refineTranscript(id)
+                    try await engine.refineTranscript(id, audio: audio)
                 } catch {
                     self.noteError = "The transcript could not be improved: \(error)"
                 }
@@ -666,18 +685,48 @@ final class TranscriptionModel {
             if self.canIdentifySpeakers {
                 self.finishing(id, "Identifying speakers", -1)
                 do {
-                    try await engine.identifySpeakers(id)
+                    try await engine.identifySpeakers(id, audio: audio)
                 } catch {
                     // The transcript is saved either way; speakers can be
                     // identified again from the note while the audio exists.
                     self.noteError = "Speakers could not be identified: \(error)"
                 }
             }
-            self.finishingNoteID = nil
-            self.finishingStep = ""
-            await self.refreshNotes()
-            await self.noteChanged()
+    }
+
+    // MARK: - Keeping recordings
+
+    /// A finished note's recording, as "Keep recordings" says: compressed to
+    /// M4A, or deleted (the transcript stays either way). A recording that
+    /// fails to compress stays as it is, and is tried again next launch.
+    private func settleRecording(_ id: Int64) async {
+        guard let engine, let note = await engine.loadNote(id), let url = note.audioURL else { return }
+        let keep = KeepRecordings.current
+        if keep == .untilTranscribed || (keep == .month && note.createdAt < KeepRecordings.monthAgo) {
+            if playingNoteID == id { stopPlayback() }
+            try? await engine.deleteRecording(id)
+            return
         }
+        guard !RecordingFiles.isCompressed(url) else { return }
+        do {
+            let compressed = try await Task.detached(priority: .utility) { try RecordingFiles.compress(url) }.value
+            try await engine.replaceRecording(id, with: compressed)
+        } catch {
+            // Left as WAV: playable, and compressed on a later try.
+        }
+    }
+
+    /// Every note's recording settled: at launch (recordings made before
+    /// compression, and ones past their keeping time) and when the setting
+    /// changes. Waits for notes still finishing; never touches one in use.
+    func settleAllRecordings() async {
+        await finishChain?.value
+        guard let engine else { return }
+        for summary in await engine.listNotes() where summary.hasAudio && summary.id != finishingNoteID {
+            await settleRecording(summary.id)
+        }
+        await refreshNotes()
+        await noteChanged()
     }
 
     private func finishing(_ id: Int64, _ step: String, _ progress: Float) {
@@ -766,7 +815,10 @@ final class TranscriptionModel {
         busyNoteID = id
         defer { busyNoteID = nil }
         do {
-            try await engine.identifySpeakers(id, expected: expected)
+            let recording = await engine.loadNote(id)?.audioURL
+            try await RecordingFiles.withEngineAudio(recording) { audio in
+                try await engine.identifySpeakers(id, expected: expected, audio: audio)
+            }
         } catch {
             noteError = "Speakers could not be identified: \(error)"
         }

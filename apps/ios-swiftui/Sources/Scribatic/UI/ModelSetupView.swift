@@ -313,6 +313,7 @@ struct StorageSection: View {
     let model: TranscriptionModel
     @State private var status: DeviceStatus?
     @State private var level = DeviceStatus.warningLevel
+    @State private var keep = KeepRecordings.current
 
     var body: some View {
         Section {
@@ -334,10 +335,22 @@ struct StorageSection: View {
             .font(.uiBody)
             .listRowBackground(Color.surfaceRaised)
             .onChange(of: level) { _, new in DeviceStatus.warningLevel = new }
+            Picker("Keep recordings", selection: $keep) {
+                ForEach(KeepRecordings.allCases) { Text($0.label).tag($0) }
+            }
+            .font(.uiBody)
+            .listRowBackground(Color.surfaceRaised)
+            .onChange(of: keep) { _, new in
+                KeepRecordings.current = new
+                Task {
+                    await model.settleAllRecordings()
+                    status = model.deviceStatus()
+                }
+            }
         } header: {
             SectionHeader(title: "Storage & memory")
         } footer: {
-            Text("A recording takes about 230 MB an hour. If storage runs out while recording, it stops and what was recorded is saved.")
+            Text("\(keep.explanation) While recording, about 230 MB an hour is needed until the transcript is finished. If storage runs out while recording, it stops and what was recorded is saved.")
                 .font(.uiCaption)
                 .foregroundStyle(Color.inkMuted)
         }

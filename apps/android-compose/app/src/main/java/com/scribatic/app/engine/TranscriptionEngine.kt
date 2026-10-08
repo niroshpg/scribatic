@@ -1,5 +1,7 @@
 package com.scribatic.app.engine
 
+import java.io.File
+
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -180,6 +182,11 @@ class TranscriptionEngine private constructor(
         decodeNote(nativeLoadNote(nativeHandle.get(), noteId))
     }
 
+    /** Makes [file] (in the recordings directory) the note's recording and deletes the old one. */
+    suspend fun replaceRecording(noteId: Long, file: File): EngineStatus = withContext(dispatcher) {
+        EngineStatus.from(nativeReplaceRecording(nativeHandle.get(), noteId, file.absolutePath))
+    }
+
     suspend fun deleteRecording(noteId: Long): EngineStatus = withContext(dispatcher) {
         EngineStatus.from(nativeDeleteRecording(nativeHandle.get(), noteId))
     }
@@ -199,8 +206,9 @@ class TranscriptionEngine private constructor(
     fun canIdentifySpeakers(): Boolean = nativeCanIdentifySpeakers(nativeHandle.get())
 
     /** Diarizes the note's recording. [expected] 0 estimates the count. */
-    suspend fun identifySpeakers(noteId: Long, expected: Int = 0): EngineStatus = withContext(background) {
-        withHandle { EngineStatus.from(nativeIdentifySpeakers(it, noteId, expected)) }
+    /** [audio] is the recording decoded to WAV when the note's own is compressed ([RecordingFiles]); null reads its WAV. */
+    suspend fun identifySpeakers(noteId: Long, expected: Int = 0, audio: File? = null): EngineStatus = withContext(background) {
+        withHandle { EngineStatus.from(nativeIdentifySpeakers(it, noteId, expected, audio?.absolutePath.orEmpty())) }
     }
 
     // -- Final transcript --------------------------------------------------------
@@ -209,8 +217,9 @@ class TranscriptionEngine private constructor(
     fun canRefine(): Boolean = nativeCanRefine(nativeHandle.get())
 
     /** The whole recording again with the accurate model; replaces the preview. */
-    suspend fun refineTranscript(noteId: Long): EngineStatus = withContext(background) {
-        withHandle { EngineStatus.from(nativeRefineTranscript(it, noteId)) }
+    /** [audio] as for [identifySpeakers]. */
+    suspend fun refineTranscript(noteId: Long, audio: File? = null): EngineStatus = withContext(background) {
+        withHandle { EngineStatus.from(nativeRefineTranscript(it, noteId, audio?.absolutePath.orEmpty())) }
     }
 
     fun refineProgress(): Float = nativeRefineProgress(nativeHandle.get())
@@ -386,7 +395,7 @@ class TranscriptionEngine private constructor(
     private external fun nativeRequestCancel(handle: Long)
     private external fun nativeBeginSession(handle: Long)
     private external fun nativeCanRefine(handle: Long): Boolean
-    private external fun nativeRefineTranscript(handle: Long, noteId: Long): Int
+    private external fun nativeRefineTranscript(handle: Long, noteId: Long, audioPath: String): Int
     private external fun nativeRefineProgress(handle: Long): Float
     private external fun nativeCancelRefine(handle: Long)
     private external fun nativeSetSegmentSpeaker(handle: Long, noteId: Long, segmentId: Long, speaker: Int): Int
@@ -411,7 +420,8 @@ class TranscriptionEngine private constructor(
         anonymise: Boolean,
     ): String
     private external fun nativeCanIdentifySpeakers(handle: Long): Boolean
-    private external fun nativeIdentifySpeakers(handle: Long, noteId: Long, expected: Int): Int
+    private external fun nativeIdentifySpeakers(handle: Long, noteId: Long, expected: Int, audioPath: String): Int
+    private external fun nativeReplaceRecording(handle: Long, noteId: Long, path: String): Int
     private external fun nativeRenameSpeaker(handle: Long, noteId: Long, speaker: Int, name: String): Int
 }
 

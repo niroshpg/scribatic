@@ -66,7 +66,7 @@ data class DeviceStatus(
             return DeviceStatus(
                 freeBytes = freeBytes(context),
                 recordingsBytes = recordings.sumOf { it.length() },
-                recordingCount = recordings.count { it.extension == "wav" },
+                recordingCount = recordings.count { it.extension == "wav" || it.extension == "m4a" },
                 modelsBytes = models.filter { it.exists() }.sumOf { it.length() },
                 notesBytes = storeDir.listFiles().orEmpty().sumOf { it.length() },
                 availableMemory = memory.availMem,

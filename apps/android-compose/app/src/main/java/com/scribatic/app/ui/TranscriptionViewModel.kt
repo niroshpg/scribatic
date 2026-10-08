@@ -26,10 +26,13 @@ import com.scribatic.app.share.ShareFiles
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import android.text.format.Formatter
 import android.provider.OpenableColumns
 import com.scribatic.app.audio.AudioImport
+import com.scribatic.app.audio.KeepRecordings
+import com.scribatic.app.audio.RecordingFiles
 import java.io.IOException
 import com.scribatic.app.engine.DeviceStatus
 import com.scribatic.app.engine.Backup
@@ -264,6 +267,7 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
                     notes = created.listNotes(),
                 )
             }
+            settleAllRecordings()
         } finally {
             preparing = false
         }
@@ -431,7 +435,7 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
                 val status = engine.writeBackup(database.absolutePath)
                 if (status != EngineStatus.OK) throw IOException("The notes could not be read: $status")
                 val recordings = if (includeRecordings) {
-                    recordingsDir.listFiles().orEmpty().filter { it.name.startsWith("recording-") && it.extension == "wav" }
+                    recordingsDir.listFiles().orEmpty().filter { it.name.startsWith("recording-") && it.extension in setOf("wav", "m4a") }
                 } else {
                     emptyList()
                 }
@@ -785,6 +789,36 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
             previous?.join()
             val note = engine.loadNote(id) ?: return@launch
             var message: String? = null
+            val recording = note.audioPath?.let(::File)
+            runCatching {
+                RecordingFiles.withEngineAudio(getApplication(), recording) { audio ->
+                    message = finishSteps(engine, id, note, audio)
+                }
+            }.onFailure { message = "The recording could not be read: ${it.message}" }
+            _uiState.update {
+                it.copy(
+                    finishingNoteId = null,
+                    finishingStep = "",
+                    notes = engine.listNotes(),
+                    message = message ?: it.message,
+                )
+            }
+            settleRecording(id)
+            _uiState.update { it.copy(notes = engine.listNotes()) }
+            reloadNote(id)
+            if (finishJob === self && !recordingNow()) TranscriptionService.hide(getApplication())
+        }
+        finishJob = self
+    }
+
+    /**
+     * Improving the transcript, then identifying speakers: [audio] is the
+     * recording decoded for the engine, or null when it reads the WAV itself.
+     * Returns what to tell the user, if anything went wrong.
+     */
+    private suspend fun finishSteps(engine: TranscriptionEngine, id: Long, note: NoteDetail, audio: File?): String? =
+        coroutineScope {
+            var message: String? = null
             if (engine.canRefine() && note.audioPath != null) {
                 finishing(id, "Improving transcript", 0f)
                 val poll = launch {
@@ -795,28 +829,66 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
                         if (!recordingNow()) TranscriptionService.saving(getApplication(), "Improving transcript — ${(progress * 100).toInt()}%")
                     }
                 }
-                val status = engine.refineTranscript(id)
+                val status = engine.refineTranscript(id, audio)
                 poll.cancel()
                 if (status != EngineStatus.OK && status != EngineStatus.CANCELLED) message = "The transcript could not be improved: $status"
                 reloadNote(id)
             }
             if (_uiState.value.canIdentifySpeakers && note.audioPath != null) {
                 finishing(id, "Identifying speakers", -1f)
-                val status = engine.identifySpeakers(id)
+                val status = engine.identifySpeakers(id, audio = audio)
                 if (status != EngineStatus.OK) message = "Speakers could not be identified: $status"
             }
-            _uiState.update {
-                it.copy(
-                    finishingNoteId = null,
-                    finishingStep = "",
-                    notes = engine.listNotes(),
-                    message = message ?: it.message,
-                )
-            }
-            reloadNote(id)
-            if (finishJob === self && !recordingNow()) TranscriptionService.hide(getApplication())
+            message
         }
-        finishJob = self
+
+    // -- Keeping recordings -------------------------------------------------------
+
+    /**
+     * A finished note's recording, as "Keep recordings" says: compressed to
+     * M4A, or deleted (the transcript stays either way). One that fails to
+     * compress stays as it is, and is tried again at the next launch.
+     */
+    private suspend fun settleRecording(id: Long) {
+        val engine = engine ?: return
+        val note = engine.loadNote(id) ?: return
+        val file = note.audioPath?.let(::File) ?: return
+        val keep = KeepRecordings.current(getApplication())
+        if (keep == KeepRecordings.UNTIL_TRANSCRIBED ||
+            (keep == KeepRecordings.MONTH && note.createdAtSeconds < KeepRecordings.monthAgo())
+        ) {
+            if (_uiState.value.playingNoteId == id) stopPlayback()
+            engine.deleteRecording(id)
+            return
+        }
+        if (RecordingFiles.isCompressed(file)) return
+        runCatching {
+            val compressed = withContext(Dispatchers.IO) { RecordingFiles.compress(getApplication(), file) }
+            // Not swapped in: the next launch's sweep deletes the spare M4A.
+            engine.replaceRecording(id, compressed)
+        }
+    }
+
+    /**
+     * Every note's recording settled: at launch (recordings made before
+     * compression, and ones past their keeping time) and when the setting
+     * changes. Waits for notes still finishing; never touches one in use.
+     */
+    fun settleAllRecordings() {
+        val engine = engine ?: return
+        viewModelScope.launch(Dispatchers.Default) {
+            finishJob?.join()
+            for (summary in engine.listNotes()) {
+                if (summary.hasAudio && summary.id != _uiState.value.finishingNoteId) settleRecording(summary.id)
+            }
+            _uiState.update { it.copy(notes = engine.listNotes()) }
+            _uiState.value.note?.let { reloadNote(it.id) }
+        }
+    }
+
+    fun setKeepRecordings(value: KeepRecordings) {
+        KeepRecordings.set(getApplication(), value)
+        settleAllRecordings()
     }
 
     private fun finishing(id: Long, step: String, progress: Float) {
@@ -893,7 +965,10 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
 
     fun identifySpeakers(id: Long, expected: Int) = noteOperation(id) {
         if (_uiState.value.playingNoteId == id) stopPlayback()
-        val status = it.identifySpeakers(id, expected)
+        val recording = it.loadNote(id)?.audioPath?.let(::File)
+        val status = runCatching {
+            RecordingFiles.withEngineAudio(getApplication(), recording) { audio -> it.identifySpeakers(id, expected, audio) }
+        }.getOrElse { EngineStatus.UNSUPPORTED_FORMAT }
         if (status != EngineStatus.OK) "Speakers could not be identified: $status" else null
     }
 
@@ -964,9 +1039,15 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
         exportFile(id, "Preparing the recording") { _, note, onProgress ->
             val wav = File(note.audioPath ?: return@exportFile null)
             if (!wav.exists()) return@exportFile null
-            if (compressed) {
+            if (compressed && RecordingFiles.isCompressed(wav)) {
+                // A finished note's recording is already the M4A.
                 ShareFiles.target(getApplication(), note.title, "m4a").also { file ->
-                    ShareFiles.encodeM4a(wav, file, onProgress)
+                    wav.copyTo(file, overwrite = true)
+                    onProgress(1f)
+                } to "audio/mp4"
+            } else if (compressed) {
+                ShareFiles.target(getApplication(), note.title, "m4a").also { file ->
+                    ShareFiles.encodeM4a(wav, file, onProgress = onProgress)
                 } to "audio/mp4"
             } else {
                 // Shared through the FileProvider, which only exposes share/.

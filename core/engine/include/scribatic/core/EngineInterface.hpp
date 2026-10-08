@@ -142,7 +142,12 @@ public:
     /// cleared. Blocking: about a third of the recording's length on a
     /// current phone. Own thread: it does not touch the live model, so a new
     /// recording may run meanwhile. Cancellable with `cancelRefine()`.
-    virtual EngineStatus refineTranscript(std::int64_t noteId) = 0;
+    ///
+    /// `audioPath` is where to read the recording: empty for the note's own
+    /// file, which must then be WAV. A finished recording is kept compressed
+    /// (M4A, see `replaceRecording`), which the engine does not decode: the
+    /// platform decodes it to a 16 kHz mono WAV and passes that here.
+    virtual EngineStatus refineTranscript(std::int64_t noteId, const std::string& audioPath) = 0;
 
     /// 0..1 through the refinement in progress, for the UI to poll.
     [[nodiscard]] virtual float refineProgress() const noexcept = 0;
@@ -228,8 +233,10 @@ public:
     /// given to its speakers. Needs the recording, so it fails with
     /// RecordingNotFound once the audio has been deleted. Blocking, and NOT
     /// cancellable part-way: the diarization library ignores cancellation.
+    /// `audioPath` as for `refineTranscript`.
     virtual EngineStatus identifySpeakers(std::int64_t noteId,
-                                          std::int32_t expectedSpeakers) = 0;
+                                          std::int32_t expectedSpeakers,
+                                          const std::string& audioPath) = 0;
 
     /// Names one speaker in one note. An empty name reverts to "Speaker N".
     virtual EngineStatus renameSpeaker(std::int64_t noteId, std::int32_t speaker,
@@ -249,6 +256,15 @@ public:
 
     /// Deletes the note, its transcript, its search index rows and its audio.
     virtual EngineStatus deleteNote(std::int64_t noteId) = 0;
+
+    /// Makes `newPath` the note's recording and deletes the old file: how a
+    /// finished WAV is swapped for the M4A the platform compressed it to.
+    /// `newPath` must be in `EngineConfig::recordingsDirectory`, named as
+    /// recordings are ("recording-…" ending .wav or .m4a), and exist. The
+    /// reference moves first and the old file goes second; should the app
+    /// die in between, `warmUp()` finds a WAV whose M4A a note already has
+    /// and deletes it, rather than recovering it as a note of its own.
+    virtual EngineStatus replaceRecording(std::int64_t noteId, const std::string& newPath) = 0;
 
     /// Plain-text transcript for the platform share sheet. The engine never
     /// sends anything anywhere; this only formats text the user then chooses

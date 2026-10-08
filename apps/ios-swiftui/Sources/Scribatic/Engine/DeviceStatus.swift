@@ -50,7 +50,7 @@ struct DeviceStatus: Sendable {
         return DeviceStatus(
             freeBytes: freeBytes(),
             recordingsBytes: files.map(size).reduce(0, +),
-            recordingCount: files.filter { $0.pathExtension == "wav" }.count,
+            recordingCount: files.filter { ["wav", "m4a"].contains($0.pathExtension) }.count,
             modelsBytes: models.map { size(URL(filePath: $0)) }.reduce(0, +),
             notesBytes: store.map(directorySize) ?? 0,
             availableMemory: Int64(os_proc_available_memory()),

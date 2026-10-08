@@ -43,14 +43,23 @@ std::string baseName(const std::string& path) {
     return slash == std::string::npos ? path : path.substr(slash + 1);
 }
 
-/// Only files the apps themselves name are ever swept. Anything else in the
-/// directory is not ours to delete, however it got there.
-bool isRecordingFileName(const std::string& name) {
+bool isNamed(const std::string& name, std::string_view suffix) {
     constexpr std::string_view kPrefix = "recording-";
-    constexpr std::string_view kSuffix = ".wav";
-    return name.size() > kPrefix.size() + kSuffix.size() &&
+    return name.size() > kPrefix.size() + suffix.size() &&
            name.compare(0, kPrefix.size(), kPrefix) == 0 &&
-           name.compare(name.size() - kSuffix.size(), kSuffix.size(), kSuffix) == 0;
+           name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+/// Only files the apps themselves name are ever swept. Anything else in the
+/// directory is not ours to delete, however it got there. A WAV is a
+/// recording as made; an M4A, one compressed after its note was finished.
+bool isRecordingFileName(const std::string& name) { return isNamed(name, ".wav"); }
+bool isCompressedRecordingName(const std::string& name) { return isNamed(name, ".m4a"); }
+
+/// "recording-123" for both "recording-123.wav" and "recording-123.m4a".
+std::string recordingStem(const std::string& name) {
+    const auto dot = name.find_last_of('.');
+    return dot == std::string::npos ? name : name.substr(0, dot);
 }
 
 /// Alignment heads for DTW word timing. Each whisper size has its own set of
@@ -129,6 +138,52 @@ bool finishWavHeader(const std::string& path) noexcept {
         pos = body + chunkSize + (chunkSize & 1);
     }
     return false;
+}
+
+/// Raises a quiet recording to a peak of -1 dBFS (at most 40 dB), on disk:
+/// written beside it and renamed over it, so the app dying midway leaves the
+/// original. Whisper's input is scaled to an absolute level, and a recording
+/// peaking at -30 dBFS (a phone across the room from a television) lost a
+/// third of its words and its language with it. Done once: a recording
+/// already loud enough is left as it is. True if the file was rewritten.
+bool levelRecording(const std::string& path) {
+    float peak = 0.0F;
+    std::size_t count = 0;
+    {
+        RecordingAudio audio;
+        if (!audio.open(path)) { return false; }
+        count = audio.count();
+        for (std::size_t i = 0; i < count; ++i) { peak = std::max(peak, std::fabs(audio.samples()[i])); }
+    }
+    if (peak <= 0.0F || peak >= 0.5F) { return false; }   // silent, or within 6 dB already
+    const float gain = std::min(0.89F / peak, 100.0F);
+
+    const std::string temporary = path + ".level";
+    {
+        RecordingAudio audio;
+        if (!audio.open(path)) { return false; }
+        FILE* out = std::fopen(temporary.c_str(), "wb");
+        if (out == nullptr) { return false; }
+        const auto put32 = [&](std::uint32_t v) { std::fwrite(&v, 4, 1, out); };
+        const auto put16 = [&](std::uint16_t v) { std::fwrite(&v, 2, 1, out); };
+        const auto dataBytes = static_cast<std::uint32_t>(count * sizeof(float));
+        std::fwrite("RIFF", 1, 4, out); put32(36 + dataBytes); std::fwrite("WAVE", 1, 4, out);
+        std::fwrite("fmt ", 1, 4, out); put32(16);
+        put16(3); put16(1); put32(16000); put32(16000 * 4); put16(4); put16(32);   // IEEE float, mono, 16 kHz
+        std::fwrite("data", 1, 4, out); put32(dataBytes);
+        std::vector<float> chunk(65536);
+        bool ok = true;
+        for (std::size_t at = 0; at < count && ok; at += chunk.size()) {
+            const std::size_t n = std::min(chunk.size(), count - at);
+            for (std::size_t i = 0; i < n; ++i) { chunk[i] = audio.samples()[at + i] * gain; }
+            ok = std::fwrite(chunk.data(), sizeof(float), n, out) == n;
+        }
+        ok = std::fflush(out) == 0 && ::fsync(::fileno(out)) == 0 && ok;
+        std::fclose(out);
+        if (!ok) { std::remove(temporary.c_str()); return false; }
+    }
+    if (std::rename(temporary.c_str(), path.c_str()) != 0) { std::remove(temporary.c_str()); return false; }
+    return true;
 }
 
 /// When a recording started, in Unix seconds: the millisecond stamp both apps
@@ -650,13 +705,13 @@ bool EngineImpl::canIdentifySpeakers() const noexcept {
            fileExists(config_.speakerEmbeddingModelPath);
 }
 
-EngineStatus EngineImpl::identifySpeakers(std::int64_t noteId, std::int32_t expectedSpeakers) {
+EngineStatus EngineImpl::identifySpeakers(std::int64_t noteId, std::int32_t expectedSpeakers,
+                                          const std::string& audioPath) {
     if (!canIdentifySpeakers()) { return EngineStatus::SpeakersUnavailable; }
 
-    const std::string name = store_.audioName(noteId);
     RecordingAudio audio;
-    if (name.empty() || !audio.open(recordingPath(name))) {
-        return EngineStatus::RecordingNotFound;
+    if (const EngineStatus opened = openRecording(noteId, audioPath, audio); opened != EngineStatus::Ok) {
+        return opened;
     }
 
     EngineStatus status = EngineStatus::Ok;
@@ -798,14 +853,15 @@ void EngineImpl::cancelRefine() noexcept {
     refineCancel_.store(true, std::memory_order_release);
 }
 
-EngineStatus EngineImpl::refineTranscript(std::int64_t noteId) {
+EngineStatus EngineImpl::refineTranscript(std::int64_t noteId, const std::string& audioPath) {
     if (!canRefine()) { return EngineStatus::ModelNotFound; }
     std::lock_guard<std::mutex> lock(refineMutex_);
     const NoteDetail note = loadNote(noteId);
     if (note.id == 0) { return EngineStatus::DatabaseFailed; }
-    const std::string name = store_.audioName(noteId);
     RecordingAudio audio;
-    if (name.empty() || !audio.open(recordingPath(name))) { return EngineStatus::RecordingNotFound; }
+    if (const EngineStatus opened = openRecording(noteId, audioPath, audio); opened != EngineStatus::Ok) {
+        return opened;
+    }
 
     refineCancel_.store(false, std::memory_order_release);
     refineProgress_.store(0.0F, std::memory_order_relaxed);
@@ -833,18 +889,27 @@ EngineStatus EngineImpl::refineTranscript(std::int64_t noteId) {
     // Deciding: from the stretches that are speech, not the whole first 30 s.
     // Mostly silence detects as anything (a 9 s note with one short phrase in
     // it came back as Norwegian, and the phrase as noise in four scripts).
-    // Under 3 s of speech, or unsure, the live pass's language stands.
+    // Whole seconds within 20 dB of the recording's loudest, so a quiet
+    // recording is judged on its speech too, and not on scattered slices of
+    // it (which once came back as Maori, for English). Under 3 s of that, or
+    // not sure enough to overrule the live pass, its language stands.
     const bool detecting = language == "auto";
     if (detecting) {
         const bool known = !note.language.empty() && note.language != "auto";
         const int threads = params.n_threads;
-        std::vector<float> speech;
-        constexpr std::size_t kFrame = kSampleRate / 10;
-        for (std::size_t at = 0; at + kFrame <= audio.count() && speech.size() < kSampleRate * 30; at += kFrame) {
+        constexpr std::size_t kSecond = kSampleRate;
+        std::vector<float> loudness;
+        for (std::size_t at = 0; at + kSecond <= audio.count(); at += kSecond) {
             double energy = 0.0;
-            for (std::size_t i = at; i < at + kFrame; ++i) { energy += static_cast<double>(audio.samples()[i]) * audio.samples()[i]; }
-            if (std::sqrt(energy / kFrame) >= kSpeechRms) {
-                speech.insert(speech.end(), audio.samples() + at, audio.samples() + at + kFrame);
+            for (std::size_t i = at; i < at + kSecond; ++i) { energy += static_cast<double>(audio.samples()[i]) * audio.samples()[i]; }
+            loudness.push_back(static_cast<float>(std::sqrt(energy / kSecond)));
+        }
+        const float loudest = loudness.empty() ? 0.0F : *std::max_element(loudness.begin(), loudness.end());
+        const float floor = std::max(loudest * 0.1F, kSilenceRms * 3.0F);   // -20 dB, and over -50 dBFS
+        std::vector<float> speech;
+        for (std::size_t k = 0; k < loudness.size() && speech.size() < kSampleRate * 30; ++k) {
+            if (loudness[k] >= floor) {
+                speech.insert(speech.end(), audio.samples() + k * kSecond, audio.samples() + (k + 1) * kSecond);
             }
         }
         std::string chosen;
@@ -852,7 +917,12 @@ EngineStatus EngineImpl::refineTranscript(std::int64_t noteId) {
             whisper_pcm_to_mel(ctx, speech.data(), static_cast<int>(speech.size()), threads) == 0) {
             std::vector<float> probs(static_cast<std::size_t>(whisper_lang_max_id() + 1), 0.0F);
             const int id = whisper_lang_auto_detect(ctx, 0, threads, probs.data());
-            if (id >= 0 && (probs[static_cast<std::size_t>(id)] >= 0.6F || !known)) { chosen = whisper_lang_str(id); }
+            if (id >= 0) {
+                const std::string detected = whisper_lang_str(id);
+                const float sure = probs[static_cast<std::size_t>(id)];
+                // Agreeing with the live pass needs little; overruling it, a lot.
+                if (!known || detected == note.language ? sure >= 0.5F : sure >= 0.8F) { chosen = detected; }
+            }
         }
         if (chosen.empty() && known) { chosen = note.language; }
         if (!chosen.empty()) { language = chosen; }
@@ -1002,6 +1072,31 @@ std::string EngineImpl::recordingPath(const std::string& name) const {
     return config_.recordingsDirectory + "/" + name;
 }
 
+EngineStatus EngineImpl::openRecording(std::int64_t noteId, const std::string& audioPath, RecordingAudio& audio) {
+    const std::string name = store_.audioName(noteId);
+    if (name.empty() || !fileExists(recordingPath(name))) { return EngineStatus::RecordingNotFound; }
+    // A compressed recording is read only as the platform decoded it.
+    if (audioPath.empty() && !isRecordingFileName(name)) { return EngineStatus::UnsupportedFormat; }
+    const std::string path = audioPath.empty() ? recordingPath(name) : audioPath;
+    // A compressed one was levelled before it was encoded.
+    if (audioPath.empty()) { (void)levelRecording(path); }
+    return audio.open(path) ? EngineStatus::Ok : EngineStatus::UnsupportedFormat;
+}
+
+EngineStatus EngineImpl::replaceRecording(std::int64_t noteId, const std::string& newPath) {
+    const std::string name = baseName(newPath);
+    if ((!isRecordingFileName(name) && !isCompressedRecordingName(name)) || recordingPath(name) != newPath ||
+        !fileExists(newPath)) {
+        return EngineStatus::UnsupportedFormat;
+    }
+    const std::string old = store_.audioName(noteId);
+    if (old.empty()) { return EngineStatus::RecordingNotFound; }
+    if (old == name) { return EngineStatus::Ok; }
+    // Reference first, old file second: see the declaration.
+    if (const EngineStatus moved = store_.setAudio(noteId, name); moved != EngineStatus::Ok) { return moved; }
+    return removeFile(recordingPath(old)) ? EngineStatus::Ok : EngineStatus::FileRemovalFailed;
+}
+
 void EngineImpl::sweepRecordings() {
     if (config_.recordingsDirectory.empty()) { return; }
 
@@ -1014,17 +1109,31 @@ void EngineImpl::sweepRecordings() {
         }
     }
 
+    // What a note already has, by stem: a WAV whose M4A is referenced was
+    // compressed, and the app died before deleting it.
+    std::unordered_set<std::string> referencedStems;
+    for (const auto& name : referenced) { referencedStems.insert(recordingStem(name)); }
+
     std::vector<std::string> unreferenced;
+    std::vector<std::string> leftovers;
     DIR* directory = ::opendir(config_.recordingsDirectory.c_str());
     if (directory == nullptr) { return; }
     while (const dirent* entry = ::readdir(directory)) {
         const std::string name = entry->d_name;
-        if (isRecordingFileName(name) && referenced.count(name) == 0) {
-            unreferenced.push_back(name);
+        if (referenced.count(name) != 0) { continue; }
+        if (isNamed(name, ".wav.level")) {   // levelling cut short: the original is intact
+            leftovers.push_back(name);
+        } else if (isRecordingFileName(name)) {
+            (referencedStems.count(recordingStem(name)) != 0 ? leftovers : unreferenced).push_back(name);
+        } else if (isCompressedRecordingName(name)) {
+            // Compressed, but the app died before the note was pointed at it:
+            // the note still has its WAV, so this copy is spare.
+            leftovers.push_back(name);
         }
     }
     ::closedir(directory);
 
+    for (const auto& name : leftovers) { (void)removeFile(recordingPath(name)); }
     for (const auto& name : unreferenced) { recoverRecording(name); }
 }
 
@@ -1084,7 +1193,9 @@ RestoreResult EngineImpl::restoreBackup(const std::string& databasePath,
         if (note.audioName.empty() || note.audioName.find('/') != std::string::npos) { continue; }
         const std::string from = recordingsDirectory + "/" + note.audioName;
         if (!fileExists(from)) { continue; }
-        const std::string name = "recording-" + std::to_string(stamp) + "-" + std::to_string(note.id) + ".wav";
+        const bool compressed = isCompressedRecordingName(note.audioName);
+        const std::string name = "recording-" + std::to_string(stamp) + "-" + std::to_string(note.id) +
+                                 (compressed ? ".m4a" : ".wav");
         if (std::rename(from.c_str(), recordingPath(name).c_str()) != 0) { continue; }
         (void)store_.setAudio(note.id, name);
     }

@@ -155,15 +155,16 @@ object ShareFiles {
 
     // -- M4A -----------------------------------------------------------------
 
-    /** Speech at 16 kHz mono needs little more: about 14 MB an hour. */
-    private const val AAC_BIT_RATE = 32_000
+    /** About 21 MB an hour; measured against 32 kbit/s, see RecordingFiles on iOS. */
+    private const val AAC_BIT_RATE = 48_000
 
     /**
      * Encodes one of the app's recordings (WAV, 32-bit float, mono, 16 kHz)
      * as AAC-LC in an M4A, with the encoder every Android device has.
+     * [gain] scales every sample on the way (see [com.scribatic.app.audio.RecordingFiles.compress]).
      * [onProgress] gets 0..1. Blocking: a few seconds per hour of audio.
      */
-    fun encodeM4a(wav: File, out: File, onProgress: (Float) -> Unit = {}) {
+    fun encodeM4a(wav: File, out: File, gain: Float = 1f, onProgress: (Float) -> Unit = {}) {
         val sampleRate = AudioCapture.SAMPLE_RATE
         val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, 1).apply {
             setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
@@ -201,7 +202,7 @@ object ShareFiles {
                                 val samples = ByteBuffer.wrap(floats, 0, read).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer()
                                 val pcm = buffer.order(ByteOrder.LITTLE_ENDIAN)
                                 while (samples.hasRemaining()) {
-                                    val s = (samples.get().coerceIn(-1f, 1f) * Short.MAX_VALUE).toInt()
+                                    val s = ((samples.get() * gain).coerceIn(-1f, 1f) * Short.MAX_VALUE).toInt()
                                     pcm.putShort(s.toShort())
                                 }
                                 codec.queueInputBuffer(index, 0, pcm.position(), timeUs, 0)

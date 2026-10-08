@@ -40,6 +40,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.ui.graphics.Color
+import com.scribatic.app.audio.KeepRecordings
 import com.scribatic.app.engine.Backup
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
@@ -1343,7 +1344,7 @@ private fun NoteScreen(id: Long, state: TranscriptUiState, viewModel: Transcript
     }
 
     if (recordingFormat && note != null) {
-        // Sizes from the length: AAC at 32 kbit/s, WAV at 16 kHz × 4 bytes.
+        // Sizes from the length: AAC at 48 kbit/s, WAV at 16 kHz × 4 bytes.
         val seconds = note.durationMs / 1000.0
         AlertDialog(
             onDismissRequest = { recordingFormat = false },
@@ -1356,16 +1357,19 @@ private fun NoteScreen(id: Long, state: TranscriptUiState, viewModel: Transcript
                     }) {
                         Column(Modifier.fillMaxWidth()) {
                             Text("Compressed (M4A)")
-                            Text("About ${fileSize(seconds * 4_000)} · plays anywhere", style = MaterialTheme.typography.bodySmall, color = c.inkMuted)
+                            Text("About ${fileSize(seconds * 6_000)} · plays anywhere", style = MaterialTheme.typography.bodySmall, color = c.inkMuted)
                         }
                     }
-                    TextButton(onClick = {
-                        recordingFormat = false
-                        viewModel.shareRecording(id, compressed = false)
-                    }) {
-                        Column(Modifier.fillMaxWidth()) {
-                            Text("Original (WAV)")
-                            Text("About ${fileSize(seconds * 64_000)} · as recorded", style = MaterialTheme.typography.bodySmall, color = c.inkMuted)
+                    // Kept compressed once finished: the original WAV is gone.
+                    if (note.audioPath?.endsWith(".m4a") == false) {
+                        TextButton(onClick = {
+                            recordingFormat = false
+                            viewModel.shareRecording(id, compressed = false)
+                        }) {
+                            Column(Modifier.fillMaxWidth()) {
+                                Text("Original (WAV)")
+                                Text("About ${fileSize(seconds * 64_000)} · as recorded", style = MaterialTheme.typography.bodySmall, color = c.inkMuted)
+                            }
                         }
                     }
                 }
@@ -1658,6 +1662,7 @@ private fun StorageSection(viewModel: TranscriptionViewModel) {
     val context = LocalContext.current
     val status = remember { viewModel.deviceStatus() }
     var level by remember { mutableStateOf(DeviceStatus.warningLevel(context)) }
+    var keep by remember { mutableStateOf(KeepRecordings.current(context)) }
     fun size(bytes: Long) = Formatter.formatShortFileSize(context, bytes)
 
     Column {
@@ -1705,9 +1710,31 @@ private fun StorageSection(viewModel: TranscriptionViewModel) {
                     }
                 }
             }
+            HorizontalDivider(color = c.line)
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                Text("Keep recordings", style = MaterialTheme.typography.bodyLarge, color = c.ink)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                    KeepRecordings.entries.forEach { option ->
+                        FilterChip(
+                            selected = keep == option,
+                            onClick = {
+                                keep = option
+                                viewModel.setKeepRecordings(option)
+                            },
+                            label = { Text(option.label) },
+                        )
+                    }
+                }
+                Text(
+                    keep.explanation,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = c.inkMuted,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
         }
         Text(
-            "A recording takes about 230 MB an hour. If storage runs out while recording, it stops and what was recorded is saved.",
+            "While recording, about 230 MB an hour is needed until the transcript is finished. If storage runs out while recording, it stops and what was recorded is saved.",
             style = MaterialTheme.typography.bodySmall,
             color = c.inkMuted,
             modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),
