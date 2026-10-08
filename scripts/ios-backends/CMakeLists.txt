@@ -23,6 +23,17 @@ set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(WHISPER_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
 set(WHISPER_BUILD_SERVER   OFF CACHE BOOL "" FORCE)
 
+# ggml sizes each CPU thread's slice of its work buffer with CACHE_LINE_SIZE
+# as its C code sees it (64), but its C++ ops index the slices with
+# std::hardware_destructive_interference_size where the standard library has
+# it: 128 on Apple Silicon. The last thread then writes past the buffer, which
+# corrupted the heap at random during summaries and answers on iOS (found
+# under AddressSanitizer; Android's library says 64, so it never showed).
+# Without these predefines libc++ offers no interference size, and ggml's C++
+# falls back to 64 as its C does.
+add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-U__GCC_DESTRUCTIVE_SIZE>
+                    $<$<COMPILE_LANGUAGE:CXX>:-U__GCC_CONSTRUCTIVE_SIZE>)
+
 add_subdirectory(${SCRIBATIC_VENDOR}/llama.cpp   llama   EXCLUDE_FROM_ALL)
 add_subdirectory(${SCRIBATIC_VENDOR}/whisper.cpp whisper EXCLUDE_FROM_ALL)
 

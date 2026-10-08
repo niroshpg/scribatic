@@ -85,6 +85,17 @@ target_compile_definitions(scribatic_core PUBLIC
 # --- Backend submodules --------------------------------------------------
 # Vendored by `make setup-all`; guarded so the tree configures before fetch.
 #
+# ggml sizes each CPU thread's slice of its work buffer with CACHE_LINE_SIZE
+# as its C code sees it (64), but its C++ ops index the slices with
+# std::hardware_destructive_interference_size where the standard library has
+# it: 128 on Apple Silicon. The last thread then writes past the buffer, which
+# corrupted the heap at random during summaries and answers on iOS (found
+# under AddressSanitizer; Android's library says 64, so it never showed).
+# Without these predefines libc++ offers no interference size, and ggml's C++
+# falls back to 64 as its C does.
+add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-U__GCC_DESTRUCTIVE_SIZE>
+                    $<$<COMPILE_LANGUAGE:CXX>:-U__GCC_CONSTRUCTIVE_SIZE>)
+
 # ORDER IS LOAD-BEARING. Both backends vendor their own copy of ggml, and
 # whichever is added first defines the `ggml` target for the whole build; the
 # second one finds it already defined and compiles against those headers.
