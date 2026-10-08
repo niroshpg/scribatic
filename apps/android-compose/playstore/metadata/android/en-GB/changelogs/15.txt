@@ -1,0 +1,4 @@
+Fixes:
+• A short or mostly silent recording no longer turns into garbled text when the transcript is finished.
+• Summarise isn't offered when too little was said; the summary no longer invents content.
+• Search shows "Ask your notes" with example questions before you type.
