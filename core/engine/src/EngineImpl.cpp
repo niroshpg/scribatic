@@ -186,6 +186,10 @@ bool levelRecording(const std::string& path) {
     return true;
 }
 
+/// What the accurate pass is told came before, in English: speech written
+/// as said, interjections and all. See refineTranscript.
+constexpr const char* kVerbatimContext = "Umm, yeah. Okay. Ah, so, like, you know. Mm-hmm, right.";
+
 /// When a recording started, in Unix seconds: the millisecond stamp both apps
 /// put in its name, or failing that the file's own time.
 std::int64_t recordingStartedAt(const std::string& path, const std::string& name) {
@@ -941,6 +945,14 @@ EngineStatus EngineImpl::refineTranscript(std::int64_t noteId, const std::string
     // Context across whisper's 30 s windows: what the live 5 s slices lack,
     // and most of why this pass is better (a sentence is no longer cut in two).
     params.no_context       = false;
+    // Context that keeps short interjections. Without it whisper writes the
+    // tidy version and drops "yeah", "okay", "ah" said over someone else, so
+    // there is no word for the speaker who said them. Measured (2026-10-09):
+    // a 17 s two-person clip went from 29 to 44 of 48 words; two interviews
+    // from 12.1% and 13.8% WER to 11.6% and 10.0% against large-v3-turbo; a
+    // near-silent clip and the fixtures unchanged, nothing of this text
+    // repeated into silence. English only: the only language measured.
+    if (language == "en") { params.initial_prompt = kVerbatimContext; }
     params.print_progress   = false;
     params.print_realtime   = false;
     params.print_timestamps = false;
