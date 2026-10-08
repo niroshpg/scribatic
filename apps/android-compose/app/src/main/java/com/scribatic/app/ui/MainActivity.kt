@@ -42,6 +42,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.ui.graphics.Color
 import com.scribatic.app.audio.KeepRecordings
 import com.scribatic.app.engine.Backup
+import com.scribatic.app.share.ShareFiles
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -163,6 +164,15 @@ private fun ScribaticApp(viewModel: TranscriptionViewModel = viewModel()) {
             is ShareRequest.Text -> {
                 send.type = "text/plain"
                 send.putExtra(Intent.EXTRA_TEXT, share.text)
+                // As a .txt file too. The chooser offers every app that takes
+                // text/plain, and file managers and drives among them need a
+                // file ("can't save this file" otherwise); messaging and
+                // email apps take the text.
+                val file = ShareFiles.target(context, share.subject, "txt").apply { writeText(share.text) }
+                val uri = FileProvider.getUriForFile(context, "${context.packageName}.share", file)
+                send.putExtra(Intent.EXTRA_STREAM, uri)
+                send.clipData = ClipData.newRawUri(file.name, uri)
+                send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 "Share transcript"
             }
             is ShareRequest.Attachment -> {
