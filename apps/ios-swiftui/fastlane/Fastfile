@@ -151,7 +151,7 @@ platform :ios do
     staging = File.expand_path("../../../build/asset-pack-staging", __dir__)
     files = {
       "models-core" => %w[ggml-base.bin ggml-small-q8_0.bin speaker-segmentation.onnx speaker-embedding.onnx embed-minilm-l6-v2.gguf],
-      "models-answers" => %w[insight-q4_k_m.gguf]
+      "models-answers" => %w[insight-4b-00001-of-00002.gguf insight-4b-00002-of-00002.gguf]
     }
     FileUtils.mkdir_p(out)
     # `fastlane asset_packs only:models-core` uploads one pack, for when disk

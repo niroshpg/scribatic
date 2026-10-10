@@ -23,14 +23,18 @@ import java.io.File
  *
  * Only an install that came from Play has packs. A debug build, a sideloaded
  * APK or an install on a device without the Play Store reports the API as
- * unavailable, and the setup screen falls back to importing the files.
+ * unavailable, and the setup screen says the models come only from Google Play.
  */
 class PlayModelPacks(context: Context) {
 
     private val manager = AssetPackManagerFactory.getInstance(context)
 
     /** Which pack a model ships in. */
-    fun packFor(model: ModelSpec): String = if (model.required) CORE else ANSWERS
+    fun packFor(model: ModelSpec): String = when {
+        model.required -> CORE
+        model.partOf.isNotEmpty() -> ANSWERS_2   // the instruct model's second half: 1.5 GB a pack
+        else -> ANSWERS
+    }
 
     /** Where Play extracted a model's file, if its pack is on the device. */
     fun fileFor(model: ModelSpec): File? {
@@ -41,7 +45,7 @@ class PlayModelPacks(context: Context) {
 
     /**
      * States of both packs, or null when this install cannot use Play asset
-     * delivery at all — the signal to offer importing instead.
+     * delivery at all: the models come only from Google Play.
      */
     suspend fun states(): Map<String, AssetPackState>? {
         // Per pack: one pack Play doesn't know (a test bundle built without
@@ -49,14 +53,14 @@ class PlayModelPacks(context: Context) {
         // Only the core pack decides that.
         val core = runCatching { manager.requestPackStates(listOf(CORE)).packStates() }.getOrNull()
             ?: return null
-        val answers = runCatching { manager.requestPackStates(listOf(ANSWERS)).packStates() }.getOrNull()
+        val answers = runCatching { manager.requestPackStates(listOf(ANSWERS, ANSWERS_2)).packStates() }.getOrNull()
         return core + answers.orEmpty()
     }
 
     /** Asks Play to download packs. Progress arrives through [updates]. */
     suspend fun fetch(packs: List<String>) {
         // A refused request (unknown pack, Play unavailable mid-session) must
-        // not take the app down; the setup screen still offers importing.
+        // not take the app down; the setup screen offers to try again.
         // One request per pack, so a failure on the optional pack never holds
         // back the required one.
         for (pack in packs) runCatching { manager.requestFetch(listOf(pack)) }
@@ -88,6 +92,7 @@ class PlayModelPacks(context: Context) {
     companion object {
         const val CORE = "models_core"
         const val ANSWERS = "models_answers"
+        const val ANSWERS_2 = "models_answers_2"
 
         fun describe(state: AssetPackState): String? = when (state.status()) {
             AssetPackStatus.PENDING -> "Waiting for Google Play"

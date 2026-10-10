@@ -98,3 +98,37 @@ enum KeepRecordings: String, CaseIterable, Identifiable {
 
     static var monthAgo: Date { Date().addingTimeInterval(-30 * 24 * 3600) }
 }
+
+
+/// "Identify speakers": straight after each recording, or only when asked from
+/// the note's menu. Working out who spoke takes minutes on a slow device, and
+/// someone recording alone never needs it.
+enum SpeakerIdentification: String, CaseIterable, Identifiable {
+    case automatic
+    case onRequest
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .automatic: "Automatically"
+        case .onRequest: "Only when I ask"
+        }
+    }
+
+    var explanation: String {
+        switch self {
+        case .automatic:
+            "Who said what is worked out once each transcript is finished."
+        case .onRequest:
+            "Speakers are identified only when you choose Identify speakers in a note's menu. With Keep recordings set to Until transcribed, the recording is gone by then, so this can't be done later."
+        }
+    }
+
+    private static let key = "identifySpeakers"
+
+    static var current: SpeakerIdentification {
+        get { UserDefaults.standard.string(forKey: key).flatMap(SpeakerIdentification.init(rawValue:)) ?? .automatic }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: key) }
+    }
+}

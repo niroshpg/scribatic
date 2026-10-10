@@ -507,15 +507,17 @@ struct NoteDetailView: View {
                     } else {
                         ProgressView().frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    Text("You're reading the live preview; the final transcript replaces it when this is done.")
+                    Text(!note.hasText ? "The transcript appears here when this is done."
+                         : !note.refined ? "You're reading the live preview; the final transcript replaces it when this is done."
+                         : "Each part is marked with who said it when this is done.")
                         .font(.uiCaption)
                         .foregroundStyle(Color.inkSoft)
                 }
             } else if model.canRefine && !note.refined && note.audioURL != nil {
                 HStack {
-                    Text("Live preview").font(.uiLabel).foregroundStyle(Color.inkMuted)
+                    Text(note.hasText ? "Live preview" : "No transcript yet").font(.uiLabel).foregroundStyle(Color.inkMuted)
                     Spacer()
-                    Button("Improve transcript") { rebuild(.refine) }
+                    Button(note.hasText ? "Improve transcript" : "Transcribe") { rebuild(.refine) }
                         .font(.uiLabel)
                         .buttonStyle(.borderless)
                 }
@@ -606,7 +608,8 @@ struct NoteDetailView: View {
                                 Button("\(count) people") { reidentify(Int32(count)) }
                             }
                         } label: {
-                            Label("Identify speakers again", systemImage: "person.2.wave.2")
+                            Label(note.speakerCount > 0 ? "Identify speakers again" : "Identify speakers",
+                                  systemImage: "person.2.wave.2")
                         }
                         Divider()
                     }

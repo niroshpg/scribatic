@@ -1,6 +1,6 @@
-// Play Asset Delivery pack: the optional instruct model (ADR-011).
-// on-demand: fetched only if the user keeps "Answers and summaries" selected,
-// so declining it on the setup screen means its 1.2 GB never downloads.
+// Play Asset Delivery pack: the optional instruct model's first half (ADR-011;
+// the second is models_answers_2). on-demand: fetched only once the user asks
+// for "Answers and summaries", so its 2.5 GB never downloads unasked.
 plugins {
     id("com.android.asset-pack")
 }

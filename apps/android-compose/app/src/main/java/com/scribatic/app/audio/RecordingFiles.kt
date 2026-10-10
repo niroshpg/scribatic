@@ -115,3 +115,32 @@ enum class KeepRecordings(val label: String, val explanation: String) {
         fun monthAgo(): Long = System.currentTimeMillis() / 1000 - 30L * 24 * 3600
     }
 }
+
+/**
+ * "Identify speakers": straight after each recording, or only when asked from
+ * the note's menu. Working out who spoke takes minutes on a slow phone, and
+ * someone recording alone never needs it.
+ */
+enum class SpeakerIdentification(val label: String, val explanation: String) {
+    AUTOMATIC(
+        "Automatically",
+        "Who said what is worked out once each transcript is finished.",
+    ),
+    ON_REQUEST(
+        "Only when I ask",
+        "Speakers are identified only when you choose Identify speakers in a note's menu. With Keep " +
+            "recordings set to Until transcribed, the recording is gone by then, so this can't be done later.",
+    );
+
+    companion object {
+        private const val KEY = "identifySpeakers"
+
+        fun current(context: Context): SpeakerIdentification =
+            context.getSharedPreferences("settings", Context.MODE_PRIVATE).getString(KEY, null)
+                ?.let { name -> entries.firstOrNull { it.name == name } } ?: AUTOMATIC
+
+        fun set(context: Context, value: SpeakerIdentification) {
+            context.getSharedPreferences("settings", Context.MODE_PRIVATE).edit().putString(KEY, value.name).apply()
+        }
+    }
+}

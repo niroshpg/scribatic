@@ -32,7 +32,7 @@ android {
         applicationId = "com.scribatic.app"
         minSdk        = 28          // AAudio low-latency callback + mmap headroom
         targetSdk     = 36
-        versionCode   = 16
+        versionCode   = 17
         versionName   = "0.1.0"
 
         ndk {
@@ -130,11 +130,11 @@ android {
     // Models ship as Play asset packs, not inside the APK (ADR-011). Only a
     // bundle built for Play carries them; a debug APK has none and falls back
     // to importing the files on the setup screen.
-    // -Pscribatic.skipAnswersPack=true leaves the 1.2 GB instruct pack out,
+    // -Pscribatic.skipAnswersPack=true leaves the 2.5 GB instruct packs out,
     // for local bundletool testing on a machine or emulator short of space.
     assetPacks += listOf(":models-core")
     if (project.findProperty("scribatic.skipAnswersPack") != "true") {
-        assetPacks += listOf(":models-answers")
+        assetPacks += listOf(":models-answers", ":models-answers-2")
     }
 
     // Speaker diarization (ADR-009): sherpa-onnx's C API and ONNX Runtime,
@@ -144,6 +144,8 @@ android {
     sourceSets {
         getByName("main") {
             jniLibs.srcDir(rootProject.file("../../core/engine/vendor-bin/sherpa-onnx/android"))
+            // THIRD_PARTY_NOTICES.txt, shared with iOS: shown under Models → Open-source licences.
+            assets.srcDir(rootProject.file("../../licenses"))
             // The paid features: a private repository cloned into pro/ at the
             // repository root. Absent, the app builds without them (ext/Extensions.kt).
             if (withPro) java.srcDir(proKotlin)

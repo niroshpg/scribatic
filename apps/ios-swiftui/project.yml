@@ -54,6 +54,9 @@ targets:
     sources:
       - path: Sources
       - path: Resources
+      # THIRD_PARTY_NOTICES.txt, shared with Android: shown under Open-source licences.
+      - path: ../../licenses
+        buildPhase: resources
       - path: ScribaticCore
         buildPhase: none      # headers are consumed via the module map only
     dependencies:

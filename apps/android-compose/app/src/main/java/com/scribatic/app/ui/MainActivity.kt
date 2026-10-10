@@ -41,6 +41,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.ui.graphics.Color
 import com.scribatic.app.audio.KeepRecordings
+import com.scribatic.app.audio.SpeakerIdentification
 import com.scribatic.app.engine.Backup
 import com.scribatic.app.share.ShareFiles
 import androidx.compose.foundation.text.KeyboardOptions
@@ -93,6 +94,8 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.heading
@@ -203,7 +206,6 @@ private fun ScribaticApp(viewModel: TranscriptionViewModel = viewModel()) {
     Box(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
         when (val screen = state.screen) {
             Screen.Models -> ModelsScreen(state, viewModel)
-            Screen.ModelFiles -> ModelFilesScreen(state, viewModel)
             Screen.Notes -> NotesScreen(state, viewModel)
             Screen.Recorder -> RecorderScreen(state, viewModel)
             is Screen.Note -> NoteScreen(screen.id, state, viewModel)
@@ -456,20 +458,16 @@ private fun ConfirmDeleteNote(onConfirm: () -> Unit, onDismiss: () -> Unit) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ModelsScreen(state: TranscriptUiState, viewModel: TranscriptionViewModel) {
-    // Installing from files is deliberately NOT on this screen: next to a
-    // download already in progress, a second way to get the same files reads
-    // as a choice the user has to make. It has its own screen, offered here
-    // only when Play can't provide the models, or chosen from the menu.
     val c = Scribatic.colors
     val context = LocalContext.current
     var confirmLeaveOut by remember { mutableStateOf<ModelRow?>(null) }
     var choosingLanguage by remember { mutableStateOf(false) }
-    var menu by remember { mutableStateOf(false) }
+    var speakers by remember { mutableStateOf(SpeakerIdentification.current(context)) }
     val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     // Play's own "download over mobile data?" sheet; the result arrives as pack
     // state updates, so nothing is done with it here.
     val playConfirm = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) {}
-    val wantedBytes = state.models.filter { it.wanted }.sumOf { it.spec.sizeBytes }
+    val wantedBytes = state.models.filter { it.wanted }.sumOf { it.bytes }
     val engineRunning = state.phase in setOf(Phase.READY, Phase.RECORDING, Phase.PAUSED, Phase.PROCESSING)
 
     Scaffold(
@@ -480,21 +478,6 @@ private fun ModelsScreen(state: TranscriptUiState, viewModel: TranscriptionViewM
             LargeTopAppBar(
                 title = { Text("Models") },
                 navigationIcon = { if (engineRunning) BackButton("Back to notes") { viewModel.back() } },
-                actions = {
-                    Box {
-                        IconButton(onClick = { menu = true }) { Icon(Icons.more, contentDescription = "More options") }
-                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                            DropdownMenuItem(
-                                text = { Text("Install from files…") },
-                                leadingIcon = { Icon(Icons.folder, contentDescription = null) },
-                                onClick = {
-                                    menu = false
-                                    viewModel.openModelFiles()
-                                },
-                            )
-                        }
-                    }
-                },
                 windowInsets = WindowInsets(0),
                 colors = barColors(),
                 scrollBehavior = scroll,
@@ -516,22 +499,24 @@ private fun ModelsScreen(state: TranscriptUiState, viewModel: TranscriptionViewM
                     if (state.playNeedsConfirmation) {
                         SecondaryButton("Continue in Google Play", { viewModel.confirmPlayDownload(playConfirm) }, Modifier.fillMaxWidth())
                     }
-                    // The fallback, only once the store route has failed.
+                    // The models come only from Google Play: nothing else hosts them.
                     if (state.storeUnavailable) {
                         Text("Google Play download unavailable", style = MaterialTheme.typography.titleSmall, color = c.ink)
                         Text(
-                            "The models couldn't be downloaded from Google Play on this phone. You can download " +
-                                "them yourself and install them from files instead.",
+                            if (state.playDelivery) "The models couldn't be downloaded from Google Play. Check the connection, then try again."
+                            else "This copy of Scribatic wasn't installed from Google Play, so it can't download its models. Install it from Google Play.",
                             style = MaterialTheme.typography.bodySmall,
                             color = c.inkMuted,
                         )
-                        SecondaryButton("Install from files", viewModel::openModelFiles, Modifier.fillMaxWidth(), icon = Icons.folder)
+                        if (state.playDelivery) {
+                            SecondaryButton("Try again", viewModel::retryPlayDelivery, Modifier.fillMaxWidth())
+                        }
                     }
                     PrimaryButton(
                         "Continue",
                         viewModel::continueFromModels,
                         Modifier.fillMaxWidth(),
-                        enabled = state.modelsReady && state.importing == null,
+                        enabled = state.modelsReady,
                     )
                 }
             }
@@ -546,7 +531,7 @@ private fun ModelsScreen(state: TranscriptUiState, viewModel: TranscriptionViewM
                     color = c.inkMuted,
                     modifier = Modifier.padding(horizontal = 16.dp),
                 )
-                SectionHeader("Spoken language")
+                SectionHeader("Transcription")
                 Row(
                     Modifier
                         .padding(horizontal = 16.dp)
@@ -562,12 +547,36 @@ private fun ModelsScreen(state: TranscriptUiState, viewModel: TranscriptionViewM
                     Column(Modifier.weight(1f)) {
                         Text(languageName(state.spokenLanguage), style = MaterialTheme.typography.bodyLarge, color = c.ink)
                         Text(
-                            if (state.spokenLanguage == AUTO_LANGUAGE) "Each recording's language is worked out from its first words."
-                            else "Every recording is transcribed as ${languageName(state.spokenLanguage)}.",
+                            if (state.spokenLanguage == AUTO_LANGUAGE) "Each recording's language is worked out from its first words. English is supported; other languages are experimental."
+                            else if (state.spokenLanguage == "en") "Every recording is transcribed as English."
+                            else "Every recording is transcribed as ${languageName(state.spokenLanguage)}. Experimental: results may be poor.",
                             style = MaterialTheme.typography.bodySmall,
                             color = c.inkMuted,
                         )
                     }
+                }
+                Column(
+                    Modifier
+                        .padding(start = 16.dp, end = 16.dp, top = 8.dp)
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(c.surfaceRaised)
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                ) {
+                    Text("Identify speakers", style = MaterialTheme.typography.bodyLarge, color = c.ink)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                        SpeakerIdentification.entries.forEach { option ->
+                            FilterChip(
+                                selected = speakers == option,
+                                onClick = {
+                                    speakers = option
+                                    SpeakerIdentification.set(context, option)
+                                },
+                                label = { Text(option.label) },
+                            )
+                        }
+                    }
+                    Text(speakers.explanation, style = MaterialTheme.typography.bodySmall, color = c.inkMuted, modifier = Modifier.padding(top = 8.dp))
                 }
                 SectionHeader("Models", "${Formatter.formatShortFileSize(context, wantedBytes)} selected")
             }
@@ -583,6 +592,7 @@ private fun ModelsScreen(state: TranscriptUiState, viewModel: TranscriptionViewM
             }
             item { StorageSection(viewModel) }
             if (viewModel.canBackUp) item { BackupSection(state, viewModel) }
+            item { LicencesSection() }
         }
     }
 
@@ -605,6 +615,9 @@ private fun ModelsScreen(state: TranscriptUiState, viewModel: TranscriptionViewM
                         ) {
                             RadioButton(selected = code == state.spokenLanguage, onClick = null)
                             Text(languageName(code), modifier = Modifier.padding(start = 12.dp), color = c.ink)
+                            if (code != AUTO_LANGUAGE && code != "en") {
+                                Text("experimental", modifier = Modifier.padding(start = 8.dp), style = MaterialTheme.typography.bodySmall, color = c.inkMuted)
+                            }
                         }
                     }
                 }
@@ -621,7 +634,7 @@ private fun ModelsScreen(state: TranscriptUiState, viewModel: TranscriptionViewM
             text = {
                 Text(
                     row.spec.withoutIt +
-                        if (row.installed) " Its ${Formatter.formatShortFileSize(context, row.spec.sizeBytes)} is removed from this phone." else "",
+                        if (row.installed) " Its ${Formatter.formatShortFileSize(context, row.bytes)} is removed from this phone." else "",
                 )
             },
             confirmButton = {
@@ -648,7 +661,7 @@ private fun ModelRowView(row: ModelRow, onWantedChange: (Boolean) -> Unit) {
             Text(row.spec.title, style = MaterialTheme.typography.titleMedium, color = c.ink)
             Text(row.spec.purpose, style = MaterialTheme.typography.bodyMedium, color = c.inkMuted)
             Text(
-                "${row.spec.fileName} · ${Formatter.formatShortFileSize(context, row.spec.sizeBytes)}",
+                "${row.files.joinToString(" + ")} · ${Formatter.formatShortFileSize(context, row.bytes)}",
                 style = MaterialTheme.typography.labelMedium,
                 color = c.inkSoft,
             )
@@ -665,115 +678,6 @@ private fun ModelRowView(row: ModelRow, onWantedChange: (Boolean) -> Unit) {
             }
         } else {
             Switch(checked = row.wanted, onCheckedChange = onWantedChange)
-        }
-    }
-}
-
-/**
- * Installing the models from files: download them in a browser from the
- * project's release page, then import them. A separate screen from the Play
- * download on purpose — see [ModelsScreen].
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ModelFilesScreen(state: TranscriptUiState, viewModel: TranscriptionViewModel) {
-    val c = Scribatic.colors
-    val context = LocalContext.current
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        viewModel.importModels(uris)
-    }
-    val wanted = state.models.filter { it.wanted }
-
-    Scaffold(
-        containerColor = c.paper,
-        contentWindowInsets = WindowInsets(0),
-        topBar = {
-            TopAppBar(
-                title = { Text("Install from files") },
-                navigationIcon = { BackButton("Back to models") { viewModel.back() } },
-                windowInsets = WindowInsets(0),
-                colors = barColors(),
-            )
-        },
-    ) { padding ->
-        LazyColumn(Modifier.padding(padding).fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-            item {
-                Text(
-                    "Download the model files in your browser, then import them here. Each file is " +
-                        "checked before it is used, so its name doesn't matter.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = c.inkMuted,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                )
-                SectionHeader("Steps")
-                Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    StepRow(1, "Download model files", "Opens the release page in your browser.", Icons.openInBrowser, c.inkMuted) {
-                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(viewModel.modelDownloadPage())))
-                    }
-                    StepRow(2, "Import files…", "Pick the downloaded files.", Icons.folder, c.accentStrong, enabled = state.importing == null) {
-                        picker.launch(arrayOf("*/*"))
-                    }
-                    state.importing?.let {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.padding(top = 4.dp),
-                        ) {
-                            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = c.accent, trackColor = c.lineStrong)
-                            Text(it, style = MaterialTheme.typography.labelLarge, color = c.inkMuted)
-                        }
-                    }
-                }
-                SectionHeader("Needed", "${wanted.count { it.installed }} of ${wanted.size} installed")
-                Column(Modifier.padding(horizontal = 16.dp).clip(RoundedCornerShape(12.dp)).background(c.surfaceRaised)) {
-                    wanted.forEachIndexed { index, row ->
-                        Row(
-                            Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(row.spec.fileName, style = MaterialTheme.typography.labelMedium, color = c.ink, modifier = Modifier.weight(1f))
-                            if (row.installed) {
-                                MetaChip(Icons.installed, "Installed", color = c.success)
-                            } else {
-                                Text(Formatter.formatShortFileSize(context, row.spec.sizeBytes), style = MaterialTheme.typography.labelMedium, color = c.inkMuted)
-                            }
-                        }
-                        if (index < wanted.lastIndex) HorizontalDivider(color = c.line)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun StepRow(
-    number: Int,
-    title: String,
-    help: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    iconTint: androidx.compose.ui.graphics.Color,
-    enabled: Boolean = true,
-    onClick: () -> Unit,
-) {
-    val c = Scribatic.colors
-    Surface(onClick = onClick, enabled = enabled, shape = RoundedCornerShape(12.dp), color = c.surfaceRaised) {
-        Row(
-            Modifier.fillMaxWidth().padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Box(
-                Modifier.size(28.dp).clip(CircleShape).background(c.fillSecondary),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("$number", style = MaterialTheme.typography.labelMedium, color = c.inkMuted)
-            }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(title, style = MaterialTheme.typography.titleMedium, color = c.ink)
-                Text(help, style = MaterialTheme.typography.bodySmall, color = c.inkMuted)
-            }
-            Icon(icon, contentDescription = null, tint = iconTint)
         }
     }
 }
@@ -1033,7 +937,7 @@ private fun NoteScreen(id: Long, state: TranscriptUiState, viewModel: Transcript
                                 val danger = MenuDefaults.itemColors(textColor = c.danger, leadingIconColor = c.danger)
                                 if (note.audioPath != null && state.canIdentifySpeakers) {
                                     DropdownMenuItem(
-                                        text = { Text("Identify speakers again…") },
+                                        text = { Text(if (note.speakerCount > 0) "Identify speakers again…" else "Identify speakers…") },
                                         leadingIcon = { Icon(Icons.identifySpeakers, contentDescription = null) },
                                         onClick = {
                                             menu = false
@@ -1552,6 +1456,7 @@ private fun NoteBody(
                         Text(busy, style = MaterialTheme.typography.labelLarge, color = c.inkMuted)
                     }
                 }
+                val hasText = note.hasText   // an imported note has no live preview to improve
                 if (finishing != null) {
                     val (step, progress) = finishing
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1566,15 +1471,19 @@ private fun NoteBody(
                             LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = c.accent, trackColor = c.fillSecondary)
                         }
                         Text(
-                            "You're reading the live preview; the final transcript replaces it when this is done.",
+                            when {
+                                !hasText -> "The transcript appears here when this is done."
+                                !note.refined -> "You're reading the live preview; the final transcript replaces it when this is done."
+                                else -> "Each part is marked with who said it when this is done."
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = c.inkSoft,
                         )
                     }
                 } else if (canImprove) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Live preview", style = MaterialTheme.typography.labelLarge, color = c.inkMuted, modifier = Modifier.weight(1f))
-                        TextButton(onClick = onImprove) { Text("Improve transcript") }
+                        Text(if (hasText) "Live preview" else "No transcript yet", style = MaterialTheme.typography.labelLarge, color = c.inkMuted, modifier = Modifier.weight(1f))
+                        TextButton(onClick = onImprove) { Text(if (hasText) "Improve transcript" else "Transcribe") }
                     }
                 }
             }
@@ -1757,6 +1666,47 @@ private fun StorageSection(viewModel: TranscriptionViewModel) {
  * with a passphrase only the user knows; Scribatic never uploads it, and keeps
  * no copy of the passphrase.
  */
+/** The notices for the software and models the app is built on (licenses/ at the repository root). */
+@Composable
+private fun LicencesSection() {
+    val c = Scribatic.colors
+    val context = LocalContext.current
+    var open by remember { mutableStateOf(false) }
+    Column {
+        SectionHeader("About")
+        Row(
+            Modifier
+                .padding(horizontal = 16.dp)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(c.surfaceRaised)
+                .clickable(onClickLabel = "Show the licences") { open = true }
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+        ) {
+            Text("Open-source licences", style = MaterialTheme.typography.bodyLarge, color = c.ink)
+        }
+    }
+    if (open) {
+        // Paragraphs, so the 380 KB of text is laid out only as it scrolls into view.
+        val paragraphs = remember {
+            context.assets.open("THIRD_PARTY_NOTICES.txt").bufferedReader().use { it.readText() }.split("\n\n")
+        }
+        Dialog(onDismissRequest = { open = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            Surface(Modifier.fillMaxSize(), color = c.paper) {
+                Column {
+                    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Open-source licences", style = MaterialTheme.typography.titleMedium, color = c.ink, modifier = Modifier.weight(1f))
+                        TextButton(onClick = { open = false }) { Text("Close") }
+                    }
+                    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+                        items(paragraphs) { Text(it, style = MaterialTheme.typography.bodySmall, color = c.ink, modifier = Modifier.padding(vertical = 4.dp)) }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun BackupSection(state: TranscriptUiState, viewModel: TranscriptionViewModel) {
     val c = Scribatic.colors

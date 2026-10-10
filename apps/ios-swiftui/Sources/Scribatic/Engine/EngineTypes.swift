@@ -103,6 +103,8 @@ struct NoteDetailValue: Identifiable, Sendable, Equatable {
     /// Cards the user corrected: rebuilding the transcript from recognition
     /// (speakers again, or the accurate pass) would lose them.
     var corrections: Int { segments.filter { $0.edited && !$0.text.isEmpty }.count }
+    /// Any words at all: an imported recording has none until it is transcribed.
+    var hasText: Bool { segments.contains { !$0.text.isEmpty } }
 
     /// What the note is shown as: a lecture has one voice, so no speaker cards.
     var isLecture: Bool {
@@ -191,7 +193,7 @@ extension ScribaticEngine {
                 return url.path(percentEncoded: false)
             }
             configuration.whisperModelPath = path("ggml-base.bin", configuration.whisperModelPath)
-            configuration.llamaModelPath = path("insight-q4_k_m.gguf", configuration.llamaModelPath)
+            configuration.llamaModelPath = path("insight-4b-00001-of-00002.gguf", configuration.llamaModelPath)
             configuration.embedModelPath = path("embed-minilm-l6-v2.gguf", configuration.embedModelPath)
             configuration.segmentationModelPath = path("speaker-segmentation.onnx", configuration.segmentationModelPath)
             configuration.speakerEmbeddingModelPath = path("speaker-embedding.onnx", configuration.speakerEmbeddingModelPath)
@@ -213,12 +215,13 @@ extension ScribaticEngine {
             // ModelNotFound no matter where the weights actually were.
             let store = try Self.privateDirectory(support.appending(path: "store"))
             let recordings = try Self.privateDirectory(support.appending(path: "recordings"))
-            let models = ["ggml-base.bin", "insight-q4_k_m.gguf", "embed-minilm-l6-v2.gguf",
+            let models = ["ggml-base.bin", "insight-4b-00001-of-00002.gguf", "embed-minilm-l6-v2.gguf",
                           "speaker-segmentation.onnx", "speaker-embedding.onnx", "ggml-small-q8_0.bin"]
                 .map { support.appending(path: $0) }
             // Weights are re-downloadable and over a gigabyte; backing them
             // up is exactly what Apple's storage guidelines rule out.
-            for var model in models where FileManager.default.fileExists(atPath: model.path(percentEncoded: false)) {
+            let laterParts = ModelSpecValue.catalog().filter { !$0.partOf.isEmpty }.map { support.appending(path: $0.fileName) }
+            for var model in models + laterParts where FileManager.default.fileExists(atPath: model.path(percentEncoded: false)) {
                 try? Self.excludeFromBackup(&model)
             }
             return Configuration(
@@ -281,6 +284,8 @@ struct ModelSpecValue: Identifiable, Sendable, Equatable {
     let sizeBytes: Int64
     let sha256: String
     let required: Bool
+    /// A later part of a split model: the first part's `fileName`. Empty otherwise.
+    let partOf: String
 
     init(_ cxx: scribatic.core.ModelSpec) {
         self.fileName = String(cxx.fileName)
@@ -290,13 +295,10 @@ struct ModelSpecValue: Identifiable, Sendable, Equatable {
         self.sizeBytes = cxx.sizeBytes
         self.sha256 = String(cxx.sha256)
         self.required = cxx.required
+        self.partOf = String(cxx.partOf)
     }
 
     static func catalog() -> [ModelSpecValue] {
         scribatic.core.modelCatalog().map(ModelSpecValue.init)
-    }
-
-    static func downloadPage() -> URL? {
-        URL(string: String(scribatic.core.modelDownloadPage()))
     }
 }

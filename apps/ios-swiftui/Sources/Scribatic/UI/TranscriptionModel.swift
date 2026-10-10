@@ -96,6 +96,9 @@ final class TranscriptionModel {
         let spec: ModelSpecValue
         let installed: Bool
         let wanted: Bool
+        /// With any later parts of a split model.
+        var files: [String] = []
+        var bytes: Int64 = 0
     }
 
     private(set) var models: [ModelRow] = []
@@ -103,11 +106,9 @@ final class TranscriptionModel {
     private(set) var modelsNeeded = false
     /// Setup opened later from the notes list, as a sheet.
     var showingModels = false
-    /// "Checking ggml-base.bin — 40%" while an import runs.
-    private(set) var importing: String?
     /// "Downloading models — 40%" while Apple-hosted packs download.
     private(set) var packStatus: String?
-    /// Packs could not be fetched from Apple: offer importing instead.
+    /// Packs could not be fetched from Apple: the setup screen offers to try again.
     private(set) var packsUnavailable = false
     /// The pack download under way, so switching its model off can stop it.
     @ObservationIgnored private var packDownload: (id: String, task: Task<Void, Error>)?
@@ -189,6 +190,9 @@ final class TranscriptionModel {
             await refreshNotes()
             phase = .ready
             Task { await settleAllRecordings() }
+            // A model asked for in an earlier session (the 2.5 GB summaries
+            // one, closed mid-download) is fetched again, not left "downloading".
+            Task { await fetchWantedPacks() }
         } catch {
             // Say which model and why, not only the engine's status: this is
             // what a tester copies into a report.
@@ -202,16 +206,20 @@ final class TranscriptionModel {
 
     /// Optional models are offered only when an installed add-on uses them
     /// (`Extensions.optionalModels`): otherwise the summaries model would be
-    /// a 1.2 GB download that does nothing.
+    /// a 2.5 GB download that does nothing.
     func refreshModels() {
         Extensions.install()
         models = installer.catalog
-            .filter { $0.required || Extensions.optionalModels.contains($0.fileName) }
-            .map { ModelRow(spec: $0, installed: installer.isInstalled($0), wanted: installer.isWanted($0)) }
+            .filter { ($0.required || Extensions.optionalModels.contains($0.fileName)) && $0.partOf.isEmpty }
+            .map { spec in
+                let all = [spec] + installer.partsOf(spec)
+                return ModelRow(spec: spec, installed: installer.isInstalled(spec), wanted: installer.isWanted(spec),
+                                files: all.map(\.fileName), bytes: all.map(\.sizeBytes).reduce(0, +))
+            }
     }
 
     /// Leaving out an optional model also deletes it if installed: the only
-    /// reason to decline the instruct model is its 1.2 GB.
+    /// reason to decline the instruct model is its 2.5 GB.
     func setModelWanted(_ spec: ModelSpecValue, _ wanted: Bool) {
         installer.setWanted(spec, wanted)
         refreshModels()
@@ -230,13 +238,13 @@ final class TranscriptionModel {
 
     /// Fetches every wanted pack not yet on the device from Apple, reporting
     /// progress. If this install cannot get packs at all, flags it so the
-    /// setup screen leads with importing.
+    /// setup screen offers to try again; the models come only from Apple.
     func fetchWantedPacks() async {
         let missing = Set(models.filter { $0.wanted && !$0.installed }.map { ModelInstaller.packID(for: $0.spec) })
         guard !missing.isEmpty, packStatus == nil else { return }
 
         // Required pack first: the app can start as soon as it lands, and the
-        // 1.2 GB optional one must not keep it waiting.
+        // 2.5 GB optional one must not keep it waiting.
         for id in missing.sorted(by: { a, _ in a == "models-core" }) {
             // Never cancelled: it ends itself on the pack's last update. On
             // cancellation the system's sequence throws CancellationError
@@ -269,7 +277,17 @@ final class TranscriptionModel {
             } catch {
                 // A cancel is the user leaving the model out, not a sign that
                 // this install can't get packs.
-                if !download.isCancelled { packsUnavailable = true }
+                if !download.isCancelled {
+                    packsUnavailable = true
+                    // An optional model is no longer waited for: its feature
+                    // offers the download again, and asking again retries.
+                    if id != "models-core" {
+                        for model in models where !model.spec.required && ModelInstaller.packID(for: model.spec) == id {
+                            installer.setWanted(model.spec, false)
+                        }
+                        noteError = "The summaries model couldn't be downloaded. Check the connection and try again."
+                    }
+                }
             }
             packDownload = nil
             refreshModels()
@@ -283,27 +301,10 @@ final class TranscriptionModel {
         if engine == nil, modelsNeeded, modelsReady { await continueFromModels() }
     }
 
-    func importModels(_ urls: [URL]) async {
-        guard importing == nil, !urls.isEmpty else { return }
-        let installer = self.installer
-        var problems: [String] = []
-        for url in urls {
-            let outcome = await Task.detached(priority: .userInitiated) {
-                installer.importFile(url) { name, fraction in
-                    Task { @MainActor [weak self] in
-                        self?.importing = "Checking \(name) — \(Int(fraction * 100))%"
-                    }
-                }
-            }.value
-            switch outcome {
-            case let .notAModel(name): problems.append("\(name) is not one of the model files.")
-            case let .failed(name, reason): problems.append("\(name): \(reason)")
-            case .installed, .alreadyInstalled: break
-            }
-        }
-        importing = nil
-        refreshModels()
-        if !problems.isEmpty { noteError = problems.joined(separator: "\n") }
+    /// After Apple could not deliver the models: ask again.
+    func retryPacks() {
+        packsUnavailable = false
+        Task { await fetchWantedPacks() }
     }
 
     /// From the setup screen: start the engine, or just close if it runs.
@@ -649,7 +650,9 @@ final class TranscriptionModel {
             }
             do {
                 try await RecordingFiles.withEngineAudio(recording) { audio in
-                    await self.finishSteps(id, engine: engine, audio: audio)
+                    // An imported recording has no live preview to improve: its
+                    // transcript is written for the first time.
+                    await self.finishSteps(id, engine: engine, audio: audio, fresh: !note.hasText)
                 }
             } catch {
                 self.noteError = "The recording could not be read: \(error.localizedDescription)"
@@ -664,9 +667,9 @@ final class TranscriptionModel {
 
     /// Improving the transcript, then identifying speakers: `audio` is the
     /// recording decoded for the engine, or nil when it reads the WAV itself.
-    private func finishSteps(_ id: Int64, engine: ScribaticEngine, audio: URL?) async {
+    private func finishSteps(_ id: Int64, engine: ScribaticEngine, audio: URL?, fresh: Bool) async {
             if self.canRefine {
-                self.finishing(id, "Improving transcript", 0)
+                self.finishing(id, fresh ? "Transcribing" : "Improving transcript", 0)
                 let poll = Task { [weak self] in
                     while !Task.isCancelled {
                         try? await Task.sleep(for: .milliseconds(400))
@@ -677,12 +680,13 @@ final class TranscriptionModel {
                 do {
                     try await engine.refineTranscript(id, audio: audio)
                 } catch {
-                    self.noteError = "The transcript could not be improved: \(error)"
+                    self.noteError = fresh ? "The recording could not be transcribed: \(error)"
+                                           : "The transcript could not be improved: \(error)"
                 }
                 poll.cancel()
                 await self.noteChanged()
             }
-            if self.canIdentifySpeakers {
+            if self.canIdentifySpeakers, SpeakerIdentification.current == .automatic {
                 self.finishing(id, "Identifying speakers", -1)
                 do {
                     try await engine.identifySpeakers(id, audio: audio)

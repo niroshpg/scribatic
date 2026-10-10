@@ -33,6 +33,7 @@ import android.provider.OpenableColumns
 import com.scribatic.app.audio.AudioImport
 import com.scribatic.app.audio.KeepRecordings
 import com.scribatic.app.audio.RecordingFiles
+import com.scribatic.app.audio.SpeakerIdentification
 import java.io.IOException
 import com.scribatic.app.engine.DeviceStatus
 import com.scribatic.app.engine.Backup
@@ -53,7 +54,6 @@ sealed interface Screen {
     /** First run, or any time a wanted model is missing; also reachable later. */
     data object Models : Screen
     /** Installing from files: download page + import. Its own screen, see ModelsScreen. */
-    data object ModelFiles : Screen
     data object Notes : Screen
     data object Recorder : Screen
     data class Note(val id: Long) : Screen
@@ -62,7 +62,14 @@ sealed interface Screen {
 }
 
 /** One row of the model setup screen. */
-data class ModelRow(val spec: ModelSpec, val installed: Boolean, val wanted: Boolean)
+/** One model as the user sees it; [files] and [bytes] include any later parts of a split model. */
+data class ModelRow(
+    val spec: ModelSpec,
+    val installed: Boolean,
+    val wanted: Boolean,
+    val files: List<String> = listOf(spec.fileName),
+    val bytes: Long = spec.sizeBytes,
+)
 
 /** What the activity should hand to the system share sheet, once. */
 sealed interface ShareRequest {
@@ -104,8 +111,6 @@ data class TranscriptUiState(
     val message: String? = null,
     val share: ShareRequest? = null,
     val models: List<ModelRow> = emptyList(),
-    /** "Checking ggml-base.bin — 40%" while an import runs. */
-    val importing: String? = null,
     /** This install came from Play, so the models arrive as asset packs. */
     val playDelivery: Boolean = false,
     /** "Downloading from Google Play — 40%", or null when idle. */
@@ -235,7 +240,7 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
             }
             val config = EngineConfig(
                 whisperModelPath = path("ggml-base.bin"),
-                llamaModelPath = path("insight-q4_k_m.gguf"),
+                llamaModelPath = path("insight-4b-00001-of-00002.gguf"),
                 embedModelPath = path("embed-minilm-l6-v2.gguf"),
                 databasePath = File(File(filesDir, "store").apply { mkdirs() }, "scribatic.sqlite").absolutePath,
                 recordingsDirectory = recordingsDir.absolutePath,
@@ -278,7 +283,7 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
     /**
      * On a Play install, asks for every wanted pack that is not already on the
      * device and follows their progress. On any other install, does nothing,
-     * and the setup screen offers importing instead.
+     * and the setup screen says the models come only from Google Play.
      */
     private suspend fun startPlayDelivery() {
         val states = packs.states()
@@ -320,12 +325,13 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
     private fun refreshModels() {
         // An optional model is offered only when an add-on that uses it is installed.
         val rows = installer.catalog
-            .filter { it.required || it.fileName in Extensions.optionalModels }
-            .map { ModelRow(it, installer.isInstalled(it), installer.isWanted(it)) }
+            .filter { (it.required || it.fileName in Extensions.optionalModels) && it.partOf.isEmpty() }
+            .map { spec ->
+                val all = listOf(spec) + installer.partsOf(spec)
+                ModelRow(spec, installer.isInstalled(spec), installer.isWanted(spec), all.map { it.fileName }, all.sumOf { it.sizeBytes })
+            }
         _uiState.update { it.copy(models = rows) }
     }
-
-    fun openModelFiles() = _uiState.update { it.copy(screen = Screen.ModelFiles) }
 
     fun openModels() {
         _uiState.update { it.copy(screen = Screen.Models) }
@@ -334,54 +340,34 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
 
     /**
      * Leaving out an optional model also deletes it if it is installed: the
-     * only reason to decline the instruct model is its 1.2 GB.
+     * only reason to decline the instruct model is its 2.5 GB.
      */
     fun setModelWanted(spec: ModelSpec, wanted: Boolean) {
-        // Off the main thread: removing the instruct model deletes 1.2 GB.
+        // Off the main thread: removing the instruct model deletes 2.5 GB.
         viewModelScope.launch(Dispatchers.IO) {
             installer.setWanted(spec, wanted)
             if (!wanted) installer.remove(spec)
             if (_uiState.value.playDelivery) {
-                val pack = packs.packFor(spec)
+                // A split model's parts come in packs of their own.
+                val packList = (listOf(spec) + installer.partsOf(spec)).map(packs::packFor).distinct()
                 if (wanted) {
-                    packs.fetch(listOf(pack))
+                    packs.fetch(packList)
                 } else {
                     // Removing alone leaves a download that is under way running.
-                    packs.cancel(pack)
-                    packs.remove(pack)
+                    for (pack in packList) {
+                        packs.cancel(pack)
+                        packs.remove(pack)
+                    }
                 }
             }
             refreshModels()
         }
     }
 
-    fun importModels(uris: List<Uri>) {
-        if (uris.isEmpty() || _uiState.value.importing != null) return
-        viewModelScope.launch(Dispatchers.IO) {
-            val problems = mutableListOf<String>()
-            for (uri in uris) {
-                val result = installer.import(uri) { name, fraction ->
-                    _uiState.update { it.copy(importing = "Checking $name — ${(fraction * 100).toInt()}%") }
-                }
-                when (result) {
-                    is ModelInstaller.Result.NotAModel ->
-                        problems += "${result.name} is not one of the model files."
-                    is ModelInstaller.Result.Failed ->
-                        problems += "${result.name}: ${result.reason}."
-                    else -> Unit
-                }
-            }
-            refreshModels()
-            _uiState.update {
-                it.copy(
-                    importing = null,
-                    message = problems.takeIf { p -> p.isNotEmpty() }?.joinToString("\n"),
-                    // Everything needed is in: back to the setup screen, whose
-                    // Continue is now enabled.
-                    screen = if (it.modelsReady && it.screen == Screen.ModelFiles) Screen.Models else it.screen,
-                )
-            }
-        }
+    /** After Play could not deliver the models: ask it again. */
+    fun retryPlayDelivery() {
+        _uiState.update { it.copy(playFailed = false) }
+        viewModelScope.launch(Dispatchers.IO) { startPlayDelivery() }
     }
 
     /** From the setup screen: start the engine, or just return if it runs. */
@@ -390,8 +376,6 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
         _uiState.update { it.copy(screen = Screen.Notes) }
         prepare()
     }
-
-    fun modelDownloadPage(): String = TranscriptionEngine.modelDownloadPage()
 
     // -- Navigation ---------------------------------------------------------------
 
@@ -635,10 +619,6 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
     fun back(): Boolean {
         val state = _uiState.value
         if (state.screen == Screen.Notes) return false
-        if (state.screen == Screen.ModelFiles) {
-            _uiState.update { it.copy(screen = Screen.Models) }
-            return true
-        }
         if (state.screen == Screen.Models) {
             // Nothing behind the setup screen until the engine is running.
             if (engine == null) return false
@@ -819,22 +799,27 @@ class TranscriptionViewModel(application: Application) : AndroidViewModel(applic
     private suspend fun finishSteps(engine: TranscriptionEngine, id: Long, note: NoteDetail, audio: File?): String? =
         coroutineScope {
             var message: String? = null
+            // An imported recording has no live preview to improve: its
+            // transcript is written for the first time.
+            val step = if (note.hasText) "Improving transcript" else "Transcribing"
             if (engine.canRefine() && note.audioPath != null) {
-                finishing(id, "Improving transcript", 0f)
+                finishing(id, step, 0f)
                 val poll = launch {
                     while (true) {
                         delay(400)
                         val progress = engine.refineProgress()
                         _uiState.update { if (it.finishingNoteId == id) it.copy(finishingProgress = progress) else it }
-                        if (!recordingNow()) TranscriptionService.saving(getApplication(), "Improving transcript — ${(progress * 100).toInt()}%")
+                        if (!recordingNow()) TranscriptionService.saving(getApplication(), "$step — ${(progress * 100).toInt()}%")
                     }
                 }
                 val status = engine.refineTranscript(id, audio)
                 poll.cancel()
-                if (status != EngineStatus.OK && status != EngineStatus.CANCELLED) message = "The transcript could not be improved: $status"
+                if (status != EngineStatus.OK && status != EngineStatus.CANCELLED) message = if (step == "Transcribing") "The recording could not be transcribed: $status" else "The transcript could not be improved: $status"
                 reloadNote(id)
             }
-            if (_uiState.value.canIdentifySpeakers && note.audioPath != null) {
+            if (_uiState.value.canIdentifySpeakers && note.audioPath != null &&
+                SpeakerIdentification.current(getApplication()) == SpeakerIdentification.AUTOMATIC
+            ) {
                 finishing(id, "Identifying speakers", -1f)
                 val status = engine.identifySpeakers(id, audio = audio)
                 if (status != EngineStatus.OK) message = "Speakers could not be identified: $status"

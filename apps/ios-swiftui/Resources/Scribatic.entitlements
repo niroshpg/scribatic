@@ -8,5 +8,13 @@
 	<array>
 		<string>group.com.scribatic.app</string>
 	</array>
+	<!-- Pro's model is 2.5 GB, mapped from its files (pro/core/Llm.hpp). The
+	     default address space refuses a mapping that size ("mmap failed:
+	     Cannot allocate memory", iPad 9th gen, 2026-10-10). -->
+	<key>com.apple.developer.kernel.extended-virtual-addressing</key>
+	<true/>
+	<!-- More memory before iOS ends the app while that model runs. -->
+	<key>com.apple.developer.kernel.increased-memory-limit</key>
+	<true/>
 </dict>
 </plist>

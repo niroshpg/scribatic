@@ -103,6 +103,10 @@ data class NoteDetail(
     val corrections: Int
         get() = segments.count { it.edited && it.text.isNotEmpty() }
 
+    /** Any words at all: an imported recording has none until it is transcribed. */
+    val hasText: Boolean
+        get() = segments.any { it.text.isNotEmpty() }
+
     /** What the note is shown as: a lecture has one voice, so no speaker cards. */
     val isLecture: Boolean
         get() = when (layout) {
@@ -143,4 +147,6 @@ data class ModelSpec(
     val sizeBytes: Long,
     val sha256: String,
     val required: Boolean,
+    /** A later part of a split model: the first part's [fileName]. Empty otherwise. */
+    val partOf: String = "",
 )

@@ -11,10 +11,10 @@ import UniformTypeIdentifiers
 struct ModelSetupView: View {
     @Bindable var model: TranscriptionModel
     @State private var confirmLeaveOut: TranscriptionModel.ModelRow?
-    @State private var showingManual = false
+    @State private var speakers = SpeakerIdentification.current
 
     private var selectedBytes: Int64 {
-        model.models.filter(\.wanted).map(\.spec.sizeBytes).reduce(0, +)
+        model.models.filter(\.wanted).map(\.bytes).reduce(0, +)
     }
 
     var body: some View {
@@ -31,15 +31,17 @@ struct ModelSetupView: View {
                 Picker(selection: Binding(get: { model.spokenLanguage }, set: { model.setSpokenLanguage($0) })) {
                     Text(languageName(autoLanguage)).tag(autoLanguage)
                     ForEach(spokenLanguages.sorted { languageName($0) < languageName($1) }, id: \.self) { code in
-                        Text(languageName(code)).tag(code)
+                        Text(code == "en" ? languageName(code) : "\(languageName(code)) · experimental").tag(code)
                     }
                 } label: {
                     Label {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Spoken language").font(.uiBody).foregroundStyle(Color.ink)
                             Text(model.spokenLanguage == autoLanguage
-                                 ? "Each recording's language is worked out from its first words."
-                                 : "Every recording is transcribed as \(languageName(model.spokenLanguage)).")
+                                 ? "Each recording's language is worked out from its first words. English is supported; other languages are experimental."
+                                 : model.spokenLanguage == "en"
+                                 ? "Every recording is transcribed as English."
+                                 : "Every recording is transcribed as \(languageName(model.spokenLanguage)). Experimental: results may be poor.")
                                 .font(.uiBodySmall)
                                 .foregroundStyle(Color.inkMuted)
                         }
@@ -49,8 +51,18 @@ struct ModelSetupView: View {
                 }
                 .pickerStyle(.navigationLink)
                 .listRowBackground(Color.surfaceRaised)
+                Picker("Identify speakers", selection: $speakers) {
+                    ForEach(SpeakerIdentification.allCases) { Text($0.label).tag($0) }
+                }
+                .font(.uiBody)
+                .listRowBackground(Color.surfaceRaised)
+                .onChange(of: speakers) { _, new in SpeakerIdentification.current = new }
             } header: {
-                SectionHeader(title: "Spoken language")
+                SectionHeader(title: "Transcription")
+            } footer: {
+                Text(speakers.explanation)
+                    .font(.uiCaption)
+                    .foregroundStyle(Color.inkMuted)
             }
 
             Section {
@@ -76,19 +88,24 @@ struct ModelSetupView: View {
                 BackupSection(model: model)
             }
 
-            // The fallback, only once the store route has failed.
+            Section {
+                NavigationLink("Open-source licences") { LicencesView() }
+                    .font(.uiBody)
+                    .foregroundStyle(Color.ink)
+                    .listRowBackground(Color.surfaceRaised)
+            } header: {
+                SectionHeader(title: "About")
+            }
+
+            // The models come only from the App Store: nothing else hosts them.
             if model.packsUnavailable {
                 Section {
-                    Button {
-                        showingManual = true
-                    } label: {
-                        Label("Install from files", systemImage: "folder")
-                    }
-                    .listRowBackground(Color.surfaceRaised)
+                    Button("Try again", systemImage: "arrow.clockwise") { model.retryPacks() }
+                        .listRowBackground(Color.surfaceRaised)
                 } header: {
                     SectionHeader(title: "App Store download unavailable")
                 } footer: {
-                    Text("The models couldn't be downloaded from the App Store on this device. You can download them yourself and install them from files instead.")
+                    Text("The models couldn't be downloaded from the App Store. Check the connection, then try again.")
                         .font(.uiCaption)
                         .foregroundStyle(Color.inkMuted)
                 }
@@ -106,14 +123,6 @@ struct ModelSetupView: View {
             }
         }
         .navigationTitle("Models")
-        .toolbar {
-            ToolbarItem(placement: .secondaryAction) {
-                Button("Install from files…", systemImage: "folder") { showingManual = true }
-            }
-        }
-        .navigationDestination(isPresented: $showingManual) {
-            ModelFilesView(model: model)
-        }
         .frame(maxWidth: 720)
         .frame(maxWidth: .infinity)
         .background(Color.paper)
@@ -132,7 +141,7 @@ struct ModelSetupView: View {
                     Text("Continue").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(PrimaryButtonStyle())
-                .disabled(!model.modelsReady || model.importing != nil)
+                .disabled(!model.modelsReady)
             }
             .padding(16)
             .frame(maxWidth: 720)
@@ -147,7 +156,7 @@ struct ModelSetupView: View {
             Button("Keep it", role: .cancel) {}
         } message: { row in
             Text(row.spec.withoutIt + (row.installed
-                ? " Its \(ByteCountFormatter.string(fromByteCount: row.spec.sizeBytes, countStyle: .file)) is removed from this device."
+                ? " Its \(ByteCountFormatter.string(fromByteCount: row.bytes, countStyle: .file)) is removed from this device."
                 : ""))
         }
         .onAppear { model.refreshModels() }
@@ -163,7 +172,7 @@ private struct ModelRowView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(row.spec.title).font(.uiTitle).foregroundStyle(Color.ink)
                 Text(row.spec.purpose).font(.uiBodySmall).foregroundStyle(Color.inkMuted)
-                Text("\(row.spec.fileName) · \(ByteCountFormatter.string(fromByteCount: row.spec.sizeBytes, countStyle: .file))")
+                Text("\(row.files.joined(separator: " + ")) · \(ByteCountFormatter.string(fromByteCount: row.bytes, countStyle: .file))")
                     .font(.timestamp)
                     .foregroundStyle(Color.inkSoft)
                 status.padding(.top, 2)
@@ -195,120 +204,6 @@ private struct ModelRowView: View {
 /// Installing the models from files: download them in Safari from the
 /// project's release page, then import them. A separate screen from the App
 /// Store download on purpose — see `ModelSetupView`.
-struct ModelFilesView: View {
-    @Bindable var model: TranscriptionModel
-    @Environment(\.openURL) private var openURL
-    @Environment(\.dismiss) private var dismiss
-    @State private var picking = false
-
-    private var needed: [TranscriptionModel.ModelRow] { model.models.filter(\.wanted) }
-
-    var body: some View {
-        List {
-            Section {
-                Text("Download the model files in Safari, then import them here. Each file is checked before it is used, so its name doesn't matter.")
-                    .font(.uiBodySmall)
-                    .foregroundStyle(Color.inkMuted)
-                    .listRowBackground(Color.paper)
-                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 4, trailing: 0))
-            }
-
-            // Numbered because it is a real sequence: download, then import.
-            Section {
-                StepRow(number: 1, title: "Download model files", help: "Opens the release page in Safari.",
-                        systemImage: "safari", tint: .inkMuted) {
-                    if let url = ModelSpecValue.downloadPage() { openURL(url) }
-                }
-                .listRowBackground(Color.surfaceRaised)
-                StepRow(number: 2, title: "Import files…", help: "Pick the downloaded files from Files.",
-                        systemImage: "square.and.arrow.down", tint: .accentStrong) {
-                    picking = true
-                }
-                .disabled(model.importing != nil)
-                .listRowBackground(Color.surfaceRaised)
-                if let importing = model.importing {
-                    HStack(spacing: 8) {
-                        ProgressView().controlSize(.small).tint(Color.accent)
-                        Text(importing).font(.uiLabel).foregroundStyle(Color.inkMuted)
-                    }
-                    .listRowBackground(Color.surfaceRaised)
-                }
-            } header: {
-                SectionHeader(title: "Steps")
-            }
-
-            Section {
-                ForEach(needed) { row in
-                    HStack {
-                        Text(row.spec.fileName).font(.timestamp).foregroundStyle(Color.ink)
-                        Spacer()
-                        if row.installed {
-                            MetaChip(systemImage: "checkmark.circle.fill", text: "Installed", color: .success)
-                        } else {
-                            Text(ByteCountFormatter.string(fromByteCount: row.spec.sizeBytes, countStyle: .file))
-                                .font(.timestamp)
-                                .foregroundStyle(Color.inkMuted)
-                        }
-                    }
-                    .listRowBackground(Color.surfaceRaised)
-                }
-            } header: {
-                SectionHeader(title: "Needed", trailing: "\(needed.filter(\.installed).count) of \(needed.count) installed")
-            }
-        }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Color.paper)
-        .navigationTitle("Install from files")
-        .navigationBarTitleDisplayMode(.inline)
-        .frame(maxWidth: 720)
-        .frame(maxWidth: .infinity)
-        .background(Color.paper)
-        .fileImporter(isPresented: $picking, allowedContentTypes: [.data], allowsMultipleSelection: true) { result in
-            if case let .success(urls) = result {
-                Task {
-                    await model.importModels(urls)
-                    // Everything needed is in: back to the setup screen, whose
-                    // Continue is now enabled.
-                    if model.modelsReady { dismiss() }
-                }
-            }
-        }
-    }
-}
-
-private struct StepRow: View {
-    let number: Int
-    let title: String
-    let help: String
-    let systemImage: String
-    let tint: Color
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 14) {
-                Text("\(number)")
-                    .font(.timestamp)
-                    .foregroundStyle(Color.inkMuted)
-                    .frame(width: 28, height: 28)
-                    .background(Color.fillSecondary, in: Circle())
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.uiTitle).foregroundStyle(Color.ink)
-                    Text(help).font(.uiCaption).foregroundStyle(Color.inkMuted)
-                }
-                Spacer()
-                Image(systemName: systemImage).font(.system(size: 18, weight: .medium)).foregroundStyle(tint)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-/// How much room is left and what Scribatic keeps: free storage as recording
-/// time, the app's own recordings, models and notes, and memory. And when to
-/// warn before a recording, as free space runs low.
 struct StorageSection: View {
     let model: TranscriptionModel
     @State private var status: DeviceStatus?
@@ -374,5 +269,34 @@ struct StorageSection: View {
 
     private func bytes(_ count: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: count, countStyle: .file)
+    }
+}
+
+
+/// The notices for the software and models the app is built on
+/// (licenses/ at the repository root, copied into the bundle).
+struct LicencesView: View {
+    // Paragraphs, so the 380 KB of text is laid out only as it scrolls into view.
+    private let paragraphs: [String] = {
+        guard let url = Bundle.main.url(forResource: "THIRD_PARTY_NOTICES", withExtension: "txt"),
+              let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+        return text.components(separatedBy: "\n\n")
+    }()
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 8) {
+                ForEach(paragraphs.indices, id: \.self) { index in
+                    Text(paragraphs[index])
+                        .font(.uiCaption)
+                        .foregroundStyle(Color.ink)
+                        .textSelection(.enabled)
+                }
+            }
+            .padding(16)
+        }
+        .background(Color.paper)
+        .navigationTitle("Open-source licences")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }

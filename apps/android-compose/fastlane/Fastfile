@@ -46,7 +46,7 @@ platform :android do
     sh("make -C ../../.. stage-asset-packs")
 
     gradle(task: "clean")
-    # The free edition never offers the 1.2 GB summaries model, so its pack
+    # The free edition never offers the 2.5 GB summaries model, so its packs
     # stays out of the bundle: ~350 MB to upload instead of ~1.5 GB.
     properties = { "scribatic.edition" => edition }
     properties["scribatic.skipAnswersPack"] = "true" if edition == "free"
