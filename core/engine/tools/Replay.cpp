@@ -292,8 +292,10 @@ int main(int argc, char** argv) {
     const std::string models = root() + "/models/";
     EngineConfig config;
     config.whisperModelPath = models + "ggml-base.bin";
-    config.llamaModelPath = models + "insight-q4_k_m.gguf";
-    config.accurateModelPath = models + "ggml-small-q8_0.bin";
+    config.llamaModelPath = models + "insight-4b-00001-of-00002.gguf";
+    // SCRIBATIC_ACCURATE names another model file for the accurate pass, to compare.
+    const char* accurateFile = std::getenv("SCRIBATIC_ACCURATE");
+    config.accurateModelPath = models + (accurateFile != nullptr ? accurateFile : "ggml-small-q8_0.bin");
     config.segmentationModelPath = models + "speaker-segmentation.onnx";
     config.speakerEmbeddingModelPath = models + "speaker-embedding.onnx";
     config.databasePath = dir + "/notes.sqlite";

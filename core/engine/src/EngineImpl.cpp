@@ -186,10 +186,6 @@ bool levelRecording(const std::string& path) {
     return true;
 }
 
-/// What the accurate pass is told came before, in English: speech written
-/// as said, interjections and all. See refineTranscript.
-constexpr const char* kVerbatimContext = "Umm, yeah. Okay. Ah, so, like, you know. Mm-hmm, right.";
-
 /// When a recording started, in Unix seconds: the millisecond stamp both apps
 /// put in its name, or failing that the file's own time.
 std::int64_t recordingStartedAt(const std::string& path, const std::string& name) {
@@ -729,7 +725,11 @@ EngineStatus EngineImpl::identifySpeakers(std::int64_t noteId, std::int32_t expe
     if (words.empty()) { return EngineStatus::Ok; }   // nothing was said to attribute
 
     Attribution attribution = attributeSpeakers(words, turns);
-    if (attribution.speakerCount > 1) {
+    // More than one voice heard, even if one has no words: a pass in another
+    // language can drop a speaker's every word, and this is what brings them back.
+    const bool voices = std::any_of(turns.begin(), turns.end(),
+                                    [&](const SpeakerTurn& t) { return t.speaker != turns.front().speaker; });
+    if (voices) {
         transcribeSpeakersInTheirLanguage(attribution, turns, audio.samples(), audio.count(),
                                           loadNote(noteId).language);
     }
@@ -789,7 +789,10 @@ void EngineImpl::transcribeSpeakersInTheirLanguage(Attribution& attribution,
         if (id < 0) { continue; }
         const std::string language = whisper_lang_str(id);
         // Confident, and not the recording's language: worth a second pass.
-        if (language == recordingLanguage || probs[static_cast<std::size_t>(id)] < 0.6F) { continue; }
+        // So is a speaker left with no words at all, in whatever language:
+        // the pass over the whole recording dropped them.
+        const bool wordless = attribution.speakerOfCluster.count(cluster) == 0;
+        if ((language == recordingLanguage && !wordless) || probs[static_cast<std::size_t>(id)] < 0.6F) { continue; }
 
         std::int32_t speaker = 0;
         if (const auto known = attribution.speakerOfCluster.find(cluster); known != attribution.speakerOfCluster.end()) {
@@ -945,14 +948,10 @@ EngineStatus EngineImpl::refineTranscript(std::int64_t noteId, const std::string
     // Context across whisper's 30 s windows: what the live 5 s slices lack,
     // and most of why this pass is better (a sentence is no longer cut in two).
     params.no_context       = false;
-    // Context that keeps short interjections. Without it whisper writes the
-    // tidy version and drops "yeah", "okay", "ah" said over someone else, so
-    // there is no word for the speaker who said them. Measured (2026-10-09):
-    // a 17 s two-person clip went from 29 to 44 of 48 words; two interviews
-    // from 12.1% and 13.8% WER to 11.6% and 10.0% against large-v3-turbo; a
-    // near-silent clip and the fixtures unchanged, nothing of this text
-    // repeated into silence. English only: the only language measured.
-    if (language == "en") { params.initial_prompt = kVerbatimContext; }
+    // No initial prompt. A verbatim one ("Umm, yeah. Okay…") kept more short
+    // interjections, but in a simulated room (2026-10-10) a voice 24 dB under
+    // the nearest one went from 83% of its words heard to 27%: whisper skipped
+    // its turns as silence. A sentence lost is worse than a "yeah".
     params.print_progress   = false;
     params.print_realtime   = false;
     params.print_timestamps = false;

@@ -147,10 +147,11 @@ fetch-models:
 ## clones where possible, so 1.4 GB costs no copy time and no disk.
 ASSET_CORE    := $(ANDROID_DIR)/models-core/src/main/assets
 ASSET_ANSWERS := $(ANDROID_DIR)/models-answers/src/main/assets
+ASSET_ANSWERS_2 := $(ANDROID_DIR)/models-answers-2/src/main/assets
 CORE_MODELS := ggml-base.bin ggml-small-q8_0.bin speaker-segmentation.onnx speaker-embedding.onnx embed-minilm-l6-v2.gguf
 
 stage-asset-packs:
-	mkdir -p $(ASSET_CORE) $(ASSET_ANSWERS)
+	mkdir -p $(ASSET_CORE) $(ASSET_ANSWERS) $(ASSET_ANSWERS_2)
 	@# Exactly the listed files: staging only ever added, so a replaced model
 	@# (ggml-base.en.bin, before languages) stayed in the pack and doubled it.
 	for f in $(ASSET_CORE)/*; do \
@@ -159,8 +160,13 @@ stage-asset-packs:
 	for m in $(CORE_MODELS); do \
 	    test -f $(ASSET_CORE)/$$m || cp -c $(MODELS_DIR)/$$m $(ASSET_CORE)/$$m 2>/dev/null || cp $(MODELS_DIR)/$$m $(ASSET_CORE)/$$m; \
 	done
-	test -f $(ASSET_ANSWERS)/insight-q4_k_m.gguf || cp -c $(MODELS_DIR)/insight-q4_k_m.gguf $(ASSET_ANSWERS)/ 2>/dev/null || \
-	    cp $(MODELS_DIR)/insight-q4_k_m.gguf $(ASSET_ANSWERS)/
+	@# The instruct model in two halves, one per pack: Play caps a pack at 1.5 GB.
+	rm -f $(ASSET_ANSWERS)/insight-q4_k_m.gguf
+	mkdir -p $(ASSET_ANSWERS_2)
+	test -f $(ASSET_ANSWERS)/insight-4b-00001-of-00002.gguf || cp -c $(MODELS_DIR)/insight-4b-00001-of-00002.gguf $(ASSET_ANSWERS)/ 2>/dev/null || \
+	    cp $(MODELS_DIR)/insight-4b-00001-of-00002.gguf $(ASSET_ANSWERS)/
+	test -f $(ASSET_ANSWERS_2)/insight-4b-00002-of-00002.gguf || cp -c $(MODELS_DIR)/insight-4b-00002-of-00002.gguf $(ASSET_ANSWERS_2)/ 2>/dev/null || \
+	    cp $(MODELS_DIR)/insight-4b-00002-of-00002.gguf $(ASSET_ANSWERS_2)/
 
 ## SQLite amalgamation and sherpa-onnx prebuilts. Idempotent, so every build
 ## target depends on it rather than relying on someone remembering to run it.

@@ -83,7 +83,7 @@ std::string repoPath(const char* relative) {
 
 void testSpeechBecomesTranscript() {
     const std::string whisperModel = repoPath("models/ggml-base.bin");
-    const std::string llamaModel   = repoPath("models/insight-q4_k_m.gguf");
+    const std::string llamaModel   = repoPath("models/insight-4b-00001-of-00002.gguf");
     const std::string fixture      = repoPath("core/engine/tests/fixtures/speech-16k-mono.wav");
 
     if (!fileExists(whisperModel)) {
@@ -165,7 +165,7 @@ void testSpeechBecomesTranscript() {
 /// Whisper invents words for silence ("you"); the engine must not pass them on.
 void testSilenceProducesNothing() {
     const std::string whisperModel = repoPath("models/ggml-base.bin");
-    const std::string llamaModel   = repoPath("models/insight-q4_k_m.gguf");
+    const std::string llamaModel   = repoPath("models/insight-4b-00001-of-00002.gguf");
     if (!fileExists(whisperModel)) {
         std::printf("  skip: no weights at %s (run `make fetch-models`)\n", whisperModel.c_str());
         return;
@@ -210,7 +210,7 @@ void testSilenceProducesNothing() {
 /// English-sounding nonsense — what the English-only model used to do.
 void testDetectsSpanish() {
     const std::string whisperModel = repoPath("models/ggml-base.bin");
-    const std::string llamaModel   = repoPath("models/insight-q4_k_m.gguf");
+    const std::string llamaModel   = repoPath("models/insight-4b-00001-of-00002.gguf");
     const std::string fixture      = repoPath("core/engine/tests/fixtures/speech-es-16k-mono.wav");
     if (!fileExists(whisperModel) || !fileExists(fixture)) {
         std::printf("  skip: Spanish needs %s and %s\n", whisperModel.c_str(), fixture.c_str());

@@ -21,10 +21,12 @@ WHISPER_URL="${WHISPER_URL:-https://huggingface.co/ggerganov/whisper.cpp/resolve
 ACCURATE_MODEL="${ACCURATE_MODEL:-ggml-small-q8_0.bin}"
 ACCURATE_URL="${ACCURATE_URL:-https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${ACCURATE_MODEL}}"
 
-# Instruct model for summarise + answer. Qwen3 1.7B at Q4_K_M: Apache 2.0,
-# ungated, ~1.2 GB. See ADR-007 for why this one.
-LLAMA_MODEL="${LLAMA_MODEL:-insight-q4_k_m.gguf}"
-LLAMA_URL="${LLAMA_URL:-https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf}"
+# Instruct model for summaries and answers: Qwen3-4B-Instruct-2507 at Q4_K_M,
+# Apache 2.0, 2.5 GB. No GGUF of it from Qwen or ggml-org; this is Unsloth's
+# conversion, the exact file the summary tests ran on (docs/MODELS.md). It is
+# split in two below: a Google Play asset pack holds at most 1.5 GB.
+LLAMA_MODEL="${LLAMA_MODEL:-qwen3-4b-instruct-2507-q4_k_m.gguf}"
+LLAMA_URL="${LLAMA_URL:-https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf}"
 
 # Embedding model for the vector index. 384 dimensions is not a preference —
 # it is what Schema.hpp and vss0(embedding(384)) are built around.
@@ -50,6 +52,19 @@ fetch "${WHISPER_URL}" "${MODELS_DIR}/${WHISPER_MODEL}"
 fetch "${ACCURATE_URL}" "${MODELS_DIR}/${ACCURATE_MODEL}"
 fetch "${LLAMA_URL}"   "${MODELS_DIR}/${LLAMA_MODEL}"
 fetch "${EMBED_URL}"   "${MODELS_DIR}/${EMBED_MODEL}"
+
+# The two parts the apps ship (ModelCatalog.cpp pins both hashes), cut with
+# llama.cpp's own tool so the engine loads them as one model.
+if [[ ! -f "${MODELS_DIR}/insight-4b-00002-of-00002.gguf" ]]; then
+  SPLIT="${ROOT}/build/llama-tools/bin/llama-gguf-split"
+  if [[ ! -x "${SPLIT}" ]]; then
+    cmake -S "${ROOT}/core/engine/vendor/llama.cpp" -B "${ROOT}/build/llama-tools" -DCMAKE_BUILD_TYPE=Release \
+      -DLLAMA_CURL=OFF -DLLAMA_BUILD_SERVER=OFF -DBUILD_SHARED_LIBS=OFF >/dev/null
+    cmake --build "${ROOT}/build/llama-tools" --target llama-gguf-split -j 8 >/dev/null
+  fi
+  echo "==> Splitting ${LLAMA_MODEL} into two parts"
+  "${SPLIT}" --split --split-max-size 1300M "${MODELS_DIR}/${LLAMA_MODEL}" "${MODELS_DIR}/insight-4b" >/dev/null
+fi
 
 # Speaker diarization (ADR-009). Two small ONNX models run by sherpa-onnx:
 # pyannote segmentation 3.0 (MIT) finds where speech is and where the voice

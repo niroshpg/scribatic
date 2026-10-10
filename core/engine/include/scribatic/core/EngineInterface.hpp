@@ -317,10 +317,6 @@ protected:
 /// method: the setup screen needs it before an engine can be created.
 [[nodiscard]] std::vector<ModelSpec> modelCatalog();
 
-/// Where the user is sent to download the model files. The app itself never
-/// downloads anything; the system browser does, and the user imports the files.
-[[nodiscard]] std::string modelDownloadPage();
-
 /// Human-readable diagnostic for a status code. Useful on both sides of the
 /// bridge; avoids duplicating the table in Swift and Kotlin.
 [[nodiscard]] std::string describeStatus(EngineStatus status);

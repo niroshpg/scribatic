@@ -44,7 +44,8 @@ struct PassageText {
 /// text so "what did Sam say about the excursion" can match on both, and each
 /// passage names its speakers even where a turn continues from the last one.
 /// Built from segments, so a long turn is split instead of becoming a passage
-/// too long to embed (MiniLM reads about 1000 characters).
+/// too long to embed (MiniLM reads about 1000 characters); a single segment
+/// longer than `targetChars` is cut at spaces.
 [[nodiscard]] std::vector<PassageText> buildPassages(const NoteDetail& note,
                                                      std::size_t targetChars = 700);
 

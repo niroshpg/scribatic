@@ -209,6 +209,31 @@ void testAnonymisedExportCarriesNoNames() {
     assert(text.find("[00:00]") == std::string::npos);
 }
 
+/// A whole turn in one segment (a speaker re-transcribed in their own
+/// language, or a long correction) still makes passages that fit.
+void testLongSegmentIsCutIntoPassages() {
+    NoteDetail note = sampleNote();
+    std::string turn;
+    for (int i = 0; turn.size() < 3000; ++i) { turn += "word" + std::to_string(i) + " "; }
+    turn.pop_back();
+    auto long_ = segment(5000, 65000, turn.c_str());
+    long_.speaker = 1;
+    note.segments = {long_};
+    const auto passages = buildPassages(note, 700);
+    assert(passages.size() >= 5);
+    std::string joined;
+    std::int64_t last = 5000;
+    for (const auto& passage : passages) {
+        assert(passage.text.size() <= 700 + std::string("Speaker 2: ").size());
+        assert(passage.text.find("Speaker 2: ") == 0);
+        assert(passage.startMs >= last && passage.endMs > passage.startMs && passage.endMs <= 65000);
+        last = passage.endMs;
+        joined += passage.text.substr(std::string("Speaker 2: ").size()) + " ";
+    }
+    joined.pop_back();
+    assert(joined == turn && "no word lost or cut");
+}
+
 // -- Store ------------------------------------------------------------------------
 
 void testSchemaMigratesToCurrentVersion() {
@@ -728,20 +753,29 @@ void testBackupRestoresElsewhere() {
 
 void testCatalogPinsEveryModel() {
     const auto catalog = modelCatalog();
-    assert(catalog.size() == 6);
+    assert(catalog.size() == 7);
     int optional = 0;
     for (const auto& model : catalog) {
-        assert(!model.fileName.empty() && !model.title.empty() && !model.purpose.empty());
+        assert(!model.fileName.empty() && !model.title.empty());
         assert(model.sizeBytes > 0);
         assert(model.sha256.size() == 64);
         assert(model.sha256.find_first_not_of("0123456789abcdef") == std::string::npos);
+        if (!model.partOf.empty()) {
+            // A later part of a split model: its first part is in the list,
+            // and it is kept or left out with it.
+            const auto first = std::find_if(catalog.begin(), catalog.end(),
+                                            [&](const ModelSpec& m) { return m.fileName == model.partOf; });
+            assert(first != catalog.end() && first->partOf.empty() && first->required == model.required);
+            assert(model.sizeBytes <= 1500LL * 1000 * 1000 && "each part fits one Play pack");
+            continue;
+        }
+        assert(!model.purpose.empty());
         if (!model.required) {
             ++optional;
             assert(!model.withoutIt.empty() && "an optional model must say what is lost");
         }
     }
     assert(optional == 1 && "only the instruct model may be left out");
-    assert(modelDownloadPage().rfind("https://", 0) == 0);
 }
 
 void testEngineStartsWithoutTheInstructModel() {
@@ -773,6 +807,7 @@ int main() {
     testNoTurnsLeavesSpeakersUnknown();
     testExportMergesTurnsAndNamesSpeakers();
     testAnonymisedExportCarriesNoNames();
+    testLongSegmentIsCutIntoPassages();
     testSchemaMigratesToCurrentVersion();
     testUpgradeGivesChunksTheirTimes();
     testSearchingAcrossNotes();

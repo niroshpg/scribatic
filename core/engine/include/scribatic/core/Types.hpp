@@ -162,6 +162,11 @@ struct ModelSpec {
     std::int64_t sizeBytes = 0;
     std::string  sha256;        ///< lowercase hex
     bool         required  = true;
+    /// For the later parts of a model split across files (each download pack
+    /// is capped at 1.5 GB): the first part's fileName. Empty otherwise. The
+    /// parts are one model to the user: shown, wanted and removed together,
+    /// and loaded from the first part with the rest beside it.
+    std::string  partOf;
 };
 
 /// Engine construction parameters. Paths are absolute and platform-supplied:

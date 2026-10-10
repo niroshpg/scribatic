@@ -51,7 +51,7 @@ void copyFile(const std::string& from, const std::string& to) {
 
 struct Models {
     std::string whisper = repoPath("models/ggml-base.bin");
-    std::string llama = repoPath("models/insight-q4_k_m.gguf");
+    std::string llama = repoPath("models/insight-4b-00001-of-00002.gguf");
     std::string segmentation = repoPath("models/speaker-segmentation.onnx");
     std::string embedding = repoPath("models/speaker-embedding.onnx");
     std::string accurate = repoPath("models/ggml-small-q8_0.bin");

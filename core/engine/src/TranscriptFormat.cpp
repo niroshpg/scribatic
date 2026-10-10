@@ -1,5 +1,6 @@
 #include "TranscriptFormat.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <ctime>
 
@@ -121,10 +122,43 @@ std::string formatTranscript(const NoteDetail& note, const ExportOptions& option
 }
 
 std::vector<PassageText> buildPassages(const NoteDetail& note, std::size_t targetChars) {
+    // A line longer than a passage — a whole turn transcribed at once, or a
+    // long correction — is cut at spaces into pieces that fit, its time
+    // shared out by length. Only an unbroken run of over targetChars is cut
+    // mid-word, at a character boundary.
+    std::vector<TranscriptSegment> pieces;
+    for (const auto& segment : note.segments) {
+        const std::string& text = segment.text;
+        if (text.size() <= targetChars) { pieces.push_back(segment); continue; }
+        const std::int64_t span = segment.endMs - segment.startMs;
+        const auto at = [&](std::size_t offset) {
+            return segment.startMs + span * static_cast<std::int64_t>(offset) / static_cast<std::int64_t>(text.size());
+        };
+        std::size_t from = 0;
+        while (from < text.size()) {
+            std::size_t to = std::min(text.size(), from + targetChars);
+            if (to < text.size()) {
+                const std::size_t space = text.rfind(' ', to);
+                if (space != std::string::npos && space > from) {
+                    to = space;
+                } else {
+                    while (to > from + 1 && (static_cast<unsigned char>(text[to]) & 0xC0U) == 0x80U) { --to; }
+                }
+            }
+            TranscriptSegment piece = segment;
+            piece.text = text.substr(from, to - from);
+            piece.startMs = at(from);
+            piece.endMs = at(to);
+            pieces.push_back(std::move(piece));
+            from = to;
+            while (from < text.size() && text[from] == ' ') { ++from; }
+        }
+    }
+
     std::vector<PassageText> passages;
     PassageText current;
     std::string speaker;   // whose turn the current passage's last line is
-    for (const auto& segment : note.segments) {
+    for (const auto& segment : pieces) {
         if (segment.text.empty()) { continue; }   // emptied by a correction
         if (!current.text.empty() && current.text.size() + segment.text.size() > targetChars) {
             passages.push_back(std::move(current));

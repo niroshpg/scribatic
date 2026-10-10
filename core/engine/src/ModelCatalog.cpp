@@ -25,17 +25,18 @@ std::vector<ModelSpec> modelCatalog() {
         {"embed-minilm-l6-v2.gguf", "Search",
          "Finds passages across your notes by meaning.", "",
          25008064, "263215c3cadd6e16740741a7624ab4cbb6c8e777688bd5331ecfbf5681c2f8ed", true},
-        {"insight-q4_k_m.gguf", "Answers and summaries",
-         "Answers questions about your notes and writes summaries (Qwen3 1.7B).",
+        // Qwen3-4B-Instruct-2507, Q4_K_M, split by llama-gguf-split into two
+        // parts under Google Play's 1.5 GB pack limit (scripts/fetch_models.sh).
+        {"insight-4b-00001-of-00002.gguf", "Answers and summaries",
+         "Answers questions about your notes and writes summaries (Qwen3 4B).",
          "Without it, you can't ask questions about your notes or get summaries. "
          "Recording, transcripts, speakers and sharing all still work, and you can "
          "add it later.",
-         1282439264, "d2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5", false},
+         1305220960, "a9a9557ad7468b0c71729567c91bc6fc5e762bc0357df4ab2000a3ec4b477f4a", false},
+        {"insight-4b-00002-of-00002.gguf", "Answers and summaries, part 2", "", "",
+         1192060352, "6702010020cbec28d5608a78ea73c4e5977665db0314e80f581b2c0e9b6d34fd", false,
+         "insight-4b-00001-of-00002.gguf"},
     };
-}
-
-std::string modelDownloadPage() {
-    return "https://github.com/niroshpg/scribatic/releases/tag/models-v1";
 }
 
 } // namespace scribatic::core
