@@ -172,7 +172,7 @@ The two files are not equivalent any more:
 
 ```bash
 make fetch-models
-printf 'placeholder\n' > models/insight-q4_k_m.gguf
+printf 'placeholder\n' > models/insight-4b-00001-of-00002.gguf
 ```
 
 Onto a **simulator**, where the container is a normal directory:
@@ -180,7 +180,7 @@ Onto a **simulator**, where the container is a normal directory:
 ```bash
 C=$(xcrun simctl get_app_container booted com.scribatic.app data)
 mkdir -p "$C/Library/Application Support"
-cp models/ggml-base.bin models/insight-q4_k_m.gguf "$C/Library/Application Support/"
+cp models/ggml-base.bin models/insight-4b-0000*-of-00002.gguf "$C/Library/Application Support/"
 ```
 
 Onto a **physical device**. `UIFileSharingEnabled` is deliberately false, so
@@ -201,7 +201,7 @@ Inspect what landed with `xcrun devicectl device info files --device $D
 --domain-type appDataContainer --domain-identifier com.scribatic.app`.
 
 Filenames are fixed by `Configuration.default()` on iOS: `ggml-base.bin` and
-`insight-q4_k_m.gguf`, both directly inside `Library/Application Support`.
+`insight-4b-00001-of-00002.gguf` (with its second part), directly inside `Library/Application Support`.
 
 ---
 
@@ -266,7 +266,7 @@ UDID=<simulator>; APP=/tmp/scribatic-dd/Build/Products/Debug-iphonesimulator/Scr
 xcrun simctl install $UDID $APP
 C=$(xcrun simctl get_app_container $UDID com.scribatic.app data)
 mkdir -p "$C/Library/Application Support" "$C/Library/Caches"
-for m in ggml-base.bin insight-q4_k_m.gguf embed-minilm-l6-v2.gguf \
+for m in ggml-base.bin insight-4b-00001-of-00002.gguf insight-4b-00002-of-00002.gguf embed-minilm-l6-v2.gguf \
          speaker-segmentation.onnx speaker-embedding.onnx; do
     cp -c "models/$m" "$C/Library/Application Support/"     # APFS clone: instant
 done
@@ -285,13 +285,13 @@ folder of the `group.com.apple.FileProvider.LocalStorage` app group, from
 
 **Android** — the file's presence at `files/inject/conversation.wav` turns it
 on. Stream large models with `exec-in` rather than push-then-copy: the default
-AVD has too little free space for two copies of the 1.2 GB instruct model.
+AVD has too little free space for two copies of the 2.5 GB instruct model.
 
 ```bash
 adb install -r -t apps/android-compose/app/build/intermediates/apk/debug/app-debug.apk
 adb shell pm grant com.scribatic.app android.permission.RECORD_AUDIO
 adb shell run-as com.scribatic.app mkdir -p files/inject
-for m in ggml-base.bin insight-q4_k_m.gguf embed-minilm-l6-v2.gguf \
+for m in ggml-base.bin insight-4b-00001-of-00002.gguf insight-4b-00002-of-00002.gguf embed-minilm-l6-v2.gguf \
          speaker-segmentation.onnx speaker-embedding.onnx; do
     adb exec-in run-as com.scribatic.app sh -c "cat > files/$m" < models/$m
 done

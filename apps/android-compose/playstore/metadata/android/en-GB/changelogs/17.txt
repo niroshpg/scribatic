@@ -1,0 +1,7 @@
+• Pro now writes with a larger, more accurate model (2.5 GB) and is offered on phones with 8 GB of memory or more.
+• Summaries can be shaped as General, Meeting or Lesson.
+• Quieter, distant speakers are kept in the final transcript.
+• Conversations in two languages keep every speaker.
+• Ask says when your notes don't answer; search finds names in your first notes.
+• New setting: identify speakers automatically or only when you ask.
+• Open-source licences under Models.

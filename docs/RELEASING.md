@@ -1,5 +1,9 @@
 # Releasing
 
+Before preparing a store release, follow [LAUNCH.md](LAUNCH.md) for the agreed
+feature boundary (free app and Pro together), language and listing claims, and the
+acceptance checklist.
+
 ## Android (internal testing)
 
 Store listing images (hi-res icon, feature graphic) are in

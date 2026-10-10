@@ -1,5 +1,9 @@
 # Play Store listing — Scribatic
 
+Launch scope: [LAUNCH.md](LAUNCH.md). The download is free and Pro is an in-app
+purchase; advertise only what the submitted build does, English as supported and
+other languages as experimental.
+
 Package `com.scribatic.app`. Everything here lives as fastlane `supply` metadata under
 `apps/android-compose/playstore/metadata/android/en-GB/`, so the listing is versioned with
 the code and uploaded by fastlane rather than typed into Play Console.
@@ -93,7 +97,7 @@ LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 bundle exec fastlane run upload_to_play_stor
 - [ ] Bump `versionCode` in `app/build.gradle.kts` and add `changelogs/<code>.txt`
 - [ ] `bundle exec fastlane build`, then `internal` (1.5 GB bundle: expect ~20–60 min;
       `SUPPLY_TIMEOUT=1800` for the processing wait)
-- [ ] Data safety: no data collected, no data shared (the app has no INTERNET permission)
+- [ ] Data safety: no data collected, no data shared (the app has no INTERNET permission). Sharing and backups are user-initiated transfers to a destination the user picks, which Data safety does not count as sharing.
 - [ ] Privacy policy URL (Play requires one for microphone apps) — scribatic.com has no
       privacy page yet; add one before production
 - [ ] Content rating questionnaire

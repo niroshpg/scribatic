@@ -1,5 +1,9 @@
 # App Store listing — Scribatic
 
+Launch scope: [LAUNCH.md](LAUNCH.md). The download is free and Pro is an in-app
+purchase; advertise only what the submitted build does, English as supported and
+other languages as experimental.
+
 Bundle `com.scribatic.app`, App Store Connect app id `6811857809`, primary language
 **English (UK)**, so the listing lives in `en-GB`. Everything is fastlane `deliver` metadata
 under `apps/ios-swiftui/fastlane/`, versioned with the code; the Play Store equivalent is
@@ -14,8 +18,8 @@ search until a screen offers them.
 |---|---|---|---|
 | Name | `name.txt` | 30 | 9 — "Scribatic" |
 | Subtitle | `subtitle.txt` | 30 | 30 — "Private, on-device transcripts" |
-| Promotional text | `promotional_text.txt` | 170 | 156 (editable any time, no review) |
-| Description | `description.txt` | 4000 | 1617 |
+| Promotional text | `promotional_text.txt` | 170 | 153 (editable any time, no review) |
+| Description | `description.txt` | 4000 | 2299 |
 | Keywords | `keywords.txt` | 100 | 97, comma-separated, no words from the name |
 | Support URL | `support_url.txt` | — | https://scribatic.com |
 | Marketing URL | `marketing_url.txt` | — | https://scribatic.com |

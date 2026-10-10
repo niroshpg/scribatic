@@ -6,4 +6,6 @@ To try it: tap the orange microphone button on the Notes screen, which starts re
 
 To correct text, touch and hold a part of the transcript and choose Edit text; Play this part plays its audio. Import audio is under the Notes screen's More (…) menu. Storage & memory and Backup are on the Models screen (the chip icon on the Notes screen). A backup is written only to a folder the user picks in the Files picker, encrypted with a passphrase they choose (AES-256-GCM through Apple's CryptoKit); the app never uploads it.
 
-Microphone access is used only while recording. Transcription works in about 99 languages: the language is detected from the first words, or can be chosen under Models > Spoken language.
+Microphone access is used only while recording. Transcription is designed for English; other languages are offered as experimental. The language is detected from the first words, or can be chosen under Models > Transcription.
+
+Scribatic Pro (in-app purchase scribatic_pro, non-consumable) adds summaries, search across notes and Ask your notes. Its model needs 8 GB of memory, so Pro is offered only on devices with 8 GB or more (for example iPhone 15 Pro and later, or an M-series iPad); on a device with less, the purchase screen says Pro isn't offered there. To reach it: open a note, then tap Summarise under Summary, or tap the search icon on the Notes screen. After purchase, Pro's model (2.5 GB) downloads once as an Apple-hosted Background Asset.

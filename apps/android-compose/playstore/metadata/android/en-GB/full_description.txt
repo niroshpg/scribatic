@@ -2,9 +2,9 @@ Scribatic records a conversation and turns it into a transcript on your phone, m
 
 What you can do
 • Record a meeting, lecture, interview or call, and watch the words appear as people speak
-• Transcribe in about 99 languages: Scribatic recognises the language from the first words, or you can choose one
+• Transcribe English. Other languages are experimental: Scribatic can recognise and transcribe many more, but results may be poor, so check them before relying on them
 • Pause and resume, then stop to save the note
-• See each speaker's words marked in their own colour, identified automatically when you stop
+• See each speaker's words marked in their own colour, identified when you stop, or only when you ask
 • Give speakers names, only on this device and only for that note
 • Play a recording back, or just the part you're reading
 • Correct a misheard name, number or word in any part of the transcript, and undo it or restore the original
@@ -13,11 +13,19 @@ What you can do
 • Share a transcript to any app you choose, with or without the speakers' names
 • Back up your notes to a place you choose, encrypted with your own passphrase, and restore them on another device
 • See how much recording time your storage has left, with a warning before it runs low
+• Keep recordings compressed (about 21 MB an hour), for 30 days, or only until transcribed; transcripts are always kept
 • Delete the audio and keep the words, or delete a note entirely
 • Find notes grouped by day, with light and dark themes
 
+Scribatic Pro, a one-time in-app purchase
+• Summaries shaped for a meeting, a lesson or anything else: the key points, and who owes what
+• Search all your notes, by words and by meaning
+• Ask your notes: short answers from your own recordings, each pointing to where it was said
+• All written on the phone by a 2.5 GB model, downloaded once after you buy. Nothing is uploaded
+• Needs a phone with 8 GB of memory or more, and Android 9 or later. Designed for English; other languages are experimental
+
 Private by design
-• Transcription and speaker identification run on the phone's own processor
+• Transcription, speaker identification and Pro's summaries and answers run on the phone's own processor
 • The app has no INTERNET permission, so recordings, transcripts and names cannot leave the phone through it
 • No account, no sign-in, no ads, no analytics, no crash reporting
 • When you share a transcript, it goes only to the app you pick, and that app sends it
@@ -28,4 +36,4 @@ Good to know
 • Accuracy depends on the recording: clear speech close to the phone works best
 • Needs a 64-bit (ARM64) Android phone running Android 9 or later
 
-Scribatic is built on the open-source whisper.cpp and sherpa-onnx projects. Its source code is public at github.com/niroshpg/scribatic.
+Scribatic is built on open-source software and openly licensed models, credited in the app. The source code of the free app is public at github.com/niroshpg/scribatic.
