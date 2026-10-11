@@ -12,7 +12,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATUS=0
 
 echo "==> Checking Android manifest for INTERNET permission"
-if grep -rq 'android.permission.INTERNET' "${ROOT}/apps/android-compose"; then
+# The manifest names the permission once, to remove it (tools:node="remove")
+# from whatever a library merges in; that line is the guarantee, not a breach.
+if grep -r 'android.permission.INTERNET' "${ROOT}/apps/android-compose" \
+     --include='*.xml' --exclude-dir=build | grep -v 'tools:node="remove"' | grep -q .; then
   echo "FAIL: INTERNET permission present in Android manifest" >&2
   STATUS=1
 fi

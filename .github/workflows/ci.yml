@@ -1,9 +1,10 @@
 name: CI
 
+# Pull requests, and on demand (Actions → CI → Run workflow). Releases are
+# built and published locally, so a push to main runs nothing.
 on:
-  push:
-    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   # The privacy invariant is checked first and cheaply: if a network call has
