@@ -65,6 +65,11 @@ protocol ExtensionHost: AnyObject {
     /// Where a model's file is, if it is on the device.
     func modelURL(_ fileName: String) -> URL?
 
+    /// The note's transcript or speakers are being rebuilt (finishing after
+    /// Stop, or identifying speakers again): anything read from it now is
+    /// read half-done.
+    func isRebuilding(_ noteID: Int64) -> Bool
+
     /// Asks for an optional model; the App Store downloads its pack.
     func requestModel(_ fileName: String)
 

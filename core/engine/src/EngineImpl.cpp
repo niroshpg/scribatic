@@ -686,6 +686,10 @@ EngineStatus EngineImpl::setNoteSummary(std::int64_t noteId, const std::string& 
     return store_.setSummary(noteId, summary);
 }
 
+EngineStatus EngineImpl::markNoteSummaryStale(std::int64_t noteId) {
+    return store_.markNoteSummaryStale(noteId);
+}
+
 // -- Search -------------------------------------------------------------------
 
 std::vector<RetrievalHit> EngineImpl::search(const std::string& query, std::int32_t topK) {

@@ -130,6 +130,11 @@ public:
     /// here, so it is loaded and deleted with the note like the rest of it.
     virtual EngineStatus setNoteSummary(std::int64_t noteId, const std::string& summary) = 0;
 
+    /// Marks the note's summary as written before the transcript last changed,
+    /// so the user is offered to summarise again. For an add-on whose
+    /// transcript changed while it was writing; the core marks its own edits.
+    virtual EngineStatus markNoteSummaryStale(std::int64_t noteId) = 0;
+
     // -- Final transcript (background threads only) ---------------------------
     /// True when the accurate model is present: after Stop, the whole
     /// recording can be transcribed again with it.

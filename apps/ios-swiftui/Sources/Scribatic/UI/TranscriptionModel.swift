@@ -961,6 +961,10 @@ final class TranscriptionModel {
 extension TranscriptionModel: ExtensionHost {
     var runningEngine: ScribaticEngine? { engine }
 
+    func isRebuilding(_ noteID: Int64) -> Bool {
+        finishingNoteID == noteID || busyNoteID == noteID
+    }
+
     func modelURL(_ fileName: String) -> URL? {
         installer.catalog.first { $0.fileName == fileName }.flatMap(installer.fileURL(for:))
     }

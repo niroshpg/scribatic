@@ -63,6 +63,9 @@ public:
     /// Empty stores NULL: the note has no summary.
     EngineStatus setSummary(std::int64_t noteId, const std::string& summary);
 
+    /// The summary no longer matches the transcript. A note without one is left as it is.
+    EngineStatus markNoteSummaryStale(std::int64_t noteId);
+
     /// The accurate pass's result: segments and words replace the preview's,
     /// speakers are cleared (they are identified from the new words) and the
     /// note is marked refined. A non-empty `language` becomes the note's: the

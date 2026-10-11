@@ -413,6 +413,12 @@ EngineStatus NoteStore::setSummary(std::int64_t noteId, const std::string& summa
     return EngineStatus::Ok;
 }
 
+EngineStatus NoteStore::markNoteSummaryStale(std::int64_t noteId) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (db_ == nullptr) { return EngineStatus::DatabaseFailed; }
+    return markSummaryStale(db_, noteId) ? EngineStatus::Ok : EngineStatus::DatabaseFailed;
+}
+
 EngineStatus NoteStore::replaceWithRefined(std::int64_t noteId,
                                           const std::vector<TranscriptSegment>& segments,
                                           const std::vector<WordTiming>& words,

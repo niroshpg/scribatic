@@ -52,6 +52,7 @@ public:
     EngineStatus renameSpeaker(std::int64_t noteId, std::int32_t speaker,
                                const std::string& name) override;
     EngineStatus setNoteSummary(std::int64_t noteId, const std::string& summary) override;
+    EngineStatus markNoteSummaryStale(std::int64_t noteId) override;
     void         setLanguage(const std::string& code) override;
     bool         canRefine() const noexcept override;
     EngineStatus refineTranscript(std::int64_t noteId, const std::string& audioPath) override;

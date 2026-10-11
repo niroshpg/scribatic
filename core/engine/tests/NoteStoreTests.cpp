@@ -497,6 +497,14 @@ void testCorrectingACard() {
     assert(note.segments[1].text == "for invoices" && note.segments[1].original.empty());
     assert(note.summaryStale);
     assert(scalar(db, "SELECT COUNT(*) FROM chunks_fts WHERE chunks_fts MATCH 'xero'") == 0);
+
+    // A summary saved after the transcript changed under it: marked by its writer.
+    assert(store.setSummary(id, "They use QuickBooks.") == EngineStatus::Ok);
+    assert(store.markNoteSummaryStale(id) == EngineStatus::Ok);
+    assert(store.load(id, dir).summaryStale && "written from an older transcript");
+    const std::int64_t bare = store.insertNote("Quiet", 1700000100, 2000, "", {segment(0, 2000, "hello")}, {});
+    assert(store.markNoteSummaryStale(bare) == EngineStatus::Ok);
+    assert(!store.load(bare, dir).summaryStale && "no summary, nothing to mark");
 }
 
 // -- Engine: recordings on disk -----------------------------------------------------
