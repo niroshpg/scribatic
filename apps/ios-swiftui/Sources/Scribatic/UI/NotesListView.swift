@@ -74,7 +74,7 @@ struct NotesListView: View {
             Button {
                 model.showingModels = true
             } label: {
-                Label("Models", systemImage: "cpu")
+                Label("Settings", systemImage: "gearshape")
             }
         }
     }

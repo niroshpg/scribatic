@@ -122,7 +122,9 @@ struct ModelSetupView: View {
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
             }
         }
-        .navigationTitle("Models")
+        // Settings once running (models, storage, backup); only the models
+        // while they are first being set up.
+        .navigationTitle(model.canBackUp ? "Settings" : "Models")
         .frame(maxWidth: 720)
         .frame(maxWidth: .infinity)
         .background(Color.paper)

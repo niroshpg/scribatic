@@ -9,9 +9,9 @@ import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.FolderOpen
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Group
 import androidx.compose.material.icons.rounded.Lock
-import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.NoAccounts
@@ -25,6 +25,7 @@ import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.School
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.Warning
 
@@ -50,9 +51,10 @@ object Icons {
     val speakers = MaterialIcons.Rounded.Group
     val duration = MaterialIcons.Rounded.Schedule
     val delete = MaterialIcons.Rounded.Delete
-    val models = MaterialIcons.Rounded.Memory
+    val settings = MaterialIcons.Rounded.Settings
     val importAudio = MaterialIcons.Rounded.AudioFile
     val chevronRight = MaterialIcons.AutoMirrored.Rounded.KeyboardArrowRight
+    val chevronDown = MaterialIcons.Rounded.KeyboardArrowDown
     val folder = MaterialIcons.Rounded.FolderOpen
     val openInBrowser = MaterialIcons.Rounded.OpenInBrowser
     val installed = MaterialIcons.Rounded.CheckCircle

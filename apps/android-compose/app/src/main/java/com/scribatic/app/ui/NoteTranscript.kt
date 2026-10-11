@@ -114,9 +114,10 @@ fun SpeakerAvatar(initials: String, index: Int, modifier: Modifier = Modifier) {
 }
 
 /**
- * One speaker's turn: their avatar beside a card, in the manner of a chat. The
- * title is the name the user gave; until then only the avatar says who it is.
- * Tapping either opens [onSpeaker], to rename, move the turn or split it off.
+ * One speaker's turn: a card the full width of the screen, its avatar and name
+ * in the header beside the time, so the text has the whole width. The title is
+ * the name the user gave; until then only the avatar says who it is. Tapping
+ * either opens [onSpeaker], to rename, move the turn or split it off.
  */
 @Composable
 fun DiscussionCard(
@@ -129,45 +130,43 @@ fun DiscussionCard(
 ) {
     val c = Scribatic.colors
     val identified = block.speaker >= 0
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.Top,
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 5.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(c.surfaceRaised)
+            .clickable(onClickLabel = "Correct or play", onClick = onCard)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        if (identified) {
-            SpeakerAvatar(
-                speakerInitials(label, block.speaker),
-                block.speaker,
-                Modifier.clickable(onClickLabel = "Change speaker", role = Role.Button, onClick = onSpeaker),
-            )
-        }
-        Column(
-            Modifier
-                .weight(1f)
-                .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 16.dp, bottomEnd = 16.dp, bottomStart = 16.dp))
-                .background(c.surfaceRaised)
-                .clickable(onClickLabel = "Correct or play", onClick = onCard)
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            val name = label?.name?.trim().orEmpty()
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (identified && name.isNotEmpty()) {
-                    Text(
-                        name,
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = c.speaker(block.speaker),
-                        modifier = Modifier.weight(1f).clickable(onClickLabel = "Change speaker", onClick = onSpeaker),
-                    )
-                } else {
-                    Box(Modifier.weight(1f))
+        val name = label?.name?.trim().orEmpty()
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (identified) {
+                Row(
+                    Modifier
+                        .weight(1f)
+                        .clickable(onClickLabel = "Change speaker", role = Role.Button, onClick = onSpeaker),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    SpeakerAvatar(speakerInitials(label, block.speaker), block.speaker, Modifier.size(28.dp))
+                    if (name.isNotEmpty()) {
+                        Text(
+                            name,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = c.speaker(block.speaker),
+                        )
+                    }
                 }
-                CardTimeRow(block, playing, onPlay)
+            } else {
+                Box(Modifier.weight(1f))
             }
-            block.segments.filter { it.text.isNotEmpty() }.forEach {
-                Text(it.text, style = MaterialTheme.typography.bodyLarge, color = c.ink)
-            }
+            CardTimeRow(block, playing, onPlay)
+        }
+        block.segments.filter { it.text.isNotEmpty() }.forEach {
+            Text(it.text, style = MaterialTheme.typography.bodyLarge, color = c.ink)
         }
     }
 }

@@ -305,7 +305,7 @@ private fun NotesScreen(state: TranscriptUiState, viewModel: TranscriptionViewMo
                         enabled = state.phase == Phase.READY && state.importingAudio == null,
                         onClick = { importPicker.launch(arrayOf("audio/*")) },
                     ) { Icon(Icons.importAudio, contentDescription = "Import audio") }
-                    IconButton(onClick = viewModel::openModels) { Icon(Icons.models, contentDescription = "Models") }
+                    IconButton(onClick = viewModel::openModels) { Icon(Icons.settings, contentDescription = "Settings") }
                 },
                 windowInsets = WindowInsets(0),
                 colors = barColors(),
@@ -476,7 +476,9 @@ private fun ModelsScreen(state: TranscriptUiState, viewModel: TranscriptionViewM
         contentWindowInsets = WindowInsets(0),
         topBar = {
             LargeTopAppBar(
-                title = { Text("Models") },
+                // Settings once running (models, storage, backup); only the
+                // models while they are first being set up.
+                title = { Text(if (engineRunning) "Settings" else "Models") },
                 navigationIcon = { if (engineRunning) BackButton("Back to notes") { viewModel.back() } },
                 windowInsets = WindowInsets(0),
                 colors = barColors(),

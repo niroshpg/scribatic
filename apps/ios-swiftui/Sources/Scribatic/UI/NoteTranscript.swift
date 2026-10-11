@@ -110,7 +110,8 @@ struct SpeakerAvatar: View {
     }
 }
 
-/// One speaker's turn: their avatar beside a card, in the manner of a chat.
+/// One speaker's turn: a card the full width of the screen, its avatar and
+/// name in the header beside the time, so the text has the whole width.
 /// The title is the name the user gave; until then only the avatar says who
 /// it is. Tapping either opens `onSpeaker`, to rename, move or split it off.
 struct DiscussionCard: View {
@@ -123,41 +124,37 @@ struct DiscussionCard: View {
     var body: some View {
         let identified = block.speaker >= 0
         let name = label?.name.trimmingCharacters(in: .whitespaces) ?? ""
-        HStack(alignment: .top, spacing: 10) {
-            if identified {
-                Button(action: onSpeaker) {
-                    SpeakerAvatar(initials: speakerInitials(label, index: block.speaker), index: block.speaker)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(label?.displayName ?? "Speaker"), change speaker")
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    if identified && !name.isEmpty {
-                        Button(action: onSpeaker) {
-                            Text(name)
-                                .font(.uiLabel.weight(.semibold))
-                                .foregroundStyle(Color.speaker(block.speaker))
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                if identified {
+                    Button(action: onSpeaker) {
+                        HStack(spacing: 8) {
+                            SpeakerAvatar(initials: speakerInitials(label, index: block.speaker),
+                                          index: block.speaker, size: 28)
+                            if !name.isEmpty {
+                                Text(name)
+                                    .font(.uiLabel.weight(.semibold))
+                                    .foregroundStyle(Color.speaker(block.speaker))
+                            }
                         }
-                        .buttonStyle(.plain)
                     }
-                    Spacer()
-                    CardTimeRow(block: block, playing: playing, onPlay: onPlay)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(label?.displayName ?? "Speaker"), change speaker")
                 }
-                ForEach(block.segments.filter { !$0.text.isEmpty }) { segment in
-                    Text(segment.text)
-                        .font(.uiBody)
-                        .foregroundStyle(Color.ink)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
+                Spacer()
+                CardTimeRow(block: block, playing: playing, onPlay: onPlay)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(Color.surfaceRaised,
-                        in: UnevenRoundedRectangle(topLeadingRadius: 4, bottomLeadingRadius: 16,
-                                                   bottomTrailingRadius: 16, topTrailingRadius: 16))
+            ForEach(block.segments.filter { !$0.text.isEmpty }) { segment in
+                Text(segment.text)
+                    .font(.uiBody)
+                    .foregroundStyle(Color.ink)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color.surfaceRaised, in: RoundedRectangle(cornerRadius: 16))
     }
 }
 
