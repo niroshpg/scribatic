@@ -31,6 +31,10 @@ profile() {
 
 demo() {  # Android demo mode: full battery and signal, clock 09:41, no notifications
   "$ADB" shell settings put global sysui_demo_allowed 1
+  # Leave demo mode first: entering it again on top adds another set of
+  # mobile-signal icons every time the size is changed.
+  "$ADB" shell am broadcast -a com.android.systemui.demo -e command exit >/dev/null
+  sleep 1                    # broadcasts are async: let the exit land before enter
   for args in "enter" "clock -e hhmm 0941" "battery -e level 100 -e plugged false" \
               "network -e wifi show -e level 4 -e mobile show -e level 4" "notifications -e visible false"; do
     # shellcheck disable=SC2086
