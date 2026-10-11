@@ -375,6 +375,58 @@ void testShortPhraseImported(const Models& models) {
     scribaticEngineRelease(engine);
 }
 
+/// A sentence that starts straight out of digital silence keeps its first
+/// word: "For next week, please read…" came back as "next week, please
+/// read…" until the accurate pass decoded a noise floor there (ComfortNoise).
+/// Only synthetic speech joined with exact zeros shows this; the fixture is
+/// macOS text to speech, so it stays local (claude-notes/dropped-word).
+void testFirstWordAfterDigitalSilence(const Models& models) {
+    const std::string fixture = repoPath("models/fixtures/zero-gaps-lesson.wav");
+    if (!exists(fixture) || !exists(models.accurate)) {
+        std::printf("  skip: needs %s and %s\n", fixture.c_str(), models.accurate.c_str());
+        return;
+    }
+    std::printf("  first word after digital silence\n");
+    char pattern[] = "/tmp/scribatic-zeros-XXXXXX";
+    const std::string dir = ::mkdtemp(pattern);
+    const std::string recordings = dir + "/recordings";
+    assert(::mkdir(recordings.c_str(), 0700) == 0);
+    EngineConfig config;
+    config.whisperModelPath = models.whisper;
+    config.llamaModelPath = models.llama;
+    config.segmentationModelPath = models.segmentation;
+    config.speakerEmbeddingModelPath = models.embedding;
+    config.accurateModelPath = models.accurate;
+    config.databasePath = dir + "/notes.sqlite";
+    config.recordingsDirectory = recordings;
+    config.threadCount = 4;
+    EngineStatus status = EngineStatus::Ok;
+    EngineInterface* engine = EngineInterface::create(config, &status);
+    assert(engine != nullptr && engine->warmUp() == EngineStatus::Ok);
+
+    const std::string recording = recordings + "/recording-1.wav";
+    copyFile(fixture, recording);
+    const std::int64_t id = engine->importRecording(recording, "Lesson", 1700000000);
+    assert(id > 0);
+    assert(engine->refineTranscript(id, "") == EngineStatus::Ok);
+    bool kept = false;
+    for (const auto& s : engine->loadNote(id).segments) {
+        std::printf("    %s\n", s.text.c_str());
+        kept = kept || s.text.find("For next week") != std::string::npos;
+    }
+    assert(kept && "the word after the pause must not be dropped");
+    {
+        RecordingAudio after;
+        assert(after.open(recording));
+        RecordingAudio original;
+        assert(original.open(fixture));
+        assert(after.count() == original.count() &&
+               std::equal(after.samples(), after.samples() + after.count(), original.samples()) &&
+               "the recording itself is never changed");
+    }
+    scribaticEngineRelease(engine);
+}
+
 /// Detecting automatically, the accurate pass decides the language itself and
 /// saves it: here the live session was pinned to the wrong one (English, for
 /// Spanish speech), as a misheard first window would leave it.
@@ -556,6 +608,7 @@ int main() {
         testRefineThenIdentify(models);
         testRefineSettlesTheLanguage(models);
         testShortPhraseImported(models);
+        testFirstWordAfterDigitalSilence(models);
         // A recording to look at, not to assert on: SCRIBATIC_SPEAKERS_WAV=/path.wav
         if (const char* extra = std::getenv("SCRIBATIC_SPEAKERS_WAV"); extra != nullptr) {
             diagnoseRecording(models, extra);

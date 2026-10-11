@@ -18,8 +18,10 @@ find_package(Threads REQUIRED)
 
 add_library(scribatic_core STATIC
     src/AudioRingBuffer.cpp
+    src/ComfortNoise.cpp
     src/ModelResidency.cpp
     src/EngineImpl.cpp
+    src/LongPauses.cpp
     src/ModelCatalog.cpp
     src/NoteStore.cpp
     src/RecordingAudio.cpp
@@ -120,6 +122,8 @@ if (NOT CMAKE_CROSSCOMPILING)
     add_executable(scribatic_transcription_tests tests/TranscriptionTests.cpp)
     add_executable(scribatic_store_tests tests/NoteStoreTests.cpp)
     add_executable(scribatic_speaker_tests tests/SpeakerTests.cpp)
+    add_executable(scribatic_comfort_noise_tests tests/ComfortNoiseTests.cpp)
+    add_executable(scribatic_long_pauses_tests tests/LongPausesTests.cpp)
     foreach(test_target scribatic_store_tests scribatic_speaker_tests)
         target_link_libraries(${test_target} PRIVATE scribatic_core scribatic_sqlite Threads::Threads)
         target_include_directories(${test_target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -137,6 +141,12 @@ if (NOT CMAKE_CROSSCOMPILING)
     target_link_libraries(scribatic_core_tests PRIVATE scribatic_core Threads::Threads)
     target_include_directories(scribatic_core_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     add_test(NAME scribatic_core_tests COMMAND scribatic_core_tests)
+    target_link_libraries(scribatic_comfort_noise_tests PRIVATE scribatic_core)
+    target_include_directories(scribatic_comfort_noise_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME scribatic_comfort_noise_tests COMMAND scribatic_comfort_noise_tests)
+    target_link_libraries(scribatic_long_pauses_tests PRIVATE scribatic_core)
+    target_include_directories(scribatic_long_pauses_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME scribatic_long_pauses_tests COMMAND scribatic_long_pauses_tests)
 
     # Both suites assert with <cassert>, and a Release build defines NDEBUG,
     # which compiles every assert() to nothing. `make test-core` defaults to
@@ -144,7 +154,8 @@ if (NOT CMAKE_CROSSCOMPILING)
     # checking absolutely nothing. Undefining it keeps assertions live in every
     # configuration; these binaries are never shipped.
     foreach(test_target scribatic_core_tests scribatic_transcription_tests
-                        scribatic_store_tests scribatic_speaker_tests)
+                        scribatic_store_tests scribatic_speaker_tests
+                        scribatic_comfort_noise_tests scribatic_long_pauses_tests)
         target_compile_options(${test_target} PRIVATE -UNDEBUG)
     endforeach()
 

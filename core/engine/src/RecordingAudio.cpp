@@ -99,4 +99,14 @@ bool RecordingAudio::open(const std::string& path) {
     return false;
 }
 
+float* RecordingAudio::writableSamples() {
+    if (samples_ == nullptr) { return nullptr; }
+    if (!converted_.empty()) { return converted_.data(); }
+    // Mapped PROT_READ, MAP_PRIVATE: writing is copy-on-write, page by page.
+    if (::mprotect(const_cast<void*>(mapping_.data()), mapping_.size(), PROT_READ | PROT_WRITE) != 0) {
+        return nullptr;
+    }
+    return const_cast<float*>(samples_);
+}
+
 } // namespace scribatic::core

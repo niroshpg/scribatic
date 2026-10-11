@@ -28,6 +28,11 @@ public:
     [[nodiscard]] const float* samples() const { return samples_; }
     [[nodiscard]] std::size_t  count() const { return count_; }
 
+    /// The same samples, writable, or null if they cannot be. A mapped
+    /// file's pages become private copies only where written; the file on
+    /// disk never changes.
+    [[nodiscard]] float* writableSamples();
+
 private:
     ModelResidency     mapping_;
     std::vector<float> converted_;   ///< only for non-float or misaligned data

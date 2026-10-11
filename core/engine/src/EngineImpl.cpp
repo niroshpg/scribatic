@@ -9,6 +9,8 @@
 // =============================================================================
 #include "EngineImpl.hpp"
 
+#include "ComfortNoise.hpp"
+#include "LongPauses.hpp"
 #include "RecordingAudio.hpp"
 #include "TranscriptFormat.hpp"
 #include "whisper.h"
@@ -783,6 +785,7 @@ void EngineImpl::transcribeSpeakersInTheirLanguage(Attribution& attribution,
         }
         // Under 3 s says too little about a language to overrule the recording's.
         if (sample.size() < kSampleRate * 3) { continue; }
+        const ComfortNoise noiseFloor(sample.data(), sample.size(), false);   // a copy: nothing to restore
         if (whisper_pcm_to_mel(ctx, sample.data(), static_cast<int>(sample.size()), threads) != 0) { continue; }
         std::vector<float> probs(static_cast<std::size_t>(whisper_lang_max_id() + 1), 0.0F);
         const int id = whisper_lang_auto_detect(ctx, 0, threads, probs.data());
@@ -965,8 +968,18 @@ EngineStatus EngineImpl::refineTranscript(std::int64_t noteId, const std::string
     };
     params.abort_callback_user_data = &refineCancel_;
 
-    if (whisper_full(ctx, params, audio.samples(), static_cast<int>(audio.count())) != 0) {
-        return refineCancel_.load(std::memory_order_acquire) ? EngineStatus::Cancelled : EngineStatus::InferenceFailed;
+    // Long pauses shortened (LongPauses), then decoded with a noise floor
+    // where the recording has none (ComfortNoise). The noise is taken out
+    // again: the energy check below must read what was recorded. Only this
+    // mapping of the file changes, never the file.
+    float* writable = audio.writableSamples();
+    LongPauses pauses;
+    const std::size_t count = writable != nullptr ? pauses.cut(writable, audio.count()) : audio.count();
+    {
+        const ComfortNoise noiseFloor(writable, writable != nullptr ? count : 0, true);
+        if (whisper_full(ctx, params, audio.samples(), static_cast<int>(count)) != 0) {
+            return refineCancel_.load(std::memory_order_acquire) ? EngineStatus::Cancelled : EngineStatus::InferenceFailed;
+        }
     }
     // The language this pass detected becomes the note's: a recovered
     // recording had none, and a live guess may have been wrong.
@@ -985,14 +998,23 @@ EngineStatus EngineImpl::refineTranscript(std::int64_t noteId, const std::string
     // path found; anything said over near-silence is dropped here as well.
     std::vector<TranscriptSegment> segments;
     std::vector<WordTiming> words;
+    // Measured on the shortened audio, with its own times: mapped back
+    // first, a segment either side of a cut pause would be measured over it.
     for (std::size_t k = 0; k < decoded.size(); ++k) {
-        const auto from = std::min(audio.count(), static_cast<std::size_t>(std::max<std::int64_t>(0, decoded[k].startMs)) * kSampleRate / 1000);
-        const auto to = std::min(audio.count(), static_cast<std::size_t>(std::max<std::int64_t>(0, decoded[k].endMs)) * kSampleRate / 1000);
+        const auto from = std::min(count, static_cast<std::size_t>(std::max<std::int64_t>(0, decoded[k].startMs)) * kSampleRate / 1000);
+        const auto to = std::min(count, static_cast<std::size_t>(std::max<std::int64_t>(0, decoded[k].endMs)) * kSampleRate / 1000);
         double energy = 0.0;
         for (std::size_t i = from; i < to; ++i) { energy += static_cast<double>(audio.samples()[i]) * audio.samples()[i]; }
         if (to <= from || std::sqrt(energy / static_cast<double>(to - from)) < kSilenceRms) { continue; }
         const auto ordinal = static_cast<std::int32_t>(segments.size());
-        for (auto& word : decodedWords[k]) { word.segment = ordinal; words.push_back(std::move(word)); }
+        for (auto& word : decodedWords[k]) {
+            word.segment = ordinal;
+            word.startMs = pauses.toOriginalMs(word.startMs);
+            word.endMs   = pauses.toOriginalMs(word.endMs);
+            words.push_back(std::move(word));
+        }
+        decoded[k].startMs = pauses.toOriginalMs(decoded[k].startMs);
+        decoded[k].endMs   = pauses.toOriginalMs(decoded[k].endMs);
         segments.push_back(std::move(decoded[k]));
     }
     refineProgress_.store(1.0F, std::memory_order_relaxed);
@@ -1034,9 +1056,11 @@ std::string EngineImpl::transcribeSpan(whisper_context* ctx, const float* sample
     params.print_realtime   = false;
     params.print_timestamps = false;
     params.print_special    = false;
-    // whisper wants at least a second; a shorter turn is padded with silence.
+    // whisper wants at least a second; a shorter turn is padded, and then
+    // given a noise floor where it has none, padding included (ComfortNoise).
     std::vector<float> padded(samples, samples + count);
     if (padded.size() < kSampleRate + kSampleRate / 10) { padded.resize(kSampleRate + kSampleRate / 10, 0.0F); }
+    const ComfortNoise noiseFloor(padded.data(), padded.size(), false);
     if (whisper_full(ctx, params, padded.data(), static_cast<int>(padded.size())) != 0) { return {}; }
     std::string text;
     for (int i = 0; i < whisper_full_n_segments(ctx); ++i) {
