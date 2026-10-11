@@ -48,9 +48,23 @@ fetch() {
   mv "${dest}.partial" "${dest}"
 }
 
+# A private mirror of the exact files the apps ship, and the test fixtures,
+# when one is given: SCRIBATIC_MODELS_S3=s3://<bucket> (with AWS_PROFILE for
+# its account). Everything is checked against the mirror's SHA256SUMS. Without
+# it, or for anything it lacks, the public sources below are used.
+if [[ -n "${SCRIBATIC_MODELS_S3:-}" ]]; then
+  echo "==> Mirror ${SCRIBATIC_MODELS_S3}"
+  aws s3 sync "${SCRIBATIC_MODELS_S3%/}/models" "${MODELS_DIR}" --only-show-errors
+  aws s3 sync "${SCRIBATIC_MODELS_S3%/}/fixtures" "${MODELS_DIR}/fixtures" --only-show-errors
+  aws s3 cp "${SCRIBATIC_MODELS_S3%/}/SHA256SUMS" - | (cd "${MODELS_DIR}" && shasum -a 256 -c --quiet -)
+fi
+
 fetch "${WHISPER_URL}" "${MODELS_DIR}/${WHISPER_MODEL}"
 fetch "${ACCURATE_URL}" "${MODELS_DIR}/${ACCURATE_MODEL}"
-fetch "${LLAMA_URL}"   "${MODELS_DIR}/${LLAMA_MODEL}"
+# The whole instruct model is only needed to cut the two parts the apps ship.
+if [[ ! -f "${MODELS_DIR}/insight-4b-00001-of-00002.gguf" || ! -f "${MODELS_DIR}/insight-4b-00002-of-00002.gguf" ]]; then
+  fetch "${LLAMA_URL}" "${MODELS_DIR}/${LLAMA_MODEL}"
+fi
 fetch "${EMBED_URL}"   "${MODELS_DIR}/${EMBED_MODEL}"
 
 # The two parts the apps ship (ModelCatalog.cpp pins both hashes), cut with
