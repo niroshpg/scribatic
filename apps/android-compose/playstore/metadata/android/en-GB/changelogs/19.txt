@@ -1,0 +1,3 @@
+• Summarise waits until speakers are identified, so summaries say who said what. A summary written before a later change is marked so you can summarise again.
+• Summaries keep to the main points: at most five.
+• The note's details show whether its audio is kept.
