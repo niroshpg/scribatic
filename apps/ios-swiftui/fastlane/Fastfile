@@ -189,9 +189,15 @@ platform :ios do
     phone = File.join(metadata, "review_information", "phone_number.txt")
     UI.user_error!("#{phone} is missing: App Review needs a contact phone number.") unless File.exist?(phone)
 
+    # The store version must match the build's CFBundleShortVersionString, or
+    # Apple won't attach the build to it: deliver renames the editable version.
+    version = File.read(File.expand_path("../project.yml", __dir__))[/CFBundleShortVersionString: "([^"]+)"/, 1]
+    UI.user_error!("No CFBundleShortVersionString in project.yml") unless version
+
     upload_to_app_store(
       api_key: asc_api_key,
       app_identifier: APP_ID,
+      app_version: version,
       metadata_path: metadata,
       screenshots_path: screenshots,
       skip_binary_upload: true,

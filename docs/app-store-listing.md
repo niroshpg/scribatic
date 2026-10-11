@@ -68,9 +68,10 @@ post-upload check runs before Apple has registered the images.
 
 ## Before submitting for review
 
-- [x] **Version number.** The App Store version was renamed from 1.0 to **0.1.0** to
-      match `CFBundleShortVersionString` in `project.yml`; Apple attaches a build only to
-      a version with the same number. Keep the two in step for every release.
+- [x] **Version number.** **1.0.0** for the first release (2026-10-11), from
+      `CFBundleShortVersionString` in `project.yml`; Apple attaches a build only to a
+      version with the same number. `fastlane listing` passes that number to deliver,
+      which renames the editable App Store version to match.
 - [x] **Privacy manifest.** `Resources/PrivacyInfo.xcprivacy`: no tracking, no data
       collected, and reasons for UserDefaults (`CA92.1`), file metadata (`C617.1`, SQLite
       and model sizes) and disk space (`E174.1`, SQLite's `statfs`). Builds from before

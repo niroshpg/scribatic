@@ -1,0 +1,6 @@
+First release of Scribatic.
+• Record a conversation and get a transcript on your phone, with each speaker marked
+• Name speakers, fix misheard words and play back any part
+• English is supported; other languages are experimental
+• The app has no internet permission: recordings leave the phone only if you share them or save a backup where you choose
+• Scribatic Pro, a one-time purchase on phones with 8 GB of memory or more: summaries, search across your notes, and answers from your recordings

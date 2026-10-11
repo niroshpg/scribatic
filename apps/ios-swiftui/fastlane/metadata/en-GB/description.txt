@@ -1,4 +1,4 @@
-Scribatic records a conversation and turns it into a transcript on your iPhone or iPad, marking who said what. Nothing is uploaded: the app makes no network requests of its own. Your recordings stay on the device unless you choose to share them or back them up.
+Scribatic records a conversation and turns it into a transcript on your iPhone or iPad, marking who said what. The app can't upload anything: it makes no network requests of its own. Your recordings and notes leave the device only if you share them or back them up.
 
 What you can do
 • Record a meeting, lecture, interview or call, and watch the words appear as people speak
@@ -10,7 +10,7 @@ What you can do
 • Correct a misheard name, number or word in any part of the transcript, and undo it or restore the original
 • Fix speakers: move a part to someone else, or tell Scribatic two labels are the same person
 • Import a recording you already have, such as a voice memo or a call, and transcribe it the same way
-• Share a transcript to any app you choose, with or without the speakers' names
+• Share a transcript, a PDF or the recording to any app you choose; a transcript can leave out the speakers' names
 • Back up your notes to a place you choose, encrypted with your own passphrase, and restore them on another device
 • See how much recording time your storage has left, with a warning before it runs low
 • Keep recordings compressed (about 21 MB an hour), for 30 days, or only until transcribed; transcripts are always kept
@@ -21,15 +21,15 @@ Scribatic Pro, a one-time in-app purchase
 • Summaries shaped for a meeting, a lesson or anything else: the key points, and who owes what
 • Search all your notes, by words and by meaning
 • Ask your notes: short answers from your own recordings, each pointing to where it was said
-• All written on the device by a 2.5 GB model, downloaded once after you buy. Nothing is uploaded
+• All written on the device by a 2.5 GB model, downloaded once after you buy
 • Needs a device with 8 GB of memory or more, such as iPhone 15 Pro and later. Designed for English; other languages are experimental
 
 Private by design
 • Transcription, speaker identification and Pro's summaries and answers run on the device's own processor
 • Recordings, transcripts and names are kept in the app's private storage and left out of iCloud and device backups
 • No account, no sign-in, no ads, no analytics, no crash reporting
-• When you share a transcript, it goes only to the app you pick, and that app sends it
-• A backup goes only where you save it, encrypted so that only your passphrase opens it. Scribatic can't read it or recover a forgotten passphrase
+• What you share goes only to the app you pick, and that app sends it. A shared transcript or PDF includes the note's summary, unless you share without names
+• A backup holds your notes, their summaries and recordings, and goes only where you save it: a folder on the device, or a cloud drive such as iCloud Drive. It is encrypted so that only your passphrase opens it. Scribatic can't read it or recover a forgotten passphrase
 
 Good to know
 • The speech models download once through the App Store when you first open the app, about 470 MB

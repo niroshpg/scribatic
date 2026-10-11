@@ -32,8 +32,8 @@ android {
         applicationId = "com.scribatic.app"
         minSdk        = 28          // AAudio low-latency callback + mmap headroom
         targetSdk     = 36
-        versionCode   = 19
-        versionName   = "0.1.0"
+        versionCode   = 20
+        versionName   = "1.0.0"
 
         ndk {
             // Single ABI: see scribatic.abiFilters in gradle.properties.
