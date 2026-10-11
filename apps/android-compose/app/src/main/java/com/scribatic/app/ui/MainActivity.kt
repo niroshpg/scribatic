@@ -1447,7 +1447,7 @@ private fun NoteBody(
                         }
                     }
                     if (note.audioPath != null) {
-                        MetaBadge(Icons.lock, "On this phone")
+                        MetaChip(Icons.audioKept, "Audio kept")
                     } else {
                         MetaChip(null, "Audio deleted", painterRes = R.drawable.ic_waveform_slash)
                     }

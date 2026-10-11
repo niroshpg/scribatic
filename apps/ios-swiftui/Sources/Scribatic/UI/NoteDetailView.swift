@@ -491,7 +491,7 @@ struct NoteDetailView: View {
                     .accessibilityHint("Name the speakers, set how many there were, or merge them")
                 }
                 if note.audioURL != nil {
-                    MetaBadge(systemImage: "lock.shield", text: "On this device")
+                    MetaChip(systemImage: "waveform", text: "Audio kept")
                 } else {
                     MetaChip(systemImage: "waveform.slash", text: "Audio deleted")
                 }

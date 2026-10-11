@@ -220,20 +220,6 @@ fun MetaChip(icon: ImageVector?, text: String, color: Color = Scribatic.colors.i
     }
 }
 
-/** A status worth stopping on: "On this phone", "Installed". */
-@Composable
-fun MetaBadge(icon: ImageVector, text: String) {
-    val c = Scribatic.colors
-    Row(
-        modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(c.fillSecondary).padding(horizontal = 8.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
-    ) {
-        Icon(icon, contentDescription = null, tint = c.inkMuted, modifier = Modifier.size(14.dp))
-        Text(text, style = MaterialTheme.typography.labelLarge, color = c.inkMuted)
-    }
-}
-
 /** Uppercase Geist Mono label opening a list section. */
 @Composable
 fun SectionHeader(title: String, trailing: String? = null, modifier: Modifier = Modifier) {

@@ -255,23 +255,6 @@ struct MetaChip: View {
     }
 }
 
-/// A status worth stopping on: "On this device".
-struct MetaBadge: View {
-    let systemImage: String
-    let text: String
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: systemImage).font(.system(size: 12, weight: .medium))
-            Text(text).font(.uiLabel)
-        }
-        .foregroundStyle(Color.inkMuted)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(Color.fillSecondary, in: RoundedRectangle(cornerRadius: 6))
-    }
-}
-
 /// Uppercase Geist Mono label opening a list section.
 struct SectionHeader: View {
     let title: String

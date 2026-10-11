@@ -9,6 +9,7 @@ import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.FolderOpen
+import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Group
 import androidx.compose.material.icons.rounded.Lock
@@ -51,6 +52,7 @@ object Icons {
     val speakers = MaterialIcons.Rounded.Group
     val duration = MaterialIcons.Rounded.Schedule
     val delete = MaterialIcons.Rounded.Delete
+    val audioKept = MaterialIcons.Rounded.GraphicEq
     val settings = MaterialIcons.Rounded.Settings
     val importAudio = MaterialIcons.Rounded.AudioFile
     val chevronRight = MaterialIcons.AutoMirrored.Rounded.KeyboardArrowRight
