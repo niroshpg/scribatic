@@ -1,0 +1,4 @@
+• Long pauses no longer cost sentences in the final transcript, and the first word after a silence is kept.
+• Ask answers broad questions such as "What are the action items?" across all your notes, citing each point.
+• Summaries fit the length of the recording and name their format.
+• Settings sit behind the cog; transcript cards use the full width.
